@@ -65,8 +65,7 @@ diff --git a/app.py b/app.py
 EOF
 act green sess-green '{"tool":"green_ready","args":{"summary":"greet formats the name"}}' "$TMP/green.patch"
 
-: > "$TMP/empty.patch"
-act refactor sess-refactor '{"tool":"refactor_done","args":{"summary":"nothing to tidy","changed":false}}' "$TMP/empty.patch"
+# A 2-line green is under refactor_skip_max_lines (5): the core skips refactor.
 act red sess-red '{"tool":"no_cheat_left","args":{"reason":"every case is covered"}}'
 
 "$T12" tdd-step --home "$HOME_DIR" --task-id demo-1
