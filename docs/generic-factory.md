@@ -3,7 +3,7 @@
 Status: steps 1 (project profile), 2 (roles and skills), 4 (intake)
 and 6 (the TDD lane) are built;
 the rest is a proposal.
-README.md describes what is enforced today.
+`docs/reference.md` describes what is enforced today.
 
 ## Goal
 

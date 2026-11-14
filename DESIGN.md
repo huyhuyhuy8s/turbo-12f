@@ -1,9 +1,10 @@
-# turbo-12f — design
+# turbo-12f: design
 
 Working name. Local-only rebuild of Turbo's best ideas, strictly on
 Dex Horthy's 12-Factor Agents (HumanLayer), adopting the super-board
-reviewer workflow. Not the GitHub `huyle-gradion/turbo` repo; nothing
-here talks to GitHub or Asana yet. Python standard library only.
+reviewer workflow. Not the GitHub `huyle-gradion/turbo` repo; the
+core never talks to a forge or tracker, and the delivery and intake
+adapters (Phase 7) do. Python standard library only.
 
 ## What we kept from Turbo (Michael's mapping, treated as opinion)
 
@@ -44,9 +45,9 @@ here talks to GitHub or Asana yet. Python standard library only.
 - No thermos-style re-review loop, no deferred-review backlog. A
   review finding either blocks (bounce to the analyzer) or is filed as
   a future ticket; it never silently re-queues.
-- Test-only-what-changed is a policy the gates encode, not a hope:
-  gates are explicit commands in the task file, and `check` refuses
-  to certify on anything but the recorded evidence.
+- Test-only-what-changed is a policy the gates encode: gates are
+  explicit commands in the task file, and `check` refuses to certify
+  on anything but the recorded evidence.
 - The worker is one narrow job, not "the factory". The factory is
   the deterministic shell around it.
 
@@ -54,14 +55,14 @@ here talks to GitHub or Asana yet. Python standard library only.
 
 Your diagnosis from Turbo (2026-11-07), stated again for this
 rebuild: delivery already takes mostly a day and still cannot ship
-even two issues, and the bottleneck is testing and CI — the time
+even two issues, and the bottleneck is testing and CI: the time
 spent testing, retesting, checking, and verifying. Three mechanisms
 make it worse, and this version is built to break all three:
 
 1. **TDD cost per issue.** Every issue pays red/green iterations,
    targeted tests, a full suite on the final candidate, a post-merge
    suite, and CI. On Turbo the post-merge suite alone reached 426
-   tests with a ~1,197s (~20 min) wall on main @ d201c7b — and that
+   tests with a ~1,197s (~20 min) wall on main @ d201c7b. That
    was the backstop, not the per-iteration cost. Re-running the full
    suite on every iteration is what made each issue take a day.
    Countermeasure here: the loop runs only what each step needs.
@@ -72,7 +73,7 @@ make it worse, and this version is built to break all three:
    certifies only the recorded evidence, never a fresh full run.
 2. **Tests with no value.** A test written by the agent that
    implements the code proves nothing: it is written to pass with
-   the code, so green is the same claim twice — the test and the
+   the code, so green is the same claim twice. The test and the
    code agree with each other, and neither is checked against the
    acceptance criteria. Countermeasure here: red, green and refactor
    are different sessions, and the implementer is blind. Green and
@@ -85,10 +86,10 @@ make it worse, and this version is built to break all three:
    run shows it passing on the pinned candidate: same command, test
    blobs locked in between, all recorded.
 3. **Useless tests accumulate.** Every issue adds tests and almost
-   none are ever removed: 283 tests after issues #20–#22, 409 at
+   none are ever removed: 283 tests after issues #20 to #22, 409 at
    the consolidation baseline, 426 by d201c7b. Each new test slows
-   every future run, so delivery gets worse the more you ship —
-   consolidation issue #91 needed 18+ net removals just to get back
+   every future run, so delivery gets worse the more you ship.
+   Consolidation issue #91 needed 18+ net removals just to get back
    under 409. Countermeasure here: for every test red states the wrong
    implementation it kills (`defeats`) and calls `no_cheat_left`
    when none is left, so a test with nothing to kill is not written
@@ -105,7 +106,7 @@ budget to the task file (e.g. `max_new_tests`, or a suite-time
 ceiling enforced as a gate) or to rely on the reviewer + `defeats`
 rule above.
 
-## The 12 factors — how each one is implemented here
+## The 12 factors: how each one is implemented here
 
 | # | Factor | Implementation in turbo-12f |
 |---|---|---|
@@ -135,11 +136,11 @@ skill ecosystem and reviewer workflow; we adopt the same ideas,
 without its host-specific hooks, GitHub Project board, or merge
 permissions.
 
-- **Orchestrator dispatches roles, it does not implement.**
+- **Orchestrator dispatches roles and does not implement.**
   `skills/orchestrator/SKILL.md`: analyzer -> red -> green -> refactor
   -> gates -> one reviewer, bounded feedback routing, one lane at a time.
 - **Reviewer forms its own hypotheses first.** Read the ACs and the
-  raw diff, write 2–4 hypotheses about what must be true and where it
+  raw diff, write 2 to 4 hypotheses about what must be true and where it
   would break, *then* read the worker's summary as claims to check.
   A claim is a lead, not evidence.
 - **Findings are classified, with stable ids:** Gap, Bug,
@@ -162,40 +163,39 @@ permissions.
   Phase 7 delivery decision for Michael to make, not a default here.)
 - **Human gates are explicit.** Money, auth, destructive schema,
   live DB, or any product decision the reviewer cannot safely guess
-  goes to a human with a named unblock step. The run pauses; it does
-  not guess.
+  goes to a human with a named unblock step, and the run pauses.
 
 ## TypeScript and UI work: anti-slop
 
 Source: https://github.com/miqdadbadjuber/anti-slop (MIT).
 Michael's pointer: Dex Horthy's 12-factor-agents talks frame the same
-problem as a "war on slop" — unattended agents ship generic UI, hype
+problem as a "war on slop": unattended agents ship generic UI, hype
 copy, and AI-shaped code, and slop compounds because agents imitate
 the repo's existing patterns. (Verified: the repo is real, ~8.9k
 stars, v3.2.28; what I could not verify from the 12-factor README is
-that Dex name-checked this specific repo — recording it as Michael's
+that Dex name-checked this specific repo, so I am recording it as Michael's
 pointer, not as a Dex citation.)
 
 - **What it is:** a filter, not a style guide. 40 mandatory rules
-  (R-01–R-40) in three tiers, a Liveliness Toolkit, and a Delivery
-  Gate — a mandatory PASS/FAIL report before anything ships. Six
+  (R-01 to R-40) in three tiers, a Liveliness Toolkit, and a Delivery
+  Gate, a mandatory PASS/FAIL report before anything ships. Six
   skills, load only what the task needs: `antislop` (core, always),
   `antislop-ui`, `antislop-copywriting`, `antislop-human`
   (accessibility), `antislop-layoutmobile`, `antislop-code`.
 - **When it applies:** any task whose deliverable is TypeScript code
-  or UI — which is the likely shape of product work here (TypeScript
+  or UI, which is the likely shape of product work here (TypeScript
   on Node, React + TypeScript with Vite+ for UI/tests, Electron
   shell for Chat Bridge). The Python core of turbo-12f itself does
   not need it; the factory's product work does.
-- **How it runs:** two modes — `during` (rules guide the build, the
+- **How it runs:** two modes, `during` (rules guide the build, the
   session closes with the Delivery Gate report) and `after` (audit
   existing work, numbered findings, fix what the human approves).
   Default for factory work is `during`.
-- **The direction rule (matters):** anti-slop removes slop and stops
+- **The direction rule:** anti-slop removes slop and stops
   there; visual direction comes from a per-product UI direction file
   (also called `DESIGN.md` in that repo). Without it, UI output is
-  labelled a draft without direction. That file is **not**
-  turbo-12f's `DESIGN.md` — same name, different file, different
+  labelled a draft without direction. That file shares a name with
+  turbo-12f's `DESIGN.md` but is a different file with a different
   job. The direction file belongs to the product repo and the task
   contract (Factor 2: own your prompts; the task supplies direction,
   the worker does not invent it).
@@ -224,11 +224,10 @@ record and its event log under a timestamped name
 worktree and factory branch, and records `supersedes` in the new run.
 The archived record keeps every SHA and evidence ref, so the old
 attempt stays inspectable. Counters (ops, repairs, wall time) start
-fresh in the new run — the new attempt is a new attempt, not a
-continuation that hides its history.
+fresh in the new run.
 
 Resume consistency: `resume` re-validates from disk before returning
-to the prior phase — worktree branch, HEAD against the expected
+to the prior phase: worktree branch, HEAD against the expected
 commit for that phase, the locked test blobs, and every recorded evidence
 ref re-hashed. Any drift fails closed and the run stays paused.
 
@@ -250,12 +249,12 @@ Enforced by the core, deterministically:
   `GIT_ALLOW_PROTOCOL=none`.
 - **Empty verify-home.** Verification commands (red, final, gate,
   probe) run with `HOME` set to an empty, private directory inside
-  the state home, `TMPDIR` inside it, and no system git config — so
+  the state home, `TMPDIR` inside it, and no system git config, so
   no operator credential store or global config is visible.
 - **Landlock cage (Linux).** Where the kernel supports it (ABI ≥ 4),
   verification commands run under Landlock: worktree and verify-home
   writable, system dirs read-only, `/dev` device nodes available,
-  all TCP bind/connect denied — including loopback. Verified on this
+  all TCP bind/connect denied, including loopback. Verified on this
   machine: a sandboxed command cannot write outside the worktree or
   connect anywhere, while normal commands in the worktree are
   unaffected. Git operations (commit, stage, worktree management)
@@ -271,13 +270,13 @@ Enforced by the core, deterministically:
   with the worktree and the verify-home mounted at their host paths,
   `--user` set to the host uid/gid (so files created in the worktree
   are owned by the host user), and only the verification env passed
-  as `-e` flags — never the host's environment, so no secret can
+  as `-e` flags, never the host's environment, so no secret can
   ride in. The container env adds two factory-controlled values:
   `GIT_ALLOW_PROTOCOL=none` and `PYTHONDONTWRITEBYTECODE=1` (without
   the latter, the verification commands themselves dirty the
   worktree with `__pycache__` and `check` refuses). The image comes
   from the task's `"sandbox_image"` (default `python:3.12-slim`, or
-  `T12_SANDBOX_IMAGE`); it must already be present locally —
+  `T12_SANDBOX_IMAGE`); it must already be present locally:
   `prepare` refuses when the daemon does not answer or the image is
   missing, so there are no implicit pulls mid-run. The adapter is
   chosen at admission and recorded on the run; every verification
@@ -290,7 +289,7 @@ Enforced by the core, deterministically:
   is present). The real run reaches `local-verified` with both probes
   passing, and the worktree stays owned by the host user.
 
-Measured, not asserted — the probes:
+The probes attempt the forbidden access and record the result:
 
 - **Required probes** run at `prepare` and on demand (`t12 probe`):
   `forbidden_credential_access` (planted secret env var + sentinel
@@ -298,7 +297,7 @@ Measured, not asserted — the probes:
   `external_effect_restriction` (network connect + write outside the
   worktree must be denied). Each attempt is recorded as evidence
   (`probe-<name>-output.txt`, `probes.json`); a granted access fails
-  the probe and is reported, not hidden.
+  the probe and is reported.
 - **Adapter detection.** `landlock` on Linux with a new-enough
   kernel, `docker` when the task or environment requests it and the
   daemon answers, `sandbox-exec` detected on macOS but not enforced
@@ -316,15 +315,14 @@ Measured, not asserted — the probes:
 What this does not claim: `local-verified` never means "isolated".
 Isolation is whatever the adapter on this host enforces, and the
 manifest says which. Tests that need a loopback server will not
-pass under the cage — that is the cage working, and such tests
+pass under the cage. That is the cage working, and such tests
 belong outside the verification gates or in a task that does not
 run them sandboxed.
 
 ## Evidence integrity (Phase 4)
 
 The run record is a plain JSON file, and a plain file can be
-edited. Phase 4 makes edits detectable instead of pretending they
-cannot happen:
+edited. Phase 4 makes edits detectable:
 
 - **Hash-chained event log.** Every event carries a sequence
   number, a link to the previous event's hash, and a digest of the
@@ -333,7 +331,7 @@ cannot happen:
   run record after the last event breaks the state digest. The
   first event links to a per-task genesis hash. A corrupted log
   fails closed: further commands refuse until the run is superseded.
-- **`t12 verify` — the auditor.** Five checks, each PASS/FAIL, exit
+- **`t12 verify`, the auditor.** Five checks, each PASS/FAIL, exit
   0 only if all pass: the event chain; every evidence ref re-hashed
   (red, final-run, gate and probe observations, and every green and
   refactor test and lint run); the exit codes (a red must have
@@ -358,10 +356,10 @@ cannot happen:
 What this is not: there is no signing key and no external
 notary. Anyone with write access to the state home *and* the
 patience to rewrite the whole chain from genesis can forge a
-history — the chain detects edits, it does not prevent a full
-rewrite by the machine's owner. That is the honest boundary:
-tamper-evidence for accidents and for a compromised worker, not
-tamper-proofing against the operator. One corollary, found while
+history. The chain detects edits but does not prevent a full
+rewrite by the machine's owner. The boundary is tamper evidence
+against accidents and a compromised worker, with no tamper-proofing
+against the operator. One corollary, found while
 testing Phase 6: a later command absorbs a prior record edit into
 the chain (its event's state digest is computed over the edited
 record), so the chain only detects edits made after the *last*
@@ -381,15 +379,15 @@ Phase 5 replaces guessing with measurement:
   gate count. The manifest shows the measured usage next to the
   budget. A run without measurements cannot calibrate anything and
   is reported as such.
-- **`t12 report` — budget reporting.** Per-run usage vs budget,
+- **`t12 report`, budget reporting.** Per-run usage vs budget,
   cap hits (repairs / ops / time), and aggregates over completed
   runs. `--json` prints the same structure for scripts.
-- **`t12 calibrate` — defaults from real runs.** From completed
+- **`t12 calibrate`, defaults from real runs.** From completed
   runs only (`local-verified` with measurements): the recommended
   default for each budget is the p90, rounded up to a sane step
   (60s / 5 ops / 1 repair / 1 cycle / 1 attempt), never below a floor
   (600s / 20 ops / 2 repairs / 5 cycles / 2 attempts). Fewer than 3
-  completed runs, and it refuses — one toy run must not set the
+  completed runs, it refuses, because one toy run must not set the
   defaults. Runs paused on the repair cap (escalation kind
   `repair-cap`) are censored: their true need is unknown, so they are listed
   as excluded rather than folded into the numbers. Dry run by
@@ -402,18 +400,18 @@ Phase 5 replaces guessing with measurement:
   can say where its limits came from. A malformed `limits.json`
   fails `prepare` closed rather than being silently ignored.
 
-What this does not do: it does not auto-tune anything. Calibration
+What this does not do: auto-tune anything. Calibration
 is an explicit operator act (`calibrate --apply`), and the
-recommendation is a starting point the operator can edit — the
+recommendation is a starting point the operator can edit, since the
 file is plain JSON. Limits are per state home, not per product:
 different products' runs should live in different state homes if
 their shapes differ.
 
 ## Roles (Phase 6, reshaped by Phase 8)
 
-Phases 1–5 built the deterministic core; Phase 6 wires the people
-(and their agents) into it. The core still makes no model calls —
-the roles are separate worker invocations by the orchestrator, and
+Phases 1 to 5 built the deterministic core; Phase 6 wires the people
+(and their agents) into it. The core still makes no model calls.
+The roles are separate worker invocations by the orchestrator, and
 the core's job is to make the separation checkable:
 
 - **One session per role.** Every role step carries a session id
@@ -424,8 +422,7 @@ the core's job is to make the separation checkable:
   cannot do anything else on the run. `gate`, `tdd-step` and
   `check` are run by the core and need no session. The same
   session may repeat the same role (a retry after a refused call, a
-  re-review) — that is the same worker continuing, not a collapse
-  of separation.
+  re-review), since that is the same worker continuing.
 - **The review is a command, not a comment.** `t12 review --role
   reviewer --session <id> --verdict
   approve|changes-requested --report <file>` runs after all gates
@@ -452,7 +449,7 @@ the core's job is to make the separation checkable:
   `prior_review`, and `t12 context --role reviewer` surfaces it:
   review remembers is state the factory carries forward, not a
   note the reviewer has to find.
-- **One reviewer, not two (D2).** Phases 6–7 shipped security as a
+- **One reviewer, not two (D2).** Phases 6 to 7 shipped security as a
   second review role with its own prompt and skill. Phase 8 dropped
   it: `prompts/reviewer.md` absorbed its boundary checklist
   (secrets, injection, auth, exposure, dependencies), and
@@ -464,12 +461,12 @@ different ids could in principle be the same worker, and the core
 has no way to know. The enforcement is over the claim, and the
 claim is recorded. If the host cannot be trusted to hand out
 distinct sessions per role, the separation is only as strong as
-the host — that is stated here rather than papered over.
+the host.
 
 ## Delivery (Phase 7)
 
-Delivery is where the factory meets the outside world, so it is
-where the discipline matters most. The split is strict:
+Delivery is where the factory meets the outside world. The split
+is strict:
 
 - **The core never touches the network.** It holds no tokens and
   makes no HTTP calls. `t12 deliver --adapter github|gitlab|bitbucket|asana
@@ -488,7 +485,7 @@ where the discipline matters most. The split is strict:
   `gitlab_project` or `bitbucket_repo` field, or the origin
   remote; the Asana task from
   `--task` or the task's `asana_task_gid` field. An adapter exits
-  0 when it wrote a report, whatever the outcome — a non-zero
+  0 when it wrote a report, whatever the outcome; a non-zero
   exit means the adapter itself could not run.
 - **Outcomes mean what they say.** `confirmed` only when the
   remote state was read back and matches: the PR exists with the
@@ -500,12 +497,12 @@ where the discipline matters most. The split is strict:
   unknown (timeout, 5xx, a read that failed).
 - **Never a blind retry.** An uncertain outcome blocks further
   delivery for that adapter. The next attempt must be a read-back
-  recorded with `--resolves`, not a repeated action — a blind
+  recorded with `--resolves`, not a repeated action, because a blind
   retry after an uncertain mutation can duplicate the effect (a
   second PR, a second comment) or miss that the first one landed.
   The block is per adapter; one adapter's uncertainty does not
   stop the other.
-- **Two mislabelings are ruled out** — both were real findings in
+- **Two mislabelings are ruled out.** Both were real findings in
   the original Turbo's integration work. A 401/403 on a READ is
   uncertain, never denied: the adapter could not establish state,
   and denied means a mutation was refused. A 5xx during
@@ -514,13 +511,12 @@ where the discipline matters most. The split is strict:
   read-vs-mutation, and the tests pin both cases.
 - **No merge.** The change-request adapters create the PR or MR
   and read it back; they never merge, and there is no merge command. A human
-  merges. Child-PR auto-merge is not a default — enabling it
-  would be a delivery decision for the maintainer, not something
-  this phase assumes.
+  merges. Child-PR auto-merge is not a default; enabling it
+  would be a delivery decision for the maintainer.
 
 What the factory cannot prove: the adapter's report is a claim.
 The core checks the report's shape and its head pinning, and the
-report is stored as evidence — but if an adapter lies about
+report is stored as evidence, but if an adapter lies about
 having read the remote back, the core cannot tell. The defense is
 that the adapter is small, stdlib-only, and its read-back logic
 is the part the tests exercise against a fake server; and the
@@ -684,6 +680,446 @@ filtered.
   `turn_end` events and aborts past the cap; it cannot see inside
   a turn. Behaviour was probed against omp 18.20.0 only.
 
+## Parallel TDD lanes (Phase 9)
+
+Status: built (steps 1 to 6 of the build order below); "As built"
+records where the code differs from this text. The serial TDD lane
+runs one worker step at a time, even when the analyzer's list covers
+modules that do not depend on each other. Starting more agents on
+that shape fails, because every piece of tdd state has a single
+writer:
+
+- one worktree (`run["worktree"]`), so agents overwrite each
+  other's files;
+- one tdd record (`step`, `current`, `last_good_commit`), so a red
+  for item B refuses because HEAD is not the last good commit after
+  item A's green;
+- one run lock, held while `test_command` runs, so a second command
+  waits up to `LOCK_WAIT_S` (2 s) and then fails as busy;
+- one op budget that every agent draws from, so the bill has no
+  per-agent bound.
+
+The design gives each agent its own copy of all of this instead of
+adding locks (see "separate before serializing"). One canonical
+object stays shared, the event chain, and its writes stay serialized
+as they are today.
+
+```text
+prepare -> tdd [analyzer -> fan-out
+                 -> lane U1: (red -> green -> refactor)* -> lane-final -> integrate
+                 -> lane U2: (red -> green -> refactor)* -> lane-final -> integrate
+                 -> lane U3 (after U1): starts once U1 is integrated
+               -> cross-unit refactor (only when needed) -> final]
+  -> gates -> review -> check -> local-verified
+```
+
+### Units: the analyzer proposes, the core checks
+
+`test_list_ready` gains an optional `units` list. Each item names one
+unit.
+
+```json
+{"units": [
+  {"id": "U1", "owns": ["src/parser.ts"], "tests": ["test/parser.test.ts"], "after": []},
+  {"id": "U2", "owns": ["src/format/"], "tests": ["test/format.test.ts"], "after": []},
+  {"id": "U3", "owns": ["src/cli.ts"], "tests": ["test/cli.test.ts"], "after": ["U1", "U2"]}
+ ],
+ "items": [{"text": "...", "unit": "U1", "...": "..."}]}
+```
+
+The core refuses the list (`tdd-list-failed`, so the analyzer
+retries) when any of these fails:
+
+- `owns` and `tests` are exact files or directories ending in `/`,
+  never globs, so overlap can be decided. Two entries overlap when
+  they are equal or one is a directory prefix of the other.
+- No path is in two units, across `owns` and `tests` together.
+- Every `owns` path is inside the task's `touches`. Every `tests`
+  path matches `test_globs` and none exists at the base commit, since
+  red only creates test files.
+- Every item names exactly one declared unit, and every unit has at
+  least one item.
+- `after` names only declared units and forms no cycle.
+- `needed` applies to units as it does to items: each unit beyond
+  the first must say why it cannot share a lane. Without `units`, or
+  with only one unit, the run takes the serial path, unchanged.
+
+A file two units would both edit (an exports index, `package.json`)
+must belong to one of them, and the other names it in `after`. A
+unit cannot be "shared": shared writes are the problem this design
+removes.
+
+### What each lane owns
+
+| State | Serial run today | Lane |
+|---|---|---|
+| tdd record | `runs/<task>.json` `tdd` | `runs/<task>/lanes/<unit>.json`, the same shape (items, step, history, locked, counters) |
+| lock | `runs/<task>.lock` | `runs/<task>/lanes/<unit>.lock`; red, green, refactor and their test runs take only this |
+| branch, worktree | `t12/<task>`, `worktrees/<task>` | `t12/<task>/<unit>`, `worktrees/<task>@<unit>`, forked from the integration tip when the lane starts; `verify_deps` linked the same way |
+| blind worktree | one per green/refactor session | the same, made from the lane worktree |
+| write scope | task `touches` | the unit's `owns` plus its `tests`; enforced by the core's touches check and the guard's `writable`, not by prompt wording |
+| item ids | `T1`, `T2`, ... | `U1-T1`, `U1-T2`, ...; a devil pass in one lane cannot collide with another lane |
+| evidence names | `red-3`, `green-3` | `U1/red-3`, `U1/green-3` |
+| budget | run `op_limit`, `cycle_limit`, cost | a fixed share, carved at fan-out (below) |
+
+The run record keeps only a lane table: `{unit, status, branch,
+fork_commit, tip, merged_commit}`. The core writes it under the run
+lock at fan-out and at integration, both short holds. Events still
+go to the one hash chain (`runs/<task>.events.jsonl`) under the run
+lock: appending is fast, and a single chain keeps `verify` and
+`check` unchanged in kind. Each event carries `unit`.
+
+**Locks.** There are three kinds, always taken in this order: lane,
+then integration, then run. No command takes them in reverse.
+
+- **Lane lock** (`lanes/<unit>.lock`): held for the whole of a lane
+  command (red, green or refactor, including its test runs).
+- **Integration lock** (`runs/<task>/integration.lock`): held only by
+  `integrate`, for the whole merge and its test runs.
+- **Run lock**: held only for short writes: appending an event, or
+  updating the lane table. Nothing runs tests under it.
+
+Before this phase `t12/cli.py` `main` took the run lock around every
+command with a task id, so a lane command would have held it while
+its tests ran and every other lane would have failed as busy after
+`LOCK_WAIT_S`. `main` now sends lane commands to their lane lock and
+the integration green to the integration lock; the run lock is taken
+inside, around the event append and the lane-table write. Readers
+never lock lane files: the store writes them atomically, so a reader
+sees the old or the new record, never a mix.
+
+### Integration: one deterministic writer
+
+`integrate` is a new deterministic step (`t12 tdd-step --unit U1`;
+no model involved). It runs when a lane reaches its own final (no
+unchecked item, and red's last call was `no_cheat_left`):
+
+1. Run the lane's red tests and lint on the lane tip, as `final`
+   does today, within the lane's own scope.
+2. Under the integration lock, `git merge --no-ff` the lane branch
+   into the integration branch. Lanes merge in the order they finish;
+   two lanes that finish together merge in unit-id order, and the
+   order is recorded in the event, so a replay reproduces it. Units
+   own disjoint files, so a textual conflict means the disjointness
+   check has a bug: the core aborts the merge and pauses the run with
+   kind `integration-conflict`, without retrying.
+3. Run all red tests created in the run (every lane already merged,
+   plus this one) and lint on the merged commit, in the sandbox,
+   still under the integration lock only.
+4. On a pass, record `merged_commit`. The integration `locked` map
+   becomes the union of the lanes' maps. Lanes whose `after` list is
+   now fully merged become ready to start.
+5. On a failure (a semantic conflict: two units each correct alone,
+   wrong together), the integration branch goes back to the commit
+   before the merge, and the event records which lanes' tests
+   failed. That decides who repairs it (each case uses a repair,
+   `repairs_used += 1`; past `repair_cap` the run pauses as today):
+   - **Only the merging lane's tests fail:** that lane is reopened at
+     green, its branch reset to the merge result so green sees the
+     other units' code. Green gets the sanitized failing lines.
+   - **Any already-merged lane's test fails:** the merging lane is
+     not blamed for finishing second. A single **integration green**
+     runs on the integration worktree, on the merge result, allowed
+     to write the `owns` of every lane in the merge. The core checks
+     it as it checks green, against all merged red tests and lint.
+   - **The merging lane's green is refused only for writing outside
+     its `owns`:** this means the fix belongs in another unit. The
+     core skips the remaining attempts and moves straight to the
+     integration green above.
+
+   Only an integration green that fails up to `attempt_limit`
+   pauses the run for a human. Integration green is the green role
+   with a wider write scope: same prompt, same blindness, same
+   guard; only `writable` grows.
+
+When every lane is merged, the run continues on the integration
+worktree. A **cross-unit refactor** runs once, with the whole
+`touches` scope, if the sum of the lanes' `lines_since_refactor` is
+above `refactor_skip_max_lines` or a directive is pending. Then the
+existing `final`, the gates and the one reviewer run, unchanged. A
+changes-requested review goes back to the analyzer in review-fix
+mode, which may declare units again under the same rules.
+
+### The bill
+
+- `max_lanes` (profile/task, default 3) bounds how many lanes run at
+  once. The runner keeps a pool of that size. Lanes past the bound,
+  or whose `after` list is not merged yet, wait.
+- At fan-out the core splits what is left of `op_limit`,
+  `cycle_limit` and `--omp-max-cost` (spend is reported, not
+  verified) into fixed shares, in proportion to each unit's item
+  count, with a remainder kept for integration and the cross-unit
+  refactor. Each lane counts its spend in its own file, with no
+  shared counter.
+- A lane that uses up its share pauses itself (`lane-budget`), with
+  an escalation that names the unit. It never borrows from a running
+  lane, and the other lanes keep going. The share is a ceiling, not
+  an estimate.
+- **Reclaim.** When a lane merges, what it left unspent returns to
+  the run's pool. Only `integrate`, under the run lock, grants from
+  the pool, and only to a lane paused on `lane-budget`, so a lane
+  whose devil pass added items is not stranded while a finished
+  sibling's share sits unused. Total spend stays bounded by the same
+  caps a serial run has.
+- **Provider rate limits.** Before this phase neither
+  `adapters/omp_rpc.py` nor the runner recognised a rate-limited
+  (HTTP 429) or overloaded session: it ended as a non-accepted
+  outcome, and the runner marked the task stuck for the rest of the
+  invocation. With three lanes on one key that is likely, and it
+  would have stopped a lane until a rerun.
+  The runner classifies such an outcome as "retry later": no attempt
+  is used, the lane goes back in the queue after a backoff, and
+  `max_lanes` drops by one for the rest of the invocation. omp's own
+  internal retries, if any, are not relied on (not verified).
+- The core decides when to split the work and when to start a lane
+  (Factor 8). Agents have no `task` tool and never start agents; the
+  existing tool deny list already enforces this.
+
+### Pause, resume, stop
+
+- A lane escalation (attempt limit, lane budget, red escalating to a
+  human) pauses that lane only. The run's phase stays `tdd`, and
+  `board` shows one row per lane. `t12 resume --unit U1 --answer
+  ...` resumes it (Factors 6 and 7).
+- `stop` stops the run and every lane. The runner kills the lanes'
+  omp sessions, and the lane worktrees are disposable, as the run
+  worktree is today.
+- A crashed runner leaves lane files and branches in place. The next
+  invocation reads each lane's step and continues, because each lane
+  file is the same state-update function as a serial run (Factors 5
+  and 12).
+
+### What this does not speed up
+
+Inside a unit, TDD stays serial. Each green changes the code that
+the next red must fail against, so writing reds ahead would bill for
+tests the next green makes redundant or invalid. A list with a single
+unit (FizzBuzz) gets no faster. The gain is bounded by the longest
+chain of units through `after`, plus integration time.
+
+### Risks
+
+- **The analyzer may split wrongly.** Units that look independent
+  can still share behaviour through types or runtime state. The
+  merged red tests catch this only where some test exercises the
+  interaction. The reviewer still sees the whole diff.
+- **A semantic conflict can need the other unit's files.** If
+  merged U2 breaks a test of U1 and the fix belongs in U1's `owns`,
+  U2's green cannot make it. The integration green (step 5 above)
+  can, with every merged lane's `owns`; only when it fails does the
+  run pause for a human.
+- **Nothing checks the analyzer's split ahead of time.** The core
+  checks the declared paths, not whether the units really are
+  independent. Each run records `integration_failures` (and which
+  path through step 5 they took) in `limits` next to the existing
+  p90 calibration, and `retro` reports the rate per project. A
+  project whose rate is high gets a lower calibrated `max_lanes`;
+  at a calibrated 1 the analyzer's `units` are ignored and the run
+  takes the serial path.
+- **Integration sits on the critical path.** Each merge reruns all
+  red tests created so far. The 10-second suite target matters more
+  here than in a serial run.
+- **Overlap checks cover declared paths only.** A generated file or
+  lockfile written as a side effect of a command is outside `owns`
+  and is refused by the touches check, as it is today.
+
+### Build order (each step verifiable alone)
+
+1. Lane state in the model: lane file, lane lock, lane table, ids
+   and evidence names prefixed with the unit, state version 3. The
+   tdd engine functions take `(lane record, lane worktree)` instead
+   of reading `run["tdd"]` and `run["worktree"]`. `cli.main` stops
+   wrapping lane commands in the run lock; the run lock moves to the
+   event append and the lane-table write. The serial run is one
+   implicit lane, so its behaviour and tests do not change.
+2. Validation of `units` in the analyzer step and fan-out. Tests:
+   overlap, prefix overlap, a cycle in `after`, an unknown unit, a
+   path outside `touches`, a test path that already exists.
+3. `integrate`: integration lock, merge, rerun of the merged tests,
+   rollback, blame by failing lane, integration green. Tests: a
+   clean merge; the merging lane's own test fails (lane reopened);
+   an already-merged lane's test fails (integration green); green
+   refused for writing another unit's file (straight to integration
+   green); an injected textual conflict that pauses the run; two
+   lanes finishing together merge in unit-id order.
+4. Budget shares, reclaim, lane pause/resume. Tests: an exhausted
+   lane pauses while a sibling completes; the sibling's unspent
+   share is granted to the paused lane on merge; the run total never
+   exceeds the serial caps.
+5. Runner pool, per-lane board rows, rate-limit backoff. Tests with
+   `tests/fake_omp.py` and two lanes: the steps interleave, neither
+   lane's commits appear in the other's worktree, a lane running
+   tests does not make the other lane's `act` fail as busy, the
+   event chain verifies, and a fake 429 session uses no attempt and
+   lowers the pool size.
+6. `integration_failures` in `limits` and `retro`, and calibrated
+   `max_lanes`.
+7. A live run on a TypeScript project with three units (two
+   independent, one `after` both). Wall time and reported cost are
+   compared with the same task run serially (`units` omitted), with
+   the same breakdown as "Where serial time goes".
+
+### Where serial time goes (measured before building)
+
+From the live FizzBuzz run `fizz-2` (TypeScript, Vitest, ESLint,
+tsc; 10 cycles, two reviews, one review-fix round). Sources: event
+timestamps in `runs/fizz-2.events.jsonl`, message timestamps and
+reported usage in each session transcript, and `duration_s` in each
+check's observation. Active time excludes the 24 s the run sat paused
+for a human.
+
+| Bucket | Seconds | Share |
+|---|---|---|
+| model turns, all roles | 276.5 | 61% |
+| omp session start and stop in tdd steps, about 3 s × 25 sessions | ~75 | ~16% |
+| core checks inside tdd steps (red tests 12.0, green tests 14.5, green lint 9.0) | 35.5 | 8% |
+| outside sessions (probes, final, 4 gates, board polling) | 53.2 | 12% |
+| unattributed (analyzer and reviewer timing gaps, see limits below) | ~15 | ~3% |
+| **active total** | **454.9** | |
+
+Per role, wall time and reported cost (cost is the provider's
+usage report, not verified billing):
+
+| Role | Sessions | Wall s | Model s | Cost $ |
+|---|---|---|---|---|
+| red | 13 | 181.6 | 116.8 | 0.61 |
+| green | 10 | 93.7 | 56.3 | 0.22 |
+| refactor | 2 | 13.3 | 4.7 | 0.04 |
+| analyzer | 2 | 20.0 | n/a (one message) | 0.06 |
+| reviewer (opus, high) | 3 | 93.1 | 98.7 | 0.62 |
+
+What follows from it:
+
+- **Model time dominates**, and in a serial run the tdd share of it
+  (red plus green, about 173 s) can only be cut by running units at
+  the same time. That is the lever this phase pulls, and it pays only
+  for lists with more than one unit.
+- **Session start is the next cost (~16%).** Each step is a fresh
+  omp process, and red writes about 8 to 9k prompt tokens to cache per
+  session. Keeping one red session across cycles would cut both, but
+  it gives up a fresh, owned context per step (Factor 3) and lets one
+  item's reasoning leak into the next. Not proposed; recorded as the
+  trade-off.
+- **Checks are cheap here (8%).** The 10-second suite target holds,
+  so integration reruns are affordable. A slow suite would change
+  that.
+- **Red is the expensive TDD role**: two thirds of the tdd-role
+  model time and 70% of its cost, because each red reads the code
+  and the tests and runs the suite before answering.
+- Measurement limits: the analyzer's model time reads 0 because its
+  session has a single assistant message; the reviewer's wall and
+  model sums do not match because one of its three sessions was a
+  retry whose time is attributed to the next event. One run of a toy
+  task; the shares are a direction, not a calibration.
+
+### As built
+
+Where the code differs from the text above, the code wins:
+
+- **Read-only commands take no lock.** `context`, `status` and
+  `tool-schema` (with or without `--unit`) read atomically written
+  files and lock nothing, so a reader never fails as busy while a
+  lane runs its tests.
+- **Shares.** At fan-out the lanes together get 3/4 of the remaining
+  `op_limit` and `cycle_limit`, split by item count; the rest plus
+  rounding is the reserve for integration and the cross-unit
+  refactor. Cost is not carved: an `act` input carries no spend, so
+  each lane records `budget.cost_share`, and the per-session
+  `--omp-max-cost` stays the runner's bound. A human can resume a
+  `lane-budget` pause with `resume --unit U --op-limit N` or
+  `--cycle-limit N`.
+- **Merge order is enforced.** `integrate` on a lane that is not
+  first in order is refused and names the lane that is.
+- **Integration green starts from the merge result.** The
+  integration branch stays at the merge commit; `pending_merge`
+  records the pre-merge tip, and the merge is recorded only when the
+  integration green passes. Rollback to the pre-merge tip happens for
+  the own-tests route and for conflicts.
+- **The scope-refused route** re-merges onto the current tip and
+  counts a second repair; it is recorded as one failure with route
+  `scope-refused`.
+- **Blame is by name.** The core attributes a failure to the merging
+  lane only when every failing test name or file belongs to it; any
+  other failure goes to the integration green.
+- **Review-fix may declare units again**, with new unit ids only
+  (reuse is refused as `unit-id`).
+- **Lane worktrees get the task's `verify_deps`** as symlinks to the
+  run worktree's copies, so red can run the suite in its lane. Each
+  path is added to the repository's shared `info/exclude`, so the
+  link never shows as a dirty path; that also hides it in the run
+  worktree.
+- **Rate limits** are detected from omp's frames: `auto_retry_end`
+  with `success: false`, or a prompt ending on an assistant message
+  with `stopReason: "error"` and an error naming 429, 529, rate
+  limit, overloaded or too many requests. A wall-clock timeout while
+  omp is still retrying also counts. Runner flags: `--lane-cap`
+  (default 4), `--backoff-base` (30 s), `--backoff-max` (600 s); six
+  refusals in a row mark the row stuck.
+- **Calibration.** `calibrate --apply` writes a calibrated
+  `max_lanes` to `limits.json`, and prepare uses it as the default; a
+  task or profile value still wins.
+
+Board `next` vocabulary the runner follows:
+
+| Row | `next` | Meaning |
+|---|---|---|
+| run | `lanes: in flight` | lanes open; never stepped, never stuck |
+| run | `green: green` | integration green (run tdd step `integration-green`); context carries `integration: true` and `writable` |
+| run | `refactor: refactor` | cross-unit refactor after the last merge |
+| run | `tdd-step` | final, after the last merge |
+| lane | `red: red`, `green: green`, `refactor: refactor` | the lane's own loop; a reopened lane shows `green: green` |
+| lane | `tdd-step: integrate` | first done lane in merge order |
+| lane | `waiting: after U1, U2` | dependencies not merged, a done lane behind another in merge order, or `after integration-green` |
+| lane | `human: answer '<q>'` | the lane is paused |
+
+### Live comparison (build step 7)
+
+One task, run four times on the same TypeScript project (Vitest,
+ESLint, tsc; reviewer on opus with high thinking): `slugify` in
+`src/slug.ts`, `countWords` in `src/wordcount.ts`, and `report` in
+`src/report.ts`, which uses both. Times are measured from the
+analyzer's list to the event in question. Cost is the provider's
+reported usage, not verified billing.
+
+| Run | Lanes | List to first candidate (s) | List to verified (s) | Cycles | Sessions | Cost $ |
+|---|---|---|---|---|---|---|
+| `text-serial` (`max_lanes: 1`) | none | 482 | 513 | 17 | 44 | 1.71 |
+| `text-2` (analyzer chose one unit) | none | 462 | 500 | 17 | 44 | 1.69 |
+| `text-3` | U1 ∥ U2, then U3 | **317** | 469 | 18 + 2 review-fix | 54 | 2.12 |
+| `text-1` (before the two prompt fixes below) | U1 ∥ U2, then U3 | n/a (paused for a human) | n/a (two invocations, ~665 s) | 21 | 65 | 2.73 |
+
+- **Speed.** In `text-3` U1 ran from 13 s to 156 s and U2 from 16 s
+  to 224 s, side by side. U3 started at 236 s, after U2 merged, and
+  finished at 309 s. The first candidate came about 1.5 times sooner
+  than in the two serial runs. The run as a whole was 31 to 44 s
+  faster, because its reviewer asked for changes and the review-fix
+  round (analyzer, 2 cycles, final, gates, a second review) took
+  152 s. The serial reviewers approved on the first round.
+- **Cost** was 24% above serial. Part of that is the extra review
+  round; the rest is lane overhead: more red sessions per cycle
+  (23 for 19 cycles, against 18 for 17) and a refactor per lane.
+- **The review finding was a real gap, made easier by lanes.** U3's
+  analyzer items all used the title "Hello World", so a `report` that
+  skipped `slugify` passed every test. The reviewer caught it with a
+  mutant. U3's red sees only U3's items, so nothing in its lane
+  pushes it to exercise slugify's harder inputs.
+- **Two prompt fixes came out of these runs.**
+  - `text-1`: the analyzer gave each unit one exact test file, and
+    red, used to writing a new file per test, was refused 8 times as
+    `lane-scope` and then escalated. Red's context now carries
+    `created_tests`, and the refusal names the file red may extend;
+    the analyzer prompt prefers a test directory per unit. `text-3`
+    had no `lane-scope` refusal.
+  - `text-2`: the analyzer read `touches: null` as "no path is
+    inside touches", and read the prompt's "neither needs the
+    other's code" as ruling out `report`. The prompt now says
+    `touches: null` allows every path and that a dependent part is a
+    unit with `after`.
+- **Limits.** One task, one run per arm after the fixes. Whether the
+  analyzer splits is the model's call and varied between `text-1`
+  and `text-2` under the same prompt; one run after the prompt fix
+  does not show that it now splits reliably.
+
 ## Layout
 
 ```text
@@ -729,7 +1165,7 @@ examples/                a sample task file
   tested, not inferred from instructions.
 - Host declarations (model name, sandbox claim, cost) are not
   verified facts. Spend is reported usage, estimated cost, or
-  unknown — never presented as verified billing.
+  unknown, and never presented as verified billing.
 - `local-verified` is not QC approval or product acceptance.
 - Evidence stored outside the state home, or reachable through a
   symlink, is rejected. A same-user process can forge local files;
@@ -738,14 +1174,14 @@ examples/                a sample task file
 
 ## Roadmap (phases from Michael's Turbo mapping)
 
-Entries 1–7 are history: they record what was built then, and the
+Entries 1 to 7 are history: they record what was built then, and the
 commands and roles they name (`red`, `stage`, `replay`, `green`,
 test-writer, builder, QA, security) were replaced in Phase 8, below.
 
-1. **Minimal evidence runner** — this scaffold: init, prepare, gate,
+1. **Minimal evidence runner.** This scaffold: init, prepare, gate,
    manifest, status, pause/resume, and the first command lane
    (history: red, stage, replay, green).
-2. **State machine hardening — DONE 2026-11-11.** Property tests
+2. **State machine hardening: DONE 2026-11-11.** Property tests
    on transitions (`tests/test_model.py`: the matrix is written as
    an independent spec, so weakening a transition fails the test),
    explicit `stop`, supersession instead of unsafe reset
@@ -753,20 +1189,20 @@ test-writer, builder, QA, security) were replaced in Phase 8, below.
    the disposable worktree/branch; active runs must be stopped
    first), and resume re-validates HEAD, test blob, *and* every
    evidence hash before continuing.
-3. **Safe execution — DONE 2026-11-11.** Forbidden bypass flags
+3. **Safe execution: DONE 2026-11-11.** Forbidden bypass flags
    (`--dangerously-skip-permissions`, `--no-sandbox`,
    `--bypass-sandbox`) rejected at admission and at launch;
    credential/git-redirecting env vars stripped from every
    subprocess; verification commands run with an empty verify-home
    and, where the OS supports it, under a Landlock cage (worktree +
-   verify-home writable, system dirs read-only, all TCP denied —
+   verify-home writable, system dirs read-only, all TCP denied;
    verified on this machine: localhost connect and /tmp write both
    denied, normal commands unaffected); two required safety probes
    (`forbidden_credential_access`, `external_effect_restriction`)
    run at `prepare` and on demand via `t12 probe`, recorded as
    evidence; a task can set `require_probes` to hard-gate the lane
    on passing probes (then red/gate/replay).
-4. **Evidence integrity — DONE 2026-11-11.** Hash-chained event
+4. **Evidence integrity: DONE 2026-11-11.** Hash-chained event
    log: every event links to the previous hash, carries a sequence
    number, and records a digest of the run record as it stood after
    that command. `t12 verify` audits the chain, re-hashes every
@@ -776,9 +1212,9 @@ test-writer, builder, QA, security) were replaced in Phase 8, below.
    re-pins HEAD/test-blob, and checks the manifest against its
    issued hash. `check` and
    `resume` refuse on a broken chain; manifest issuance is itself a
-   recorded event. No signing key: the chain detects edits, it does
+   recorded event. No signing key: the chain detects edits but does
    not prevent a full rewrite by the machine's owner.
-5. **Limits — DONE 2026-11-11.** Measurements are recorded at
+5. **Limits: DONE 2026-11-11.** Measurements are recorded at
    every terminal transition (wall time, ops, repairs, gates).
    `t12 report` shows per-run usage vs budget, cap hits, and
    aggregates; `t12 calibrate` recommends defaults from the p90 of
@@ -787,9 +1223,9 @@ test-writer, builder, QA, security) were replaced in Phase 8, below.
    writes them to `limits.json` with `--apply`. `prepare` uses a
    task's own budgets first, calibrated defaults next, built-ins
    last, and records which source applied.
-6. **Roles — DONE 2026-11-11, reshaped in Phase 8.** Each role runs
+6. **Roles: DONE 2026-11-11, reshaped in Phase 8.** Each role runs
    as a separate worker invocation with its own session id. One
-   session serves exactly one role per run — the factory refuses a
+   session serves exactly one role per run, and the factory refuses a
    session already bound to another role. Then: the test-writer
    could not stage, the builder could not review. Now: the red
    session cannot write green's patch and the reviewer cannot do
@@ -800,20 +1236,25 @@ test-writer, builder, QA, security) were replaced in Phase 8, below.
    candidate. A new candidate voids prior reviews and resets gates,
    and the next review starts from the voided report (review
    remembers, via `t12 context --role reviewer`).
-7. **Delivery — DONE 2026-11-11.** The core never talks to the
+7. **Delivery: DONE 2026-11-11.** The core never talks to the
    network and holds no credentials: adapters (`adapters/github.py`,
    `adapters/asana.py`, stdlib-only) do the remote work and write a
    JSON report, and `t12 deliver` records the report as evidence.
    Delivery needs a `local-verified` run with an intact chain and
-   HEAD on the candidate, and is pinned to the reviewed head SHA —
+   HEAD on the candidate, and is pinned to the reviewed head SHA, so
    a report for any other commit is refused. Outcomes are exactly
    `confirmed` (remote state read back and matching), `rejected`
    (remote definitively said no), `denied` (mutation refused for
    permission), `uncertain` (state unknown). An uncertain outcome
    blocks further delivery for that adapter until an explicit
-   `--resolves` read-back report arrives — never a blind retry.
+   `--resolves` read-back report arrives, and never retries blindly.
    The adapter never merges; a human merges the PR.
-8. **TDD lane — DONE (Phase 8).** The red/stage/replay/green lanes
+8. **TDD lane: DONE (Phase 8).** The red/stage/replay/green lanes
    and the test-writer, builder, QA and security roles were replaced
    by `prepare -> tdd -> gates -> review -> check`, run by omp
    workers; see "TDD lane (Phase 8)".
+9. **Parallel TDD lanes: BUILT, live-tested.** The
+   analyzer declares units with disjoint `owns`. Each unit runs as a
+   lane with its own record, lock, branch, worktree and budget share.
+   One deterministic `integrate` step merges lanes and reruns all red
+   tests. See "Parallel TDD lanes (Phase 9)".

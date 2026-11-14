@@ -67,8 +67,8 @@ lane and must be right: `test_command`, the argv that runs the
 tests; `test_globs`, which files are tests (red writes them, green
 and refactor never see them); and `lint_command`, the lint argv or
 `null`. Gates are the commands the project already uses to check a
-change (the existing suite, e2e), as argv arrays. The README
-sections "The TDD lane" and "Project profile" list every key. Run
+change (the existing suite, e2e), as argv arrays. The sections "The
+TDD lane" and "Project profile" of `docs/reference.md` list every key. Run
 each of these commands once in a clean checkout before you rely on
 it; they run sandboxed (Landlock on Linux), and a test that binds a
 port or reads the user's home can fail there and nowhere else.
