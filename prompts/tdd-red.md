@@ -25,6 +25,11 @@ may not have a stub: it changes no non-test file.
   new file next to the old one.
 - Non-test files: only the stub described above, and none when you add
   items.
+- Every file you write, test or stub, must be inside the task's
+  `touches` (when the context lists some): the core refuses a call whose
+  change reaches outside them (`red-touches`). Put a new test in one of
+  the listed test paths, and add to a test file you created in this run
+  rather than inventing a new file name.
 
 ## Your context (JSON after the `--- context (JSON) ---` marker)
 
@@ -38,6 +43,7 @@ may not have a stub: it changes no non-test file.
 - `test_command`, `test_globs`: how the suite runs; which paths count as
   test files.
 - `red_stub_max_lines`: stub budget for non-test files.
+- `touches`: the paths the task may change (`null` = no limit).
 - `redundant`: item texts the analyzer pruned as redundant (same
   equivalence class as a kept item). `[]` when none.
 - `files`: the repository file listing. Read what you need from disk.

@@ -32,10 +32,12 @@ an issue, so the profile is the floor:
   attempt_limit): the task wins.
 - max_lanes: how many tdd lanes may run at once (default 3, the task
   wins); 1 takes the serial path whatever units the analyzer declares.
-- protected_paths, security_review_paths, roles, intake, skills: profile
-  only. `skills` pins third-party skills per role (repo, commit, hash);
-  the core checks their shape and picks a role's applicable pins from
-  the repo at the base commit, and never fetches anything.
+- protected_paths, security_review_paths, roles, intake, skills,
+  delivery: profile only. `skills` pins third-party skills per role
+  (repo, commit, hash); the core checks their shape and picks a role's
+  applicable pins from the repo at the base commit, and never fetches
+  anything. `delivery` names the forge the runner opens the change
+  request on once a run is local-verified.
 
 Roles are names a project picks, each mapped to a kind the core
 enforces (see tools.TOOLS). The built-in roles are always present; a
@@ -129,8 +131,9 @@ TASK_KEYS = {
     "max_lanes": (int, _task_wins),
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
-PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills")
-OTHER_KEYS = ("version", "name", "roles", "intake", "skills")
+PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery")
+OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery")
+DELIVERY_ADAPTERS = ("github", "gitlab", "bitbucket")
 
 
 def _paths(key, value):
@@ -180,6 +183,13 @@ def _intake(value):
     adapter does. Validated here so a typo fails at `prepare`, not at
     the next intake run."""
     where = f"{PATH}: intake"
+    if isinstance(value, dict) and value.get("adapter") == "asana-tasks":
+        if set(value) - {"adapter", "project", "tag"}:
+            raise StateError(f"{where} must be an object of adapter, project and tag")
+        for key in ("project", "tag"):
+            if not isinstance(value.get(key), str) or not value[key].strip():
+                raise StateError(f"{where}: {key} must be a non-empty string")
+        return dict(value)
     if not isinstance(value, dict) or set(value) - {"adapter", "repo", "label"}:
         raise StateError(f"{where} must be an object of adapter, repo and label")
     adapter, repo, label = value.get("adapter"), value.get("repo"), value.get("label")
@@ -305,6 +315,16 @@ def applicable_skills(run_profile, role, repo, commit):
     return chosen
 
 
+def _delivery(value):
+    """Which forge the runner opens change requests on."""
+    where = f"{PATH}: delivery"
+    if not isinstance(value, dict) or set(value) != {"adapter"}:
+        raise StateError(f"{where} must be an object with only an adapter")
+    if value["adapter"] not in DELIVERY_ADAPTERS:
+        raise StateError(f"{where}: adapter must be one of {list(DELIVERY_ADAPTERS)}")
+    return {"adapter": value["adapter"]}
+
+
 def review_roles(roles):
     return sorted(name for name, spec in roles.items() if spec["kind"] == "review")
 
@@ -331,7 +351,7 @@ def parse(text):
     for key in SCOPE_KEYS:
         data[key] = _paths(key, data.get(key, []))
     # A profile that lists no deps allows none: otherwise a task's list
-    # would win outright, and deps load from the builder's worktree.
+    # would win outright, and deps load from the worker's worktree.
     if text is not None:
         data.setdefault("verify_deps", [])
     data["roles"] = _roles(data.get("roles", {}))
@@ -339,6 +359,8 @@ def parse(text):
         data["intake"] = _intake(data["intake"])
     if "skills" in data:
         data["skills"] = _skills(data["skills"], data["roles"])
+    if "delivery" in data:
+        data["delivery"] = _delivery(data["delivery"])
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:

@@ -44,7 +44,12 @@ step. Forges and trackers are reached only through the adapters in
 - **One reviewer for quality and security**, on a model you choose,
   bound to the candidate commit.
 - **Delivery adapters** for GitHub, GitLab, Bitbucket and Asana, plus
-  intake from GitHub and GitLab issues. The adapter never merges.
+  intake from GitHub issues, GitLab issues and Asana tasks. With a
+  `delivery` key in the profile the runner pushes a verified run and
+  opens the change request itself. The adapter never merges.
+- **A guided setup.** `bin/t12-wizard` sets up a workspace with a
+  factory clone and a product clone, takes issues, runs the factory and
+  delivers.
 
 ## How it works
 
@@ -104,7 +109,10 @@ bin/t12 board --home /path/to/state-home
 ```
 
 The runner stops when every run is `local-verified` or waiting for a
-human. Answer a paused run with `t12 resume --answer`, then deliver:
+human. If the profile has a `delivery` key it also pushes each verified
+run and opens the change request (set `GITHUB_TOKEN`, `GITLAB_TOKEN` or
+`BITBUCKET_TOKEN`). Answer a paused run with `t12 resume --answer`,
+then deliver by hand when the profile names no forge:
 
 ```sh
 python3 adapters/github.py create-pr --home /path/to/state-home \

@@ -513,6 +513,17 @@ is strict:
   and read it back; they never merge, and there is no merge command. A human
   merges. Child-PR auto-merge is not a default; enabling it
   would be a delivery decision for the maintainer.
+- **The runner delivers when the profile says so.** A profile
+  `delivery` key (`github`, `gitlab` or `bitbucket`, validated at
+  `prepare` and copied into the run as `delivery_adapter`) tells the
+  runner which adapter to call once a run is `local-verified`: push the
+  branch, run the adapter, record the report with `t12 deliver`. The
+  profile is the only place the choice lives, so a task or an issue
+  cannot send a run's branch to another forge. The runner reads the
+  token from its own environment and the core still holds none. Each
+  failed step prints the command that retries it; a `confirmed`
+  delivery is never repeated and an `uncertain` one goes to the
+  notifier, for `--resolves`.
 
 What the factory cannot prove: the adapter's report is a claim.
 The core checks the report's shape and its head pinning, and the
@@ -648,6 +659,28 @@ filtered.
 - **D8.** `test_command`, `lint_command`, `assertion_pattern`,
   `failure_count_pattern` and `test_globs` live in the project
   profile, so red, green, refactor and final run one command.
+- **D9.** A setUp that fails because the code under test does not exist
+  yet is not a red. The older flow accepted it; here a red must match
+  `assertion_pattern` and show a failure at its named last assertion,
+  and an `ImportError` or a missing file does neither. The stub
+  budget (`red_stub_max_lines`) is how missing code gets to fail at an
+  assertion, and the refusal says so.
+- **D10.** No `step_retries` key. The runner returns a refused call to
+  the same omp session (at most three refusals, `max_rejections` in
+  `omp_rpc`), the core counts a refused step against `attempt_limit`
+  (past which the run pauses with an escalation) and every malformed
+  call against the operation limit. A runner-side retry
+  count would be a second limit that nothing else enforces.
+- **D11.** A worker session is bound to the run it started on. The
+  runner passes the run's `run_id` to `t12 act`; if the run was
+  superseded in the meantime the call is refused, the rejection goes
+  on the archived run's event log (the live run's log is not touched)
+  and the session ends, because no retry can help.
+- **D12.** A `final` refused because a changes-requested review was
+  answered with no new commit pauses the run with an escalation of
+  kind `no-new-commit` whose question carries the review report. Time
+  in `paused` does not count against the time budget, so waiting for
+  that answer costs the run nothing.
 
 ### What this does not claim
 
@@ -1124,6 +1157,7 @@ reported usage, not verified billing.
 
 ```text
 bin/t12                  launcher (resolves the package from its own path)
+bin/t12-wizard           guided setup: setup/take/run/status/answer/deliver/sync
 bin/t12-container        same CLI inside docker run: no network, read-only root,
                          paths mounted at their host locations
 container/Dockerfile     default t12-container image: python:3.12 + pytest
@@ -1150,8 +1184,11 @@ t12/
 prompts/                 owned prompts, versioned (Factor 2): tdd-analyzer,
                          tdd-red, tdd-green, tdd-refactor, reviewer, omp-worker
 skills/                  orchestrator, reviewer (super-board roles)
-adapters/                delivery adapters + shared HTTP/outcome rules;
-                         runner.py, omp_rpc.py, omp/guard.ts (omp worker host),
+adapters/                delivery and intake adapters (github, gitlab, bitbucket,
+                         asana, github-issues, gitlab-issues, asana-tasks) + shared
+                         HTTP/outcome/spec-check rules in common.py;
+                         runner.py (drives omp workers, delivers), omp_rpc.py,
+                         omp/guard.ts (omp worker host),
                          workspace.py (blind worktree), fb_report.py
 tests/                   unittest, synthetic git repos, fake HTTP servers, no network, no model
 scripts/smoke.sh         happy-path smoke on a disposable repo

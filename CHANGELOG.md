@@ -35,6 +35,40 @@ reports as [`SECURITY.md`](SECURITY.md) describes.
 - `T12_TOOLCHAIN_DIRS` makes host toolchains readable inside the
   Landlock cage.
 - FactoryBench attempt reporting (`adapters/fb_report.py`).
+- Delivery from the runner: a profile `delivery` key
+  (`{"adapter": "github" | "gitlab" | "bitbucket"}`) makes the runner
+  push a `local-verified` run, open the change request and record it
+  with `t12 deliver`. A failed step prints the command that retries it,
+  and an `uncertain` delivery is never repeated.
+- Asana tasks intake (`adapters/asana-tasks.py`): tagged tasks become
+  task files, sub-tasks run on their own and a task with open sub-tasks
+  never runs.
+- Intake enforces `docs/spec-standard.md` (`spec_check` in
+  `adapters/common.py`): at most 10 criteria, a `Touches:` line, no open
+  questions, no parent issues. `python3 adapters/common.py spec-check`
+  runs the same rules on a draft. GitHub intake reads native "blocked
+  by" relations.
+- `bin/t12-wizard`: `setup`, `take`, `status`, `run`, `answer`,
+  `deliver` and `sync` for a workspace of a factory clone and a product
+  clone. `run` starts the omp runner and prints a progress line.
+- A worker's output for a superseded run is refused: the run record
+  carries a `run_id`, the runner passes it to `t12 act --run-id`, and
+  the refusal ends the omp session and is logged on the archived run.
+- Time spent in `paused` no longer counts against the time budget.
+- A `final` refused because a changes-requested review was answered with
+  no new commit pauses the run, with the review report in the question.
+- A red refused for an error that is not an assertion failure says to
+  add a stub when the code under test does not exist yet.
+
+### Left out on purpose
+
+- `step_retries` (retry a rejected step with a hint, then escalate). The
+  omp runner returns a refused call to the same session and the core's
+  `attempt_limit` escalates, so nothing would enforce the key.
+- Accepting a setUp that loads code not written yet as a red. A red
+  must fail at its named last assertion; a stub makes missing code fail
+  there.
+- The agy runner schema flags; agy is not a worker.
 
 ### Docs
 

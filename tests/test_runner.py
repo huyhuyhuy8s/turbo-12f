@@ -25,7 +25,7 @@ TEST_COMMAND = ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"]
 sys.path.insert(0, os.path.join(ROOT, "adapters"))
 import runner  # noqa: E402
 import skills  # noqa: E402
-from t12 import model  # noqa: E402
+from t12 import model, store  # noqa: E402
 
 
 class ContextJsonCase(unittest.TestCase):
@@ -509,6 +509,78 @@ class RunnerMisbehaviourTest(RunnerOmpCase):
             fcntl.flock(lock, fcntl.LOCK_EX)
             self.drive(expect=1)
         self.assertEqual(self.calls(), [])
+
+    def supersede_hook(self):
+        """The shell command fake omp runs, once, before its first call: it stops
+        the run and prepares it again with --supersede while the call is in flight,
+        and keeps a copy of what prepare left."""
+        script = os.path.join(self.tmp.name, "supersede.py")
+        snap = os.path.join(self.tmp.name, "snap")
+        with open(script, "w") as fh:
+            fh.write(f"""import os, shutil, subprocess
+t12, home = {T12!r}, {self.home!r}
+subprocess.run([t12, "stop", "--home", home, "--task-id", "demo-1", "--reason", "x"], check=True)
+subprocess.run([t12, "prepare", "--home", home, "--task",
+                {os.path.join(self.queue, "demo-1.json")!r}, "--supersede"], check=True)
+os.makedirs({snap!r})
+for name in ("demo-1.json", "demo-1.events.jsonl"):
+    shutil.copy(os.path.join(home, "runs", name), os.path.join({snap!r}, name))
+""")
+        return f"{sys.executable} {script}"
+
+    def test_a_superseded_runs_in_flight_output_is_refused_and_logged_on_the_old_run(self):
+        self.extra_env = {"FAKE_OMP_STATE": self.fake_state,
+                          "FAKE_OMP_BEFORE_CALL": self.supersede_hook()}
+        out = self.drive(omp_mode="supersede")
+        self.assertIn("superseded", out)
+        # The refused call ends its session: the model is not asked to fix what it cannot.
+        self.assertEqual(len(self.sessions()), 1)
+        runs = os.path.join(self.home, "runs")
+        snap = os.path.join(self.tmp.name, "snap")
+        # The new run is exactly as prepare left it.
+        with open(os.path.join(snap, "demo-1.json")) as fh:
+            before = json.load(fh)
+        now = self.run_record()
+        for key in ("phase", "escalations", "budgets", "tdd"):
+            self.assertEqual(now[key], before[key], key)
+        self.assertEqual(now["phase"], "ready")
+        self.assertEqual(self.lines(os.path.join(runs, "demo-1.events.jsonl")),
+                         self.lines(os.path.join(snap, "demo-1.events.jsonl")))
+        # The archived log ends with the rejection naming the old run.
+        [archived] = [f for f in os.listdir(runs)
+                      if f.startswith("demo-1.superseded-") and f.endswith(".events.jsonl")]
+        events = [json.loads(e) for e in self.lines(os.path.join(runs, archived))]
+        self.assertEqual(events[-1]["type"], "worker-output-rejected")
+        old_id = events[-1]["detail"]["run_id"]
+        self.assertTrue(old_id)
+        self.assertNotEqual(old_id, now["run_id"])
+        self.assertIn(old_id, out)
+        prev = model.genesis_prev("demo-1")
+        for index, event in enumerate(events):
+            self.assertEqual(event["seq"], index + 1)
+            self.assertEqual(event["prev"], prev)
+            content = {k: v for k, v in event.items() if k != "hash"}
+            self.assertEqual(event["hash"], store.sha256_bytes(store.canonical_json(content)))
+            prev = event["hash"]
+
+    def test_a_run_nobody_superseded_takes_its_workers_calls_with_its_run_id(self):
+        self.drive()
+        self.assertEqual(self.run_record()["phase"], "local-verified")
+        self.assertEqual(self.worker_events()[0]["type"], "worker-output")
+
+    def test_step_retries_is_not_a_profile_key(self):
+        # The omp runner returns a refused call to the same session and the core's
+        # attempt limit escalates; nothing would enforce a runner-side retry count.
+        os.makedirs(os.path.join(self.repo, ".t12"), exist_ok=True)
+        with open(os.path.join(self.repo, ".t12", "project.json"), "w") as fh:
+            json.dump({"version": 1, "step_retries": 2}, fh)
+        for cmd in (["add", "."], ["commit", "-qm", "profile"]):
+            subprocess.run(["git", *cmd], cwd=self.repo, check=True)
+        result = subprocess.run(
+            [T12, "prepare", "--home", self.home, "--task", os.path.join(self.queue, "demo-1.json")],
+            capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("step_retries", result.stdout + result.stderr)
 
 
 class RunnerSkillsTest(RunnerOmpCase):

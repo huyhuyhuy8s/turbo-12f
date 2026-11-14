@@ -1,0 +1,370 @@
+#!/usr/bin/env python3
+"""t12-wizard: guided setup for a turbo-12f workspace. Standard library, git and gh only."""
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+
+WORKSPACE = "t12-workspace.json"
+TRUNK = "t12-trunk"
+LABEL = "factory"
+DEFAULT_FACTORY = "https://github.com/huyle-gradion/turbo-12f"
+FIELDS = (  # (key, flag, prompt)
+    ("product_repo", "--product-repo", "Product repo URL"),
+    ("work_dir", "--work-dir", "Work folder"),
+    ("commit_name", "--commit-name", "Commit name"),
+    ("commit_email", "--commit-email", "Commit email"),
+    ("rules_branch", "--rules-branch", "Rules on the product's main branch or a local-only branch (main/local)"),
+)
+
+
+class StepFailed(Exception):
+    pass
+
+
+def run(step, cmd, cwd=None, retry=None):
+    try:
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    except OSError as e:
+        raise StepFailed(f"{step}: {e}\nretry: {retry}")
+    if r.returncode != 0:
+        err = (r.stderr or r.stdout).strip()
+        raise StepFailed(f"setup failed at step '{step}': {shlex.join(cmd)}\n{err}\nretry: {retry}")
+    return r
+
+
+def slug(repo):
+    parts = repo.rstrip("/").removesuffix(".git").replace(":", "/").split("/")
+    return "/".join(parts[-2:])
+
+
+def confirm(question):
+    try:
+        return input(question + " [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:
+        return False
+
+
+def cmd_setup(args, retry):
+    values = {}
+    for key, flag, prompt in FIELDS:
+        v = getattr(args, key)
+        if v is None:
+            try:
+                v = input(prompt + ": ").strip()
+            except EOFError:
+                sys.exit(f"missing {flag}; give it as a flag or run in a terminal")
+        values[key] = v
+    if values["rules_branch"] not in ("main", "local"):
+        sys.exit("--rules-branch must be main or local")
+    if args.test_command:
+        values["test_command"] = args.test_command
+    work = os.path.abspath(values["work_dir"])
+    values["work_dir"] = work
+    ws_path = os.path.join(work, WORKSPACE)
+
+    if os.path.exists(ws_path):
+        with open(ws_path) as f:
+            existing = json.load(f)
+        if existing == values:
+            print("workspace already set up; nothing to change")
+            return
+        if not args.yes and not confirm(f"{ws_path} differs from these answers. Overwrite?"):
+            print("left the workspace unchanged")
+            return
+
+    if subprocess.run(["gh", "auth", "status"], capture_output=True).returncode != 0:
+        sys.exit("no forge login found; run `gh auth login` and retry:\n" + retry)
+
+    factory, product = os.path.join(work, "factory"), os.path.join(work, "product")
+    os.makedirs(work, exist_ok=True)
+    for name, url, dest in (("clone factory", args.factory_repo, factory),
+                            ("clone product", values["product_repo"], product)):
+        if not os.path.isdir(dest):
+            run(name, ["git", "clone", url, dest], retry=retry)
+    for dest in (factory, product):
+        run("set commit identity", ["git", "config", "user.name", values["commit_name"]], cwd=dest, retry=retry)
+        run("set commit identity", ["git", "config", "user.email", values["commit_email"]], cwd=dest, retry=retry)
+    if values["rules_branch"] == "local":
+        exists = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "refs/heads/" + TRUNK],
+                                cwd=product, capture_output=True).returncode == 0
+        run("create trunk branch", ["git", "checkout"] + ([] if exists else ["-b"]) + [TRUNK],
+            cwd=product, retry=retry)
+        profile = os.path.join(product, ".t12", "project.json")
+        os.makedirs(os.path.dirname(profile), exist_ok=True)
+        with open(profile, "w") as f:
+            starter = {"name": os.path.basename(product), "gates": [],
+                       "intake": {"adapter": "github-issues", "repo": slug(values["product_repo"]),
+                                  "label": LABEL}}
+            if args.test_command:
+                starter["test_command"] = shlex.split(args.test_command)
+            json.dump(starter, f, indent=2)
+            f.write("\n")
+        run("commit starter profile", ["git", "add", ".t12/project.json"], cwd=product, retry=retry)
+        staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=product).returncode != 0
+        if staged:
+            run("commit starter profile", ["git", "commit", "-m", "chore: starter t12 profile"],
+                cwd=product, retry=retry)
+    trunk = TRUNK if values["rules_branch"] == "local" else "main"
+    run("t12 init", [os.path.join(factory, "bin", "t12"), "init", "--repo", product,
+                     "--home", os.path.join(work, "state"), "--trunk", trunk], retry=retry)
+    run("create intake label", ["gh", "label", "create", LABEL, "--repo", slug(values["product_repo"]),
+                                "--force"], retry=retry)
+    with open(ws_path, "w") as f:
+        json.dump(values, f, indent=2)
+        f.write("\n")
+    print(f"workspace ready: {ws_path}")
+    if values["rules_branch"] == "local" and not args.test_command:
+        print(f"note: the starter profile sets no test_command, and every run needs one: add it "
+              f"to .t12/project.json on {TRUNK} in {product} (or rerun setup with --test-command)")
+
+
+def load_workspace():
+    with open(WORKSPACE) as f:
+        return json.load(f)
+
+
+def cmd_take(args):
+    ws = load_workspace()
+    if subprocess.run(["gh", "auth", "status"], capture_output=True).returncode != 0:
+        sys.exit("no forge login found; run `gh auth login` and retry")
+    repo, work = slug(ws["product_repo"]), ws["work_dir"]
+    labelled = []
+    for n in args.issues:
+        r = subprocess.run(["gh", "issue", "edit", str(n), "-R", repo, "--add-label", LABEL],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            done = f"; labelled but not run through intake: {', '.join(map(str, labelled))}" if labelled else ""
+            sys.exit(f"could not label issue {n}: {(r.stderr or r.stdout).strip()}{done}")
+        labelled.append(n)
+    token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True).stdout.strip()
+    state = os.path.join(work, "state")
+    adapter = os.path.join(work, "factory", "adapters", "github-issues.py")
+    r = subprocess.run([sys.executable, adapter, "intake", "--repo", repo, "--label", LABEL,
+                        "--out-dir", os.path.join(state, "queue"), "--home", state],
+                       capture_output=True, text=True, env={**os.environ, "GITHUB_TOKEN": token})
+    results = {}
+    for line in r.stdout.splitlines():
+        m = re.match(r"(wrote|skipped|unchanged|has-run) \S*?(\d+)(?::\s*(.*))?$", line.strip())
+        if m:
+            results[int(m.group(2))] = (m.group(1), m.group(3) or "")
+    for n in args.issues:
+        verb, rest = results.get(n, (None, ""))
+        if verb in ("wrote", "unchanged"):
+            print(f"issue {n}: queued")
+        elif verb == "has-run":
+            print(f"issue {n}: skipped: {rest}")
+        elif verb == "skipped":
+            print(f"issue {n}: skipped: {rest}")
+        else:
+            print(f"issue {n}: not queued; intake said: {(r.stderr or r.stdout).strip() or 'nothing'}")
+    return 0 if r.returncode == 0 else 1
+
+
+def sentence(row):
+    task, nxt = row["task_id"], row.get("next") or ""
+    if nxt == "human: merge":
+        return f"{task}: finished and verified; deliver it."
+    if nxt.startswith("human: answer"):
+        return f"{task}: waiting for you; answer {nxt[len('human: answer'):].strip()}."
+    if nxt.startswith("stopped"):
+        return f"{task}: stopped ({nxt.partition(':')[2].strip() or row['phase']}); report it."
+    if nxt.startswith("human"):
+        return f"{task}: waiting for you; {nxt.partition(':')[2].strip()}."
+    return f"{task}: still in progress ({row['phase']}); rerun the factory to keep it moving."
+
+
+def cmd_status(args):
+    work = load_workspace()["work_dir"]
+    r = subprocess.run([os.path.join(work, "factory", "bin", "t12"), "board", "--home",
+                        os.path.join(work, "state"), "--json"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("could not read the board: " + (r.stderr or r.stdout).strip())
+    rows = json.loads(r.stdout)
+    if not rows:
+        print("No runs yet; start one with `t12-wizard take <issue number>`.")
+    for row in rows:
+        print(sentence(row))
+    return 0
+
+
+def read_board(work):
+    r = subprocess.run([os.path.join(work, "factory", "bin", "t12"), "board", "--home",
+                        os.path.join(work, "state"), "--json"], capture_output=True, text=True)
+    return json.loads(r.stdout) if r.returncode == 0 else []
+
+
+def cmd_run(args):
+    ws = load_workspace()
+    work = ws["work_dir"]
+    state, queue = os.path.join(work, "state"), os.path.join(work, "state", "queue")
+    queued = [f for f in os.listdir(queue) if f.endswith(".json")] if os.path.isdir(queue) else []
+    if not queued and not read_board(work):
+        print("Nothing to run: the queue is empty and no runs are active; add work with `t12-wizard take <issue number>`.")
+        return 0
+    interval = float(os.environ.get("T12_WIZARD_PROGRESS_SECS", "60"))
+    cmd = [sys.executable, os.path.join(work, "factory", "adapters", "runner.py"),
+           "--home", state, "--queue", queue]
+    for key, flag in (("omp_cmd", "--omp-cmd"), ("omp_profile", "--omp-profile"),
+                      ("omp_model", "--omp-model")):
+        if ws.get(key):
+            cmd += [flag, ws[key]]
+    with tempfile.TemporaryFile("w+") as err:
+        proc = subprocess.Popen(cmd, stderr=err, text=True)
+        steps = {}
+        while True:
+            try:
+                proc.wait(timeout=interval)
+                break
+            except subprocess.TimeoutExpired:
+                now = time.monotonic()
+                for row in read_board(work):
+                    if not row.get("busy"):
+                        continue
+                    step = (row["task_id"], row.get("next"))
+                    secs = int(now - steps.setdefault(step, now - interval))
+                    print(f"{row['task_id']}: {row.get('next') or row['phase']}, running for {secs}s", flush=True)
+        err.seek(0)
+        detail = err.read().strip()
+    if proc.returncode != 0:
+        sys.exit(f"the runner failed (exit {proc.returncode}):\n{detail}\nretry: t12-wizard run")
+    return 0
+
+
+def load_run(work, n):
+    path = os.path.join(work, "state", "runs", f"gh-{n}.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except OSError:
+        sys.exit(f"no run for issue {n}; start one with `t12-wizard take {n}`")
+
+
+def cmd_answer(args):
+    work = load_workspace()["work_dir"]
+    run_rec = load_run(work, args.issue)
+    asked = (run_rec.get("escalations") or [{}])[-1]
+    if not asked.get("question") or asked.get("answer") is not None:
+        sys.exit(f"gh-{args.issue} has no open question (phase: {run_rec['phase']})")
+    print(asked["question"])
+    answer = args.answer
+    if answer is None:
+        try:
+            answer = input("Your answer: ").strip()
+        except EOFError:
+            answer = ""
+    if not answer:
+        sys.exit("no answer given; nothing recorded. Type one, or pass --answer TEXT")
+    r = subprocess.run([os.path.join(work, "factory", "bin", "t12"), "resume", "--home",
+                        os.path.join(work, "state"), "--task-id", f"gh-{args.issue}", "--answer", answer],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("could not record the answer: " + (r.stderr or r.stdout).strip())
+    print(f"answer recorded for gh-{args.issue}; rerun the factory with `t12-wizard run`")
+    return 0
+
+
+def cmd_deliver(args):
+    work = load_workspace()["work_dir"]
+    state, task = os.path.join(work, "state"), f"gh-{args.issue}"
+    run_rec = load_run(work, args.issue)
+    if run_rec["phase"] != "local-verified":
+        sys.exit(f"{task} is in phase '{run_rec['phase']}', not local-verified; nothing was pushed")
+    wt, adapter = run_rec["worktree"], run_rec.get("delivery_adapter")
+    if not adapter:
+        sys.exit(f"{task} has no delivery adapter: set `delivery` in the profile on the trunk branch, "
+                 "then prepare the task again; nothing was pushed")
+    token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True).stdout.strip()
+    env = {**os.environ, "GITHUB_TOKEN": token or os.environ.get("GITHUB_TOKEN", "")}
+    report = os.path.join(state, "reports", f"{task}-delivery.json")
+    os.makedirs(os.path.dirname(report), exist_ok=True)
+    t12 = os.path.join(work, "factory", "bin", "t12")
+    steps = (
+        ("push branch", ["git", "push", "origin", run_rec["branch"]]),
+        ("open pull request", [sys.executable, os.path.join(work, "factory", "adapters", adapter + ".py"),
+                               "create-mr" if adapter == "gitlab" else "create-pr",
+                               "--home", state, "--task-id", task, "--out", report]),
+        ("record delivery", [t12, "deliver", "--home", state, "--task-id", task,
+                             "--adapter", adapter, "--report", report]),
+    )
+    for name, cmd in steps:
+        r = subprocess.run(cmd, cwd=wt, env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            sys.exit(f"delivery failed at step '{name}':\n{(r.stderr or r.stdout).strip()}\n"
+                     f"retry: {shlex.join(cmd)}")
+    with open(report) as f:
+        print(f"{task} delivered: {json.load(f)['ref']}")
+    return 0
+
+
+def cmd_sync(args):
+    ws = load_workspace()
+    work, product = ws["work_dir"], os.path.join(ws["work_dir"], "product")
+
+    def git(*a, cwd=product):
+        return subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True)
+
+    r = git("pull", "--ff-only", cwd=os.path.join(work, "factory"))
+    if r.returncode != 0:
+        sys.exit("could not pull the factory clone: " + (r.stderr or r.stdout).strip())
+    for a in (("checkout", "main"), ("pull", "--ff-only")):
+        r = git(*a)
+        if r.returncode != 0:
+            sys.exit("could not pull the product's main branch: " + (r.stderr or r.stdout).strip())
+    if ws["rules_branch"] == "local":
+        r = git("checkout", TRUNK)
+        if r.returncode == 0:
+            r = git("rebase", "main")
+        if r.returncode != 0:
+            git("rebase", "--abort")
+            git("checkout", "main")
+            sys.exit("the product changed under the profile: rebasing " + TRUNK + " onto main conflicted.\n"
+                     + (r.stderr or r.stdout).strip() + "\nThe rebase was aborted and the product clone is on main. "
+                     "Resolve it by hand: in the product clone run `git checkout " + TRUNK
+                     + "`, `git rebase main`, fix the conflicts, then rerun `t12-wizard sync`.")
+    print("synced")
+    return 0
+
+
+def main():
+    argv = sys.argv[1:]
+    p = argparse.ArgumentParser(prog="t12-wizard")
+    sub = p.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("setup")
+    for key, flag, _ in FIELDS:
+        s.add_argument(flag, dest=key)
+    s.add_argument("--test-command", help="the product's test command, for the starter profile "
+                                          "(local rules branch only)")
+    s.add_argument("--factory-repo", default=DEFAULT_FACTORY)
+    s.add_argument("--yes", action="store_true")
+    sub.add_parser("status")
+    sub.add_parser("run")
+    sub.add_parser("sync")
+    a = sub.add_parser("answer")
+    a.add_argument("issue", type=int)
+    a.add_argument("--answer")
+    d = sub.add_parser("deliver")
+    d.add_argument("issue", type=int)
+    t = sub.add_parser("take")
+    t.add_argument("issues", nargs="+", type=int)
+    args = p.parse_args(argv)
+    if args.command != "setup":
+        if not os.path.exists(WORKSPACE):
+            sys.exit("no workspace here; run setup first (`t12-wizard setup`)")
+        return {"take": cmd_take, "status": cmd_status, "run": cmd_run,
+                "answer": cmd_answer, "deliver": cmd_deliver, "sync": cmd_sync}[args.command](args)
+    retry = "t12-wizard " + shlex.join(argv)
+    try:
+        cmd_setup(args, retry)
+    except StepFailed as e:
+        sys.exit(str(e))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

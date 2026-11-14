@@ -327,6 +327,8 @@ class _Session:
         self.send(reply)
         if ok and final:
             return "accepted", message, True
+        if not ok and final:
+            return "rejected", message, True
         if not ok:
             self.rejections += 1
             self.last_rejection = message
@@ -362,8 +364,9 @@ def run_worker(argv, *, cwd, env, prompt, host_tools, on_call, max_turns, timeou
     """Run one worker session and return how it ended; never raises for model behaviour.
 
     `on_call(name, arguments)` returns (ok, message, final): `message` is shown
-    to the model, `ok` False answers the call with isError, and an ok `final`
-    call ends the session as "accepted". Every frame in both directions is
+    to the model, `ok` False answers the call with isError, an ok `final`
+    call ends the session as "accepted", and a refused `final` one (nothing
+    the model can fix) ends it as "rejected" at once. Every frame in both directions is
     appended to `transcript_path` as {"dir": "in"|"out", "frame": ...} JSONL.
     """
     deadline = time.monotonic() + timeout_s

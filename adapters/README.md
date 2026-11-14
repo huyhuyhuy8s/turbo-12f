@@ -105,6 +105,9 @@ python3 adapters/github-issues.py intake --out-dir <queue dir> \
   [--label factory] [--home <state-home>] [--api-base https://api.github.com]
 python3 adapters/gitlab-issues.py intake --out-dir <queue dir> \
   [--repo-config ...] [--repo group/project] [--label factory] [--home ...]
+export ASANA_TOKEN=...
+python3 adapters/asana-tasks.py intake --out-dir <queue dir> \
+  [--repo-config ...] [--project GID] [--tag NAME] [--home ...]
 bin/t12-queue --home <state-home> --queue <queue dir> --max 3
 ```
 
@@ -112,9 +115,16 @@ Each writes one `<id>.json` per usable issue into the directory
 `bin/t12-queue` reads, then prints one line per issue:
 `wrote`, `unchanged`, `skipped` (with the reason), or `has-run`, and
 one `withdrawn` line per task file it deletes.
-`github-issues` makes ids `gh-<number>`, `gitlab-issues` `gl-<iid>`.
+`github-issues` makes ids `gh-<number>`, `gitlab-issues` `gl-<iid>`,
+`asana-tasks` `as-<gid>`.
 `GITLAB_URL` defaults to `https://gitlab.com`; the GitLab `--repo` is
-the project path, subgroups included.
+the project path, subgroups included. For Asana the `intake` profile
+key reads `{"adapter": "asana-tasks", "project": GID, "tag": NAME}`;
+the tag on a task is the approval, the criteria are an "Acceptance
+criteria" list in its description (rich text is read as the equivalent
+markdown), each approved open sub-task is its own task, and a task with
+open sub-tasks is a parent that never runs. `adapters/asana.py
+complete` takes the task's GID from the run's `source` for these tasks.
 
 `--repo-config` names a profile file; its `intake` key
 (`{"adapter", "repo", "label"}`) supplies `--repo` and `--label`, and
@@ -140,22 +150,41 @@ label, and forges disagree on what an odd comment or fence hides, so
 intake does not guess. Every other line is read, code fences
 included; visible text in a code block can only narrow a task.
 An issue without such a list is skipped and the reason is printed;
-intake never invents criteria. Two optional lines, anywhere, and only
-as `Name: value`:
+intake never invents criteria.
+
+Intake runs `spec_check` in `common.py`, the rules of
+`docs/spec-standard.md` that code can check, and skips an issue that
+breaks one, printing every reason: more than 10 criteria (7 to 10 print
+a `warning` line and still queue), no `Touches:` line, an "Open
+questions" section or `_Open question:` line that is not `none`, or a
+parent issue (one with sub-issues). Labelled lines are read anywhere,
+only as `Name: value`:
 
 ```text
 Touches: src/auth, tests/auth
-Depends on: #12, gh-14
+Depends on: #12, gl-14
 ```
 
 `Touches` becomes the task's `touches` (relative paths, no spaces).
-`Depends on` becomes `depends_on`; `#N` means `<prefix>-N` of the
-same adapter. A malformed value skips the issue, because dropping it
-would widen the task.
+Order comes from the forge's native relations where it has them. On
+GitHub intake reads each issue's "blocked by" issues: an open one
+becomes `depends_on`, a completed one has landed and is dropped, and
+one closed as not planned or in another repository skips the issue. A
+`Depends on:` line is refused on GitHub. GitLab and Asana intake read
+it, since their native dependencies are paid features; `#N` means
+`<prefix>-N` of the same adapter. A malformed value skips the issue,
+because dropping it would widen the task.
+
+**Checking a draft.** `python3 adapters/common.py spec-check
+[BODY|-] [--forge github|gitlab|asana] [--repo-root DIR]` runs the same
+body rules before an issue is filed and prints JSON
+`{ok, refusals, warnings, new_files}`; it exits 1 when intake would
+refuse the body. `new_files` lists `Touches` paths missing from
+`--repo-root`, reported, never refused.
 
 **What the task file holds.** Only `id`, `title`,
 `acceptance_criteria`, `source` (`{"adapter", "ref", "url"}`, ref is
-`owner/name#number`), and the two optional fields above. The adapter
+`owner/name#number`), `touches`, and `depends_on` when there is one. The adapter
 builds it from that list and never copies a key out of an issue, so
 `gates`, `required_reviews`, `sandbox_*`, `verify_deps`, budgets,
 `roles` and paths cannot arrive through an issue; they come from the
@@ -245,7 +274,11 @@ touched.
   --parsed-by host-tool`. A call `act` refuses comes back as a tool
   error in the same session, so the model fixes it there; after three
   refusals, or when the run has no operations left, the session ends
-  and the run does not move.
+  and the run does not move. Every `act` carries `--run-id`, the id the
+  run had when the session started: if the run was superseded meanwhile
+  (`stop`, then `prepare --supersede`), `act` refuses the call, logs the
+  rejection on the archived run's event log, and the runner ends the
+  session at once, since no retry can help. The new run is untouched.
 - Green and refactor are blind. The runner makes a git worktree of the
   run's worktree under its scratch directory with every file matching
   the profile's `test_globs` deleted (`adapters/workspace.py`), and
@@ -260,6 +293,17 @@ touched.
   removed after every step. Its prompt leaves out `test_globs`,
   `protected_paths` and the real worktree's path. `escalate` carries
   no patch.
+- A run that is `local-verified` and whose profile sets `delivery`
+  (`github`, `gitlab` or `bitbucket`) is delivered once per invocation:
+  `git push origin <branch>` in the run's worktree, the forge adapter's
+  `create-pr` (`create-mr` for GitLab), and `t12 deliver`. The token
+  comes from the runner's environment (`GITHUB_TOKEN`, `GITLAB_TOKEN`
+  or `BITBUCKET_TOKEN`); if it is missing the runner says which one and
+  delivers nothing. A step that fails prints the command that retries
+  it, and a `confirmed` delivery is never repeated. An `uncertain` one
+  is never repeated either: the runner sends `--notify-cmd` a line that
+  names `t12 deliver --resolves`. Without `delivery` it prints that the
+  run is ready to deliver by hand. It never merges, approves or closes.
 - `human: ...`, `stopped: ...` and a spent budget are never acted on.
   After the last pass the runner prints `waiting <id>: <reason>` for
   each and for each run a step did not move. It runs `--notify-cmd`

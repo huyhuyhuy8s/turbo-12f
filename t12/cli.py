@@ -564,6 +564,8 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
                         sandbox_adapter=adapter, sandbox_image=image)
     for key in profile_mod.SCOPE_KEYS:
         run[key] = profile[key]
+    if profile.get("delivery"):
+        run["delivery_adapter"] = profile["delivery"]["adapter"]
     run["trunk"] = trunk
     run["trunk_commit"] = trunk_commit
     run["tdd"] = model.new_tdd(profile, task, base_commit,
@@ -1589,6 +1591,8 @@ def cmd_act(args):
     `--unit` the call is one lane's: its record, worktree and events."""
     home = _home(args)
     run = _run(home, args.task_id)
+    if getattr(args, "run_id", None) and args.run_id != run.get("run_id"):
+        raise model.reject_superseded(home, args.task_id, args.run_id)
     lane = _load_lane(home, run, args.unit)
     if run["phase"] in ("local-verified", "stopped", "paused"):
         raise StateError(f"run is {run['phase']}; no worker output is accepted")
@@ -1825,6 +1829,8 @@ def build_parser():
     p.add_argument("--role", required=True, help="a role of the run")
     p.add_argument("--session", required=True, help="the host's id for the worker session that produced the output")
     p.add_argument("--input", required=True, help="the worker's JSON output (stored as evidence)")
+    p.add_argument("--run-id", help="the run the worker started on; output for any other run "
+                                    "is rejected as superseded")
     p.add_argument("--raw", help="the model's whole reply, when --input was taken out of it "
                                  "(stored as evidence)")
     p.add_argument("--parsed-by", choices=PARSED_BY, default="raw",

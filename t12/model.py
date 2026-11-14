@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+import uuid
 
 from . import limits as limits_mod
 from . import profile as profile_mod
@@ -397,7 +398,7 @@ def record_measurements(run):
     lint_runs = sum(1 for h in history for key in ("green_lint", "refactor_lint") if h.get(key))
     lint_runs += 1 if (tdd.get("final") or {}).get("lint") else 0
     run["measurements"] = {
-        "wall_used_s": round(time.time() - budgets["started_at"], 1),
+        "wall_used_s": round(wall_used_s(run), 1),
         "ops_used": budgets["ops_used"],
         "repairs_used": budgets["repairs_used"],
         "cycles": tdd.get("cycle", 0),
@@ -728,6 +729,7 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
     return {
         "version": VERSION,
         "task_id": task["id"],
+        "run_id": uuid.uuid4().hex,
         "title": task.get("title", task["id"]),
         "acceptance_criteria": list(task["acceptance_criteria"]),
         "repo": repo,
@@ -804,6 +806,23 @@ def archive_run(home, run):
     return base
 
 
+def reject_superseded(home, task_id, run_id):
+    """A worker started on a run that has since been superseded. Log the
+    rejection on that run's archived event log, never on the live run,
+    and return the error to raise."""
+    error = f"run {run_id} was superseded; its output is not accepted"
+    runs = os.path.join(home, "runs")
+    for name in sorted(os.listdir(runs)):
+        if not (name.startswith(f"{task_id}.superseded-") and name.endswith(".json")):
+            continue
+        old = store.load_json(os.path.join(runs, name))
+        if old.get("run_id") == run_id:
+            append_event(home, old, "worker-output-rejected",
+                         {"run_id": run_id, "error": error},
+                         path=os.path.join(runs, name[:-len(".json")] + ".events.jsonl"))
+    return StateError(error)
+
+
 def save_run(home, run):
     store.save_json(run_path(home, run["task_id"]), run)
 
@@ -812,10 +831,10 @@ def genesis_prev(task_id):
     return store.sha256_bytes(f"t12-genesis:{task_id}".encode())
 
 
-def read_events(home, task_id):
+def read_events(home, task_id, path=None):
     """Load the event log. Raises StateError on a missing or malformed
     log — a log that cannot be read cannot be trusted."""
-    path = events_path(home, task_id)
+    path = path or events_path(home, task_id)
     if not os.path.exists(path):
         raise StateError(f"no event log for task {task_id!r}")
     events = []
@@ -834,7 +853,7 @@ def read_events(home, task_id):
     return events
 
 
-def append_event(home, run, event_type, detail=None):
+def append_event(home, run, event_type, detail=None, path=None):
     """Append one event to the hash-chained log and return it.
 
     Each event links to the previous event's hash, carries its
@@ -844,9 +863,9 @@ def append_event(home, run, event_type, detail=None):
     event breaks the state digest. The chain is the audit trail;
     the run record is the current state."""
     events = []
-    path = events_path(home, run["task_id"])
+    path = path or events_path(home, run["task_id"])
     if os.path.exists(path):
-        events = read_events(home, run["task_id"])
+        events = read_events(home, run["task_id"], path)
     prev = events[-1]["hash"] if events else genesis_prev(run["task_id"])
     event = {
         "seq": len(events) + 1,
@@ -904,14 +923,30 @@ def transition(run, to):
             f"cannot move {run['task_id']} from {run['phase']} to {to}; "
             f"allowed: {sorted(allowed) or ['none']}"
         )
+    now = time.time()
+    if to == "paused":
+        run["paused_at"] = now
+    elif run["phase"] == "paused" and run.get("paused_at") is not None:
+        budgets = run["budgets"]
+        budgets["paused_s"] = budgets.get("paused_s", 0) + (now - run["paused_at"])
+        run["paused_at"] = None
     run["phase"] = to
     return run
+
+
+def wall_used_s(run):
+    """Seconds spent against the time budget; time in `paused` is free."""
+    budgets = run["budgets"]
+    now = time.time()
+    if run["phase"] == "paused" and run.get("paused_at") is not None:
+        now = run["paused_at"]
+    return now - budgets["started_at"] - budgets.get("paused_s", 0)
 
 
 def check_budgets(run):
     """Fail closed when a budget is exhausted. Call before any step."""
     budgets = run["budgets"]
-    wall = time.time() - budgets["started_at"]
+    wall = wall_used_s(run)
     if wall > budgets["time_limit_s"]:
         raise BudgetError(
             f"time budget exhausted: {wall:.0f}s used of {budgets['time_limit_s']}s"
@@ -928,7 +963,7 @@ def check_budgets(run):
 
 
 def time_left_s(run):
-    return max(0, run["budgets"]["time_limit_s"] - (time.time() - run["budgets"]["started_at"]))
+    return max(0, run["budgets"]["time_limit_s"] - wall_used_s(run))
 
 
 def bump_op(run):

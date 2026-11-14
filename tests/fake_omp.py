@@ -21,6 +21,9 @@ $FAKE_OMP_MODE picks the behaviour:
   never           no call, ever; each prompt ends after one turn
   ui              an extension_ui_request `confirm` is answered before calling
   crash           exits 3 after `ready`, with a message on stderr
+  supersede       the first session ever (claimed in $FAKE_OMP_STATE) runs the shell
+                  command $FAKE_OMP_BEFORE_CALL before its call, e.g. to supersede
+                  the run it works for; every other session behaves as by default
   rate-limit      the provider refuses the first prompt (see rate_limit); the first
                   $FAKE_OMP_RATE_LIMITS sessions only, counted in $FAKE_OMP_STATE (a
                   directory), then the sessions behave as in the default mode
@@ -169,6 +172,10 @@ class Fake:
         emit({"type": "agent_start"})
         if MODE == "rate-limit" and self.prompts == 1 and self.claim_rate_limit():
             self.rate_limit()
+        elif MODE == "supersede" and self.prompts == 1 and self.claim("supersede"):
+            subprocess.run(os.environ["FAKE_OMP_BEFORE_CALL"], shell=True, check=True)
+            os.chdir("/")  # the hook may have removed the worktree this process started in
+            self.start_call()
         elif MODE == "loop":
             self.spin()
         elif MODE == "never" or (MODE == "silent" and self.prompts == 1):
@@ -190,6 +197,17 @@ class Fake:
             if line == "":
                 return
         self.finish("completed")
+
+    @staticmethod
+    def claim(name):
+        """True for the first session to ask for `name`: a marker file under $FAKE_OMP_STATE,
+        created O_EXCL, so each claim has one claimant across processes."""
+        try:
+            os.close(os.open(os.path.join(os.environ["FAKE_OMP_STATE"], name),
+                             os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except FileExistsError:
+            return False
+        return True
 
     def claim_rate_limit(self):
         """Whether this session is one of the first $FAKE_OMP_RATE_LIMITS (all of them when

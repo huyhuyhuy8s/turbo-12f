@@ -109,7 +109,7 @@ class ChangesRequestedLoop(TddFlow, unittest.TestCase):
         self.assertIn("no new commit", message)
         after = self.status()
         self.assertEqual(after["candidate"], before)
-        self.assertEqual(after["phase"], "tdd")
+        self.assertEqual(after["phase"], "paused")
         self.assertEqual(after["tdd"]["step"], "green")
 
     def test_a_second_cycle_answers_the_finding_and_reaches_local_verified(self):
@@ -140,6 +140,68 @@ class ChangesRequestedLoop(TddFlow, unittest.TestCase):
         reviews = self.flow_record()["reviews"]
         self.assertEqual([r["verdict"] for r in reviews], ["changes-requested", "approve"])
         self.assertEqual(reviews[1]["prior_review"], reviews[0]["report"]["name"])
+
+    def run_record(self):
+        path = os.path.join(self.home, "runs", "demo-1.json")
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def events(self):
+        path = os.path.join(self.home, "runs", "demo-1.events.jsonl")
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def answer_with_directive_only(self):
+        """The analyzer answers the finding with a directive, the cycle ends
+        with no commit, and finishing is refused."""
+        self.analyze(items=[], directives=["F1: tidy greet"])
+        self.refactor()
+        self.no_cheat()
+        return self.tdd_step(expect=1)
+
+    def test_finishing_without_a_new_commit_pauses_with_the_report_in_the_question(self):
+        self.answer_with_directive_only()
+        record = self.run_record()
+        self.assertEqual(record["phase"], "paused")
+        report = self.flow_record()["reviews"][0]["report"]
+        with open(report["path"], encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn(FINDING, text)
+        open_questions = [e for e in record["escalations"] if e["answer"] is None]
+        self.assertEqual(len(open_questions), 1)
+        self.assertIn(text, open_questions[0]["question"])
+        self.assertEqual(open_questions[0]["kind"], "no-new-commit")
+        types = [e["type"] for e in self.events()]
+        self.assertLess(types.index("tdd-final-failed"), types.index("human-contact"))
+
+    def test_an_unclean_worktree_refusal_leaves_phase_and_escalations_alone(self):
+        self.analyze(items=[], directives=["F1: tidy greet"])
+        self.refactor()
+        self.no_cheat()
+        self.write(self.worktree, "scratch.txt", "dirty\n")
+        phase = self.status()["phase"]
+        self.tdd_step(expect=1)
+        record = self.run_record()
+        self.assertEqual(record["phase"], phase)
+        self.assertEqual(record["escalations"], [])
+        os.remove(os.path.join(self.worktree, "scratch.txt"))
+        # The different refusal must not be mistaken for the escalating one:
+        # once clean, the reviewed-commit refusal still escalates.
+        self.tdd_step(expect=1)
+        self.assertEqual(self.run_record()["phase"], "paused")
+
+    def test_answered_escalation_then_a_new_commit_finishes(self):
+        self.answer_with_directive_only()
+        self.t12("resume", "--home", self.home, "--task-id", "demo-1",
+                 "--answer", "fix the empty-name contract")
+        self.assertEqual(self.status()["phase"], "tdd")
+        self.assertEqual(self.status()["tdd"]["step"], "green")
+        self.green(app=APP_V3)
+        self.refactor()
+        self.tdd_step()
+        status = self.status()
+        self.assertEqual(status["phase"], "gates")
+        self.assertNotEqual(status["candidate"], self.commit)
 
 
 if __name__ == "__main__":

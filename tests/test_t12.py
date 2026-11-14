@@ -411,6 +411,25 @@ class CliCase(TddFlow, unittest.TestCase):
         result = self.red(text=source, line=6, expect=1)
         self.assertIn("assertion_pattern", result.stderr)
 
+    def test_a_setup_that_loads_code_not_written_yet_is_not_a_valid_red(self):
+        # Upstream's old flow accepted these. Here a red must fail at its
+        # named last assertion; code that does not exist yet is made to
+        # exist with a red stub (red_stub_max_lines), not excused.
+        self.analyze()
+        for exc in ("FileNotFoundError('adapters/new.py')", "ImportError('no module new')"):
+            source = (
+                "import unittest\n"
+                "class T(unittest.TestCase):\n"
+                "    def setUp(self):\n"
+                f"        raise {exc}\n"
+                "    def test_x(self):\n"
+                "        self.assertTrue(True)\n"
+            )
+            result = self.red(text=source, line=6, expect=1)
+            self.assertIn("assertion_pattern", result.stderr, exc)
+            self.assertIn("smallest stub", result.stderr, exc)
+            self.assertEqual(self.run_record()["tdd"]["last_error"]["check"], "red-assertion")
+
     def test_the_failure_must_be_at_the_named_last_assertion(self):
         self.analyze()
         result = self.red(line=3, expect=1)

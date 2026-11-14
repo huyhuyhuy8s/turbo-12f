@@ -11,7 +11,9 @@ through `t12-queue`, then takes each run's `next` from `t12 board --json`:
   prompt, the role's tools are mounted as host tools, and the final
   answer is a schema-checked tool call (`parsed_by` host-tool) that
   `t12 act` takes. A call `act` refuses goes back to the model in the
-  same session, with the error. The factory owns the prompt, the
+  same session, with the error; one refused because the run was
+  superseded while the session ran (`act --run-id`) ends the session.
+  The factory owns the prompt, the
   built-in tool list per role kind and a guard extension, and keeps the
   whole frame stream as evidence.
 - green and refactor are blind: omp runs in a worktree of the run with
@@ -31,6 +33,11 @@ through `t12-queue`, then takes each run's `next` from `t12 board --json`:
   and the model and thinking level passed to omp (null when omp's profile
   decides). `--role-model ROLE=MODEL` and `--role-thinking ROLE=LEVEL`
   override `--omp-model` for one role, e.g. a stronger reviewer.
+- A `local-verified` run whose profile names a `delivery` adapter is
+  pushed, opened as a change request, and recorded with `t12 deliver`.
+  Without one the runner says it is ready to deliver by hand. A failed
+  step prints the command that retries it; an `uncertain` delivery is
+  never repeated and goes to `--notify-cmd` for `--resolves`.
 - `human: ...`, `stopped: ...` and a spent budget are reported and
   skipped. The runner never answers an escalation and never merges.
 - Parallel lanes (Phase 9): when an analyzer's `units` fan out, the board has one
@@ -78,6 +85,11 @@ import workspace
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin")
 CONTEXT_MARKER = "--- context (JSON) ---"
+SUPERSEDED = "was superseded; its output is not accepted"
+ADAPTER_DIR = os.path.dirname(os.path.abspath(__file__))
+FORGES = {"github": ("create-pr", "GITHUB_TOKEN"),
+          "gitlab": ("create-mr", "GITLAB_TOKEN"),
+          "bitbucket": ("create-pr", "BITBUCKET_TOKEN")}
 DETERMINISTIC = ("tdd-step", "gate", "check")
 # The board's words for a lane's state (see `t12 board --json`): the run row while its lanes
 # are open, and the lane row that integrates a finished lane.
@@ -311,6 +323,7 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
         return StepResult(f"context failed: {ctx.stderr.strip()}")
     context = context_json(ctx.stdout)
     worktree = context["worktree"]
+    run_id = _run_record(home, task_id).get("run_id")
     kind = role_kind(home, task_id, role, context)
     policy = ROLE_POLICY.get(kind)
     if policy is None:
@@ -391,11 +404,14 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
                 json.dump({"tool": name, "args": arguments}, fh)
             act = t12("act", "--home", home, "--task-id", task_id, "--role", role,
                       "--session", session, "--input", call_path, "--parsed-by", "host-tool",
-                      "--raw", transcript, *extra, *unit_args(row))
+                      "--raw", transcript, *extra, *unit_args(row),
+                      *(["--run-id", run_id] if run_id else []))
             if act.returncode == 0:
                 accepted.append(act.stdout.strip())
                 return True, accepted[-1], True
-            return False, act.stderr.strip(), False
+            error = act.stderr.strip()
+            # Nothing the model can fix: the run it works for is gone.
+            return False, error, SUPERSEDED in error
 
         outcome = omp_rpc.run_worker(
             argv, cwd=cwd, env=env,
@@ -432,6 +448,52 @@ def notify(notify_cmd, message):
             subprocess.run([*notify_cmd, message], timeout=60)
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"warning: notify failed: {exc}", file=sys.stderr)
+
+
+def deliver(home, task_id, notify_cmd):
+    """Push a local-verified run and open its change request. Never
+    merges, approves or closes. It reports and returns nothing."""
+    run = _run_record(home, task_id)
+    adapter = run.get("delivery_adapter")
+    if run["phase"] != "local-verified" or not adapter:
+        return
+    last = (run.get("deliveries") or [None])[-1]
+    if last and last["outcome"] == "confirmed":
+        return
+    if last and last["outcome"] == "uncertain":
+        notify(notify_cmd, f"{task_id}: delivery via {adapter} is uncertain "
+                           f"({last.get('detail', '')}); read it back and record it with "
+                           f"`t12 deliver --resolves`. The runner will not repeat it")
+        return
+    verb, token_var = FORGES[adapter]
+    if not os.environ.get(token_var):
+        print(f"{task_id}: not delivered: set {token_var} in the runner's environment")
+        return
+    os.makedirs(os.path.join(home, "deliveries"), exist_ok=True)
+    report = os.path.join(home, "deliveries", f"{task_id}.json")
+    steps = (
+        ("push", ["git", "push", "origin", run["branch"]]),
+        (adapter, [sys.executable, os.path.join(ADAPTER_DIR, f"{adapter}.py"), verb,
+                   "--home", home, "--task-id", task_id, "--out", report]),
+        ("t12 deliver", [os.path.join(BIN, "t12"), "deliver", "--home", home,
+                         "--task-id", task_id, "--adapter", adapter, "--report", report]),
+    )
+    for name, cmd in steps:
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=run["worktree"])
+        if result.returncode != 0:
+            print(f"{task_id}: delivery stopped at {name}: "
+                  f"{(result.stderr or result.stdout).strip()}\n"
+                  f"{task_id}: retry with: cd {shlex.quote(run['worktree'])} && {shlex.join(cmd)}")
+            return
+    entry = _run_record(home, task_id)["deliveries"][-1]
+    if entry["outcome"] == "confirmed":
+        print(f"{task_id}: delivered via {adapter}: {entry['ref']}")
+    elif entry["outcome"] == "uncertain":
+        deliver(home, task_id, notify_cmd)
+    else:
+        print(f"{task_id}: {adapter} did not confirm the delivery ({entry['outcome']}: "
+              f"{entry.get('detail', '')}); retry with: {shlex.join(steps[0][1])} "
+              f"&& {shlex.join(steps[1][1])}")
 
 
 class Scheduler:
@@ -550,7 +612,7 @@ def drive(home, queue, max_active, notify_cmd, omp, *, lane_cap=LANE_CAP,
             sched = Scheduler(home, scratch, omp, lane_cap=lane_cap,
                               backoff_base=backoff_base, backoff_max=backoff_max,
                               sleep=sleep, clock=clock)
-            moved = True
+            moved, handled = True, set()
             while moved:
                 moved = False
                 if queue:
@@ -562,7 +624,15 @@ def drive(home, queue, max_active, notify_cmd, omp, *, lane_cap=LANE_CAP,
                         moved = moved or line.startswith("started ")
                 for task_id in dict.fromkeys(r["task_id"] for r in board(home)):
                     moved = sched.run_task(pool, task_id) or moved
+                for row in board(home):
+                    if row["phase"] == "local-verified" and row["task_id"] not in handled:
+                        handled.add(row["task_id"])
+                        deliver(home, row["task_id"], notify_cmd)
         for row in board(home):
+            if row["phase"] == "local-verified" and not _run_record(
+                    home, row["task_id"]).get("delivery_adapter"):
+                print(f"{row['task_id']}: local-verified and ready to deliver by hand "
+                      "(the profile sets no delivery adapter)")
             reason = waiting_reason(row) or sched.stuck.get(key(row))
             if reason:
                 notify(notify_cmd, f"waiting {label(row)}: {reason}")

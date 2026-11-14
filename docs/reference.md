@@ -67,7 +67,11 @@ no aliases. The steps are:
   repair mode, with the sanitized gate output.
 - **review** is one `reviewer` role covering quality and security.
   `changes-requested` sends the findings to the analyzer (review-fix
-  mode); `human-gated` pauses with an escalation.
+  mode); `human-gated` pauses with an escalation. If the cycle ends
+  with no new commit, `final` is refused and the run pauses with an
+  escalation of kind `no-new-commit` whose question carries the review
+  report. Time a run spends `paused` does not count against its time
+  budget.
 - **check** (`t12 check`, deterministic) re-hashes all evidence and
   certifies `local-verified`.
 
@@ -122,6 +126,19 @@ candidate. Record the report with `--adapter github|gitlab|bitbucket`.
 The target comes from the task's `github_repo`, `gitlab_project` or
 `bitbucket_repo` field, a flag, or the origin remote.
 
+The runner does this for you when the profile sets `delivery`. After a
+run is `local-verified` it runs `git push origin <branch>` in the run's
+worktree, the profile's adapter (`create-pr`, or `create-mr` for
+GitLab) and `t12 deliver`, once per invocation and never twice for a
+`confirmed` delivery. The forge token (`GITHUB_TOKEN`, `GITLAB_TOKEN`
+or `BITBUCKET_TOKEN`) comes from the runner's environment; without it
+the runner prints which variable to set and delivers nothing. A step
+that fails prints the command that retries it, and the run stays
+`local-verified`. An `uncertain` delivery is never repeated: the runner
+sends a `--notify-cmd` line that names `t12 deliver --resolves`. A run
+whose profile sets no `delivery` is reported as ready to deliver by
+hand. The runner never merges, approves or closes.
+
 `local-verified` means the configured evidence chain was observed and
 is internally consistent. It is not acceptance and not permission to
 merge; a human merges.
@@ -149,7 +166,7 @@ merge; a human merges.
 | `pause` / `resume` | Pause with a reason; resume re-validates from disk (`--answer TEXT` is required while an escalation is open, and records the human's reply) |
 | `stop` | Stop a run explicitly with a reason (terminal; use `--supersede` to start over) |
 | `escalate` | Record a human question as a tool call and pause (Factor 7) |
-| `act` | Take a worker's tool call: `--role R --session S --input FILE [--patch FILE]`. Validates it against `t12/tools.py`, stores it as evidence, and runs the step it maps to: `test_list_ready` (analyzer), `red_test_ready` / `no_cheat_left` (red), `green_ready` and `refactor_done` (with the worker's patch), `review`, `escalate` (Factor 4) |
+| `act` | Take a worker's tool call: `--role R --session S --input FILE [--patch FILE] [--run-id ID]`. Validates it against `t12/tools.py`, stores it as evidence, and runs the step it maps to: `test_list_ready` (analyzer), `red_test_ready` / `no_cheat_left` (red), `green_ready` and `refactor_done` (with the worker's patch), `review`, `escalate` (Factor 4). With `--run-id`, output for a run other than the live one is refused as superseded and logged on the archived run's event log |
 
 ## Task file
 
@@ -238,7 +255,8 @@ file only says what is unique to it:
     "green": {"skills": ["plain-ui-copy"]},
     "ux-copy": {"kind": "review", "prompt": "ux-copy.md"}
   },
-  "intake": {"adapter": "github-issues", "repo": "owner/my-product", "label": "factory"}
+  "intake": {"adapter": "github-issues", "repo": "owner/my-product", "label": "factory"},
+  "delivery": {"adapter": "github"}
 }
 ```
 
@@ -264,7 +282,7 @@ may come from an issue tracker:
 | `verify_deps` | The task may only narrow the profile's list; a profile without one allows none |
 | `test_command`, `test_globs`, `lint_command`, `assertion_pattern`, `failure_count_pattern`, `red_stub_max_lines`, `refactor_skip_max_lines` | A task may set one only where the profile does not |
 | budgets | The task wins |
-| `protected_paths`, `security_review_paths`, `roles`, `intake` | Profile only; a task may not set them |
+| `protected_paths`, `security_review_paths`, `roles`, `intake`, `skills`, `delivery` | Profile only; a task may not set them |
 | `max_lanes` | The task wins, then the profile, then the calibrated value |
 
 The tdd keys:
@@ -318,6 +336,11 @@ reviewer's.
 `intake` says where tasks come from; only an intake adapter reads it
 (see "Taking tasks from an issue tracker"). `prepare` validates it.
 
+`delivery` names the forge the runner opens the change request on once
+a run is `local-verified`: `{"adapter": "github"}`, `"gitlab"` or
+`"bitbucket"`, nothing else. `prepare` validates it and stores the
+adapter in the run record (see "Delivery").
+
 `context --role R` reads R's instructions in layers. The prompt is
 `.t12/prompts/<prompt>` on the trunk commit when the role names one,
 else the factory's prompt of the role's kind: `prompts/tdd-analyzer.md`,
@@ -341,14 +364,24 @@ python3 adapters/github-issues.py intake --repo-config path/to/.t12/project.json
 bin/t12-queue --home /path/to/state-home --queue queue --max 3
 ```
 
-The issue needs an "Acceptance criteria" heading with a `- ` list;
-an issue without one is skipped with the reason printed. The task
+The issue needs an "Acceptance criteria" heading with a `- ` list
+and a `Touches:` line; an issue that breaks a rule of
+`docs/spec-standard.md` that code can check (see `adapters/README.md`)
+is skipped with every reason printed. The task
 file holds only `id` (`gh-<number>`), `title`,
-`acceptance_criteria`, optional `touches` and `depends_on`, and
+`acceptance_criteria`, `touches`, optional `depends_on`, and
 `source: {"adapter", "ref", "url"}`. Gates, reviews, sandbox and
 everything else the profile controls never come from an issue.
 Re-running intake changes nothing that is unchanged or already has
 a run.
+
+`adapters/gitlab-issues.py` does the same for GitLab (`gl-<iid>`), and
+`adapters/asana-tasks.py intake --project GID --tag NAME` for Asana
+tasks (`as-<gid>`, `ASANA_TOKEN`): the tag is the approval, the
+criteria are an "Acceptance criteria" list in the description, each
+approved open sub-task is its own task, and a task with open sub-tasks
+is a parent that never runs. `python3 adapters/common.py spec-check`
+runs the intake rules on a draft before it is filed.
 
 An issue whose body contains an HTML comment is skipped: the forge
 hides comment text from the maintainer who applies the label, and
@@ -373,6 +406,34 @@ adapter then puts the source link in the pull request body, with
 The title and criteria appear in the body inside a code block with
 issue references broken, so an issue author cannot close other
 issues or hide part of the body.
+
+## The wizard
+
+`bin/t12-wizard` (standard library, `git` and `gh`) sets up and drives a
+workspace for GitHub issues. It keeps its answers in
+`t12-workspace.json` in the folder you run it from.
+
+```bash
+t12-wizard setup --product-repo URL --work-dir DIR --commit-name N \
+  --commit-email E --rules-branch main|local [--test-command CMD]
+t12-wizard take 12 13      # label issues `factory`, run intake
+t12-wizard run             # start the omp runner, print a progress line
+t12-wizard status          # one sentence per run
+t12-wizard answer 12       # answer a paused run's question
+t12-wizard deliver 12      # push and open the pull request by hand
+t12-wizard sync            # update both clones
+```
+
+`setup` clones the factory and the product into `DIR`, sets the commit
+identity in both, runs `t12 init` and creates the intake label.
+`--rules-branch local` commits a starter profile on a `t12-trunk`
+branch, so the product's own `main` stays untouched; give
+`--test-command` or add `test_command` to that profile, since every run
+needs one. `run` calls `adapters/runner.py` with the workspace's
+`omp_cmd`, `omp_profile` and `omp_model` when it has them (add them to
+`t12-workspace.json`); everything else follows the runner's defaults.
+`deliver` needs a profile with a `delivery` adapter and a run in
+`local-verified`.
 
 ## Running several tasks at once
 

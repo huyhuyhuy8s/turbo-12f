@@ -676,9 +676,13 @@ def _red_checks(tdd, args, output, code, ref, adds_items=False):
     if _timed_out(ref):
         return "red-timeout", "the test command timed out; a red test fails fast"
     if not re.search(tdd["assertion_pattern"], output):
+        hint = ("" if adds_items else
+                f"; if the code under test does not exist yet, add the smallest stub "
+                f"(at most {tdd['red_stub_max_lines']} lines outside the tests) so the "
+                "test fails at its assertion")
         return ("red-assertion", f"the failure does not match assertion_pattern "
                 f"/{tdd['assertion_pattern']}/: an exception, compile or import error "
-                "is not a proper red")
+                f"is not a proper red{hint}")
     name = re.escape(os.path.basename(args["test_file"]))
     line = args["last_assertion_line"]
     if not re.search(rf"""{name}(?::|["']?,\s*line\s+){line}(?!\d)""", output):
@@ -1070,6 +1074,17 @@ def _structural_problem(run, wt, tip, tdd):
     return None, [p for p in changed if model.under(p, profile_mod.security_roots(run))]
 
 
+def _unanswered_review(run, tip):
+    """The question a human gets when the tip still carries the commit a review
+    asked changes on: the refusal and the review's report, verbatim."""
+    review = model.changes_requested(run)
+    with open(review["report"]["path"], encoding="utf-8", errors="replace") as fh:
+        report = fh.read()
+    return (f"refusing final: the {review['role']} review ({review['report']['name']}) asked "
+            f"for changes on {tip[:12]} and no new commit was made; answer its findings with "
+            f"new red-green items or refactor directives.\n\nReview report:\n\n{report}")
+
+
 def final(home, run, *, runner):
     ctx = _enter(run, None, "final")
     tdd = ctx.tdd
@@ -1077,8 +1092,15 @@ def final(home, run, *, runner):
     tip = tdd["last_good_commit"]
     problem, sensitive = _structural_problem(run, wt, tip, tdd)
     if problem:
-        return _refuse(run, ctx, runner, "green", "tdd-final-failed", problem[0], problem[1],
-                       tail=[problem[1]], next_step="green")
+        try:
+            return _refuse(run, ctx, runner, "green", "tdd-final-failed", problem[0], problem[1],
+                           tail=[problem[1]], next_step="green")
+        except StateError:
+            # A review that asked for changes and a tip that did not move cannot
+            # be repaired by retrying the step: put the report in front of a human.
+            if problem[0] == "no-new-commit":
+                _pause(run, ctx, runner, _unanswered_review(run, tip), "no-new-commit")
+            raise
     failed, refs = _run_checks(run, ctx, runner, tip, "final")
     if failed:
         check, code, output, ref = failed
