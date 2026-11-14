@@ -1,7 +1,7 @@
 # Generic factory: one factory, many projects
 
-Status: steps 1 (project profile), 2 (roles and skills) and 4 (intake)
-are built;
+Status: steps 1 (project profile), 2 (roles and skills), 4 (intake)
+and 6 (the TDD lane) are built;
 the rest is a proposal.
 README.md describes what is enforced today.
 
@@ -9,8 +9,8 @@ README.md describes what is enforced today.
 
 turbo-12f should deliver any project, not only chat-bridge. A
 project tells the factory how it works through one config file. The
-factory keeps the evidence chain (red, stage, gates, replay, review,
-green) the same for every project.
+factory keeps the evidence chain (tdd, gates, review, check)
+the same for every project.
 
 ## What is project-specific today
 
@@ -27,7 +27,7 @@ chat-bridge works around this with its own in-repo factory
 (`chat-bridge/factory/`), which hardcodes `PROTECTED_PATHS`, its
 gate ladder, and its lanes. Before the project profile, turbo-12f had
 no protected-path check at all, so it could not enforce the rule that `guards/`, `e2e/`,
-`bench/`, and `docs/health/` are read-only to the builder.
+`bench/`, and `docs/health/` are read-only to every worker.
 
 ## Data shape
 
@@ -40,8 +40,10 @@ The profile is `.t12/project.json` in the product repo.
   "version": 1,
   "name": "chat-bridge",
   "base": "main",
+  "test_command": ["python3", "-m", "pytest", "tests/", "-q"],
+  "test_globs": ["tests/**", "e2e/**"],
+  "lint_command": ["ruff", "check", "."],
   "gates": [
-    {"name": "lint", "command": ["ruff", "check", "."]},
     {"name": "unit", "command": ["python3", "-m", "pytest", "tests/unit", "-q"]},
     {"name": "integration", "command": ["python3", "-m", "pytest", "tests/integration", "-q"]}
   ],
@@ -50,13 +52,43 @@ The profile is `.t12/project.json` in the product repo.
   "protected_paths": ["guards/", "e2e/", "bench/", "docs/health/", "AGENTS.md", ".t12/"],
   "context_docs": ["AGENTS.md", "docs/spec.md", "docs/architecture.md"],
   "roles": {
-    "test-writer": {"kind": "test-writer"},
-    "builder": {"kind": "builder", "skills": ["plain-ui-copy"]},
+    "green": {"skills": ["plain-ui-copy"]},
     "reviewer": {"kind": "review"},
-    "security": {"kind": "review"},
     "ux-copy": {"kind": "review", "prompt": "ux-copy.md"}
   },
   "required_reviews": ["reviewer", "ux-copy"],
+  "skills": {
+    "vitest": {"repo": "antfu/skills", "rev": "d524ed287eef22757297827ce42e3cad88abd20c",
+               "path": "skills/vitest", "include": ["SKILL.md", "references/**"],
+               "roles": ["red"], "when": {"dependency": "vitest"},
+               "sha256": "5f8d6143d0409bbf781f2a9b97b1aeaa8422b7ee3a518d4c767c8dbfbbeae915"},
+    "ponytail": {"repo": "DietrichGebert/ponytail", "rev": "96608e078b2d5ea607c5c3b8b5a54d1c1fba6846",
+                 "path": "skills/ponytail", "include": ["SKILL.md"],
+                 "roles": ["green", "refactor"], "when": null,
+                 "sha256": "8c528dc79e2839e56beac2fefe7d7bdaac7ce165f46c9db1b1662ddd9667df46"},
+    "impeccable": {"repo": "pbakaus/impeccable", "rev": "1995764b4936f2bfbf4eb719cb37b384a45ceacb",
+                   "path": ".agents/skills/impeccable", "include": ["SKILL.md", "reference/**"],
+                   "roles": ["green"],
+                   "when": {"files": ["**/*.tsx", "**/*.jsx", "**/*.vue", "**/*.svelte", "**/*.css", "**/*.html"]},
+                   "sha256": "1816625401fcb2a871409648e05dc9042d00025de2212509f3cc446b8e84e92f"},
+    "humanizer": {"repo": "blader/humanizer", "rev": "b48c832f0f809c1b5658edbb838c2521b72f2413",
+                  "path": ".", "include": ["SKILL.md"], "roles": ["refactor"], "when": null,
+                  "sha256": "fa244ff2f8570c519add7dfd9a7594a54d48908890835b21e870b5b20aa04867"},
+    "safe-refactor": {"repo": "juliusbrussee/caveman", "rev": "b4ee71d557d96e3cbc14f88fa6e953a1362865f5",
+                      "path": "skills/safe-refactor", "include": ["SKILL.md"],
+                      "roles": ["refactor"], "when": null,
+                      "sha256": "e79f47cdc8897ee295d6108975ec6cb1201f92bf1e8253c44d89e8681317e876"},
+    "security-review-anthropic": {"repo": "anthropics/claude-code-security-review",
+                                  "rev": "0c6a49f1fa56a1d472575da86a94dbc1edb78eda",
+                                  "path": ".claude/commands/security-review.md", "wrap": true,
+                                  "roles": ["reviewer"], "when": null,
+                                  "sha256": "17161bfce7efc5139fa44f2f662043140cd59c1f3eecddf40b9dc2fb29dd9526"},
+    "security-review": {"repo": "getsentry/skills", "rev": "e94f22214528d69899d09c627b3315ddc3544816",
+                        "path": "skills/security-review",
+                        "include": ["SKILL.md", "SPEC.md", "LICENSE", "languages/**", "infrastructure/**"],
+                        "roles": ["reviewer"], "when": null,
+                        "sha256": "c52cfa3ccce699901c4179d36683f3904da6b8ae3d3a1cbb909b73a42805d9ea"}
+  },
   "intake": {"adapter": "github-issues", "repo": "owner/chat-bridge", "label": "factory"},
   "delivery": [{"adapter": "github", "repo": "owner/chat-bridge"}]
 }
@@ -68,35 +100,53 @@ Rules that follow from this shape:
   `prepare` reads `.t12/project.json` at the trunk commit the state
   home names, validates it, and freezes the merged settings and the
   trunk commit in the run record. A task cannot choose an older or
-  unmerged commit to get weaker rules, and a builder that edits
+  unmerged commit to get weaker rules, and a worker that edits
   `.t12/` changes nothing for its own run.
 - **A task file only holds what is unique to the task.** `id`,
   `title`, `acceptance_criteria`, and an optional `source` ref. Any
   profile key a task sets overrides the profile for that run, and
   the override is recorded.
-- **`protected_paths` becomes a stage check.** `stage` refuses a
-  candidate whose diff from base touches a protected path. `.t12/`
+- **`protected_paths` becomes a tdd check.** `tdd-step` refuses a
+  candidate whose diff from base touches a protected path, and the
+  core refuses a green or refactor patch that does. `.t12/`
   is always protected, so a run cannot rewrite its own rules.
-- **No profile means today's behaviour.** The built-in profile is
-  the current defaults: roles test-writer, builder, qa, reviewer,
-  security; `required_reviews: ["reviewer"]`; no intake; delivery
-  through the command line.
+- **No profile means the built-in defaults.** Roles analyzer, red,
+  green, refactor and reviewer; `required_reviews: ["reviewer"]`; no
+  intake; delivery through the command line. `test_command` is
+  still required, from the task file.
+- **`skills` pins third-party skills per role, by commit.** Each pin
+  names a GitHub `repo`, a 40-hex `rev`, a `path` inside it, the
+  `include` globs to keep (or `wrap: true` for one command file that
+  becomes a `SKILL.md`), the profile `roles` that get it, a `when`
+  (`null`: always; `{"dependency": "vitest"}`: the repo's root
+  `package.json` lists it; `{"files": [globs]}`: the base commit tracks
+  a matching file), and the `sha256` of the synced tree. The core
+  checks shape only, and `t12 context` lists the pins a role gets on
+  this run as `skills: [{name, rev, sha256}]`, with `when` read from
+  the base commit by git alone. `adapters/skills.py sync` fetches and
+  hashes them; the runner verifies the hash, mounts exactly those
+  skills in the omp session, and records them in the transcript (see
+  `adapters/README.md`). The example pins `red` the vitest skill only
+  where the product uses Vitest, `green` ponytail (and impeccable for
+  UI files), `refactor` ponytail, humanizer and safe-refactor, and
+  `reviewer` both security-review skills.
 
 ### Roles are named; kinds are fixed
 
 A role is a name the project picks. A kind is what the core knows
-how to enforce. There are four kinds:
+how to enforce. There are five kinds:
 
-| Kind | Tool it may call | What the core does with it |
+| Kind | Tools it may call | What the core does with it |
 |---|---|---|
-| `test-writer` | `red_test_ready` | runs red |
-| `builder` | `implementation_ready` | stages a candidate |
-| `qa` | `qa_report` | records the report |
-| `review` | `review` | records a verdict; `required_reviews` names which review roles green needs |
+| `analyzer` | `test_list_ready` | records the item list; refuses one that leaves an acceptance criterion uncovered |
+| `red` | `red_test_ready`, `no_cheat_left` | verifies the failing test, commits and locks it |
+| `green` | `green_ready` | applies the patch from the blind worktree, runs the red tests and lint |
+| `refactor` | `refactor_done` | the same, and rolls the patch back on failure |
+| `review` | `review` | records a verdict; `required_reviews` names which review roles `check` needs |
 
 All kinds may call `escalate`. `TOOLS` is keyed by kind. `prepare`
-merges the built-in roles (test-writer, builder, qa, and reviewer and
-security as `review`) with the profile's `roles`, and freezes the
+merges the built-in roles (analyzer, red, green, refactor, and
+reviewer as `review`) with the profile's `roles`, and freezes the
 result in the run record as `role_map`. `act`, `review`, `context`,
 session binding, and `required_reviews` all check roles against that
 map. A project may add roles and set a prompt or skills on a
@@ -104,17 +154,19 @@ built-in, but may not change a built-in's kind. A task file may not
 set `roles`. The one-session-per-role rule is unchanged. A
 project adds a reviewer (UX copy, accessibility, data privacy) by
 adding a `review` role with its own prompt. It needs no change to
-the core.
+the core. Security is not a separate role: the one `reviewer`
+covers quality and security.
 
 ### Prompts and skills resolve in layers
 
 `t12 context --role R` builds the prompt from:
 
 1. The role's prompt: `.t12/prompts/<file>` at the trunk commit if
-   the profile names one, else the factory's prompt. A built-in role
-   keeps its file (`prompts/reviewer.md`, `prompts/security.md`); a
-   project role gets the prompt of the first built-in role of its
-   kind, so a `ux-copy` review role starts from `prompts/reviewer.md`.
+   the profile names one, else the factory's prompt of the role's
+   kind (`prompts/tdd-analyzer.md`, `tdd-red.md`, `tdd-green.md`,
+   `tdd-refactor.md`, `reviewer.md`); a project role of kind `review`
+   starts from `prompts/reviewer.md`, so a `ux-copy` role needs
+   only its own prompt to differ.
 2. Each skill the role lists: `.t12/skills/<name>/SKILL.md` at the
    trunk commit, else the factory's `skills/<name>/SKILL.md`. A skill
    found in neither place is an error, at `prepare` and at `context`.
@@ -160,30 +212,36 @@ names the factor or fix it protects.
 
 A project can set:
 
-- the gate ladder: which checks run, their commands, their order
+- the gate ladder: which checks run (the existing suite, e2e), their
+  commands, their order
+- the tdd settings: `test_command`, `test_globs`, `lint_command`,
+  `assertion_pattern`, `failure_count_pattern`, `red_stub_max_lines`,
+  `refactor_skip_max_lines`
 - its own roles, each mapped to a kind, with any number of review
-  roles and the set green requires
+  roles and the set `check` requires
 - prompts and skills per role, from `.t12/` before the factory's
-- whether a task may waive red, with a reason the manifest shows
-- whether the QA lane runs
-- pause points where a human must resume, such as before green or
+- pause points where a human must resume, such as before `check` or
   before delivery (Factor 6 and 7)
-- budgets, sandbox, `verify_deps`, protected and security-review
-  paths, `touches` and `depends_on`
+- budgets (including `cycle_limit` and `attempt_limit`), sandbox,
+  `verify_deps`, protected and security-review paths, `touches` and
+  `depends_on`
 - intake and delivery adapters
 - how often a pattern must recur before `retro` reports it
 
 A project cannot change:
 
-- the phase order: red, stage, gates, replay, review, green. The
-  state machine is the only control flow (Factor 8).
+- the phase order: prepare, tdd (analyzer, red, green, refactor,
+  final), gates, review, check. The state machine is the only
+  control flow (Factor 8).
 - one JSON tool call per worker, with a fixed tool set per kind, so
   every tool maps to a step the core checks (Factor 4)
 - one session per role (Factor 10)
+- that green and refactor work in a blind worktree with no test
+  file, and green never sees the acceptance criteria
 - that the profile comes from trunk and is frozen at
-  `prepare`, and that a change to `.t12/` needs a security review.
+  `prepare`, and that a change to `.t12/` is flagged to the reviewer.
   This is "the candidate never checks itself" for project settings.
-- that `touches` is enforced at `stage`; without it the queue's
+- that `touches` is enforced at `tdd-step`; without it the queue's
   no-overlap promise is a claim
 - that the core never calls a model or the network and never merges;
   `retro` and `calibrate` propose, a human applies
@@ -195,7 +253,7 @@ runs against a disposable repo, as the current tests do.
 
 1. **Project profile. Built.** `.t12/project.json` replaces
    `.t12/policy.json`. Read from the configured trunk, merged under
-   tighten-only rules, protected paths refused at `stage`.
+   tighten-only rules, protected paths refused at `tdd-step`.
 2. **Roles and skills. Built.** Role-to-kind map, `TOOLS` keyed by kind,
    layered prompt and skill resolution, hashes in the context. The
    check is a project-defined `ux-copy` review role that blocks
@@ -215,6 +273,11 @@ runs against a disposable repo, as the current tests do.
    `chat-bridge/factory/paths.py` and its gate ladder. Run one real
    issue end to end. Then retire `chat-bridge/factory/` in a
    chat-bridge PR.
+6. **TDD lane. Built.** `prepare -> tdd -> gates -> review ->
+   check` replaced the red/stage/replay/green lanes (history), with
+   five built-in roles, a blind worktree for green and refactor, and
+   omp as the worker. It is checked against disposable repos, as the
+   other steps are; see DESIGN.md "TDD lane (Phase 8)".
 
 ## Open questions
 
@@ -222,7 +285,7 @@ runs against a disposable repo, as the current tests do.
   to 6 that run in CI, not locally. The proposal records them as
   out of scope for `local-verified`. A project could instead declare
   `ci_gates` that delivery reads back from the forge.
-- **Model invocation.** The core still never calls a model.
-  A runner that calls `claude -p` per role would make the factory
-  run on its own. That runner belongs in `adapters/`, not the core,
-  and is not in this plan.
+- **Model invocation.** The core never calls a model. The runner
+  (`adapters/runner.py`) drives omp workers and lives
+  in `adapters/`, not the core. Whether it should also learn other
+  worker backends is open; omp is the only worker today.

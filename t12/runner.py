@@ -101,4 +101,6 @@ def run(argv, cwd, timeout_s, env=None, sandbox=None):
         "stdout": stdout or "",
         "stderr": stderr or "",
         "sandbox": sandbox_used,
+        **({"toolchain_dirs": sandbox_module.toolchain_dirs()}
+           if sandbox_used == "landlock" else {}),
     }

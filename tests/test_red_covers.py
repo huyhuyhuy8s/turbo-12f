@@ -1,6 +1,6 @@
-"""gh-41: `red` takes a `--covers` map from each acceptance criterion
-index to the test(s) that check it, records it as evidence, and refuses
-a map that leaves any criterion out."""
+"""gh-41, ported to the tdd lane: the analyzer's test list maps each item to
+the acceptance criteria it covers, the core records the map, and refuses a
+list that leaves any criterion out (or names one that does not exist)."""
 
 import json
 import os
@@ -8,12 +8,13 @@ import subprocess
 import tempfile
 import unittest
 
-from tests.test_t12 import APP_V1, BIN, TEST_FILE, task_dict
+from tests.test_t12 import APP_V1, BIN, TddFlow, task_dict
 
 
-class RedCoversCase(unittest.TestCase):
+class TestListCoversCase(TddFlow, unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         repo = os.path.join(self.tmp.name, "product")
         self.home = os.path.join(self.tmp.name, "state")
         os.makedirs(os.path.join(repo, "tests"))
@@ -30,11 +31,6 @@ class RedCoversCase(unittest.TestCase):
             json.dump(task_dict(), fh)
         self.t12("init", "--repo", repo, "--home", self.home)
         self.t12("prepare", "--home", self.home, "--task", task_path)
-        with open(os.path.join(self.home, "worktrees", "demo-1", "tests", "test_greet.py"), "w") as fh:
-            fh.write(TEST_FILE)
-
-    def tearDown(self):
-        self.tmp.cleanup()
 
     def t12(self, *args, expect=0):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
@@ -42,29 +38,33 @@ class RedCoversCase(unittest.TestCase):
         self.assertEqual(result.returncode, expect, f"t12 {args} -> {result.stdout} {result.stderr}")
         return result
 
-    def red(self, covers, expect=0):
-        return self.t12(
-            "red", "--home", self.home, "--task-id", "demo-1",
-            "--test-path", "tests/test_greet.py",
-            "--command", "python3 -m unittest tests.test_greet -q",
-            "--marker", "FAILED", "--session", "sess-test-writer",
-            "--covers", json.dumps(covers), expect=expect,
-        )
+    def item(self, text, criteria):
+        return dict(self.DEFAULT_ITEM, text=text, criteria=criteria)
 
-    def run_record(self):
-        with open(os.path.join(self.home, "runs", "demo-1.json")) as fh:
-            return json.load(fh)
+    def test_the_analyzer_is_refused_a_list_missing_a_criterion(self):
+        result = self.analyze(items=[self.item("named greeting", [0])], expect=1)
+        self.assertIn("[1]", result.stderr)
+        self.assertIn("covered by no item", result.stderr)
+        record = self.flow_record()
+        self.assertEqual(record["phase"], "ready")
+        self.assertEqual(record["tdd"]["items"], [])
 
-    def test_red_refuses_a_map_missing_a_criterion(self):
-        result = self.red({"0": ["test_named"]}, expect=1)
-        self.assertIn("1", result.stderr)
-        self.assertIn("missing", result.stderr.lower())
-        self.assertEqual(self.run_record()["phase"], "ready")
+    def test_the_analyzer_is_refused_an_unknown_criterion(self):
+        result = self.analyze(items=[self.item("everything", [0, 1, 7])], expect=1)
+        self.assertIn("unknown criterion 7", result.stderr)
+        self.assertEqual(self.flow_phase(), "ready")
 
-    def test_red_records_the_covers_map(self):
-        covers = {"0": ["test_named"], "1": ["test_default", "test_named"]}
-        self.red(covers)
-        self.assertEqual(self.run_record()["red"]["covers"], covers)
+    def test_an_item_with_no_text_is_refused(self):
+        result = self.analyze(items=[self.item("   ", [0, 1])], expect=1)
+        self.assertIn("non-empty string", result.stderr)
+
+    def test_the_list_is_recorded_with_the_criteria_each_item_covers(self):
+        self.analyze(items=[self.item("named greeting", [0]), self.item("default greeting", [1, 0])])
+        items = self.flow_record()["tdd"]["items"]
+        self.assertEqual([(i["id"], i["criteria"], i["status"]) for i in items],
+                         [("T1", [0], "todo"), ("T2", [1, 0], "todo")])
+        self.assertEqual(self.flow_record()["tdd"]["step"], "red")
+        self.assertEqual(self.flow_phase(), "tdd")
 
 
 if __name__ == "__main__":

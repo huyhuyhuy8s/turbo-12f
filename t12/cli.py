@@ -8,13 +8,12 @@ the worker did in the worktree.
 import argparse
 import json
 import os
-import re
-import shlex
 import sys
 import time
 
 from . import delivery as delivery_mod
-from . import evidence, gates as gate_mod, gitio, instructions, limits, model, retro, runner, sandbox, store, tools
+from . import evidence, gates as gate_mod, gitio, globs, instructions, limits, model, retro, runner, sandbox, store, tools
+from . import tdd as tdd_mod
 from . import profile as profile_mod
 from .errors import StateError, T12Error
 
@@ -60,7 +59,7 @@ def _check_candidate_tree(run, action):
     if not gitio.is_clean(wt):
         raise StateError(f"refusing {action}: worktree has uncommitted changes")
     if gitio.head(wt) != run["candidate"]["commit"]:
-        raise StateError(f"refusing {action}: HEAD moved since stage")
+        raise StateError(f"refusing {action}: HEAD moved since the final step")
     return wt
 
 
@@ -129,6 +128,100 @@ def _verify_chain_or_raise(home, run):
         raise StateError("event log failed verification: " + "; ".join(problems[:3]))
 
 
+def _tdd_runner(home, run):
+    """What the tdd engine needs from the CLI: a command run on a commit in
+    the verification sandbox (its observation stored as evidence `name`),
+    and a save that records one event."""
+    wt = run["worktree"]
+
+    def run_on_commit(run_, commit, argv, name):
+        obs = _run_on_commit(home, run_, wt, commit, argv)
+        ref = evidence.write_observation(home, run_["task_id"], name, obs)
+        return obs["exit_code"], obs["stdout"] + obs["stderr"], ref
+
+    def save(event_type, detail=None):
+        _save(home, run, event_type, detail)
+
+    return tdd_mod.Runner(run_on_commit, save)
+
+
+def _evidence_refs(run):
+    """Every evidence ref the run's record holds for the tdd loop and the
+    gates, as (label, ref)."""
+    refs = []
+    tdd = run.get("tdd") or {}
+    for entry in tdd.get("history") or []:
+        where = f"tdd cycle {entry.get('cycle')}"
+        for key in ("red", "green_tests", "green_lint", "refactor_tests", "refactor_lint"):
+            if entry.get(key):
+                refs.append((f"{where} {key}", entry[key]))
+    if tdd.get("red"):
+        refs.append(("tdd red", tdd["red"]["output"]))
+    final = tdd.get("final") or {}
+    for key in ("tests", "lint"):
+        if final.get(key):
+            refs.append((f"tdd final {key}", final[key]))
+    findings = tdd.get("findings") or {}
+    if findings.get("report"):
+        refs.append((f"tdd findings ({findings.get('source')})", findings["report"]))
+    for gate in run["gates"]:
+        if gate["observation"]:
+            refs.append((f"gate:{gate['name']}", gate["observation"]))
+    return refs
+
+
+def _expected_head(run, phase):
+    """The commit the worktree must sit at while the run is in `phase`."""
+    if phase == "ready":
+        return run["base_commit"]
+    if phase == "tdd":
+        return run["tdd"]["last_good_commit"]
+    if phase in ("gates", "review", "local-verified"):
+        return run["candidate"]["commit"]
+    return None
+
+
+def _locked_tests_problem(run, wt):
+    """None, or the test files at HEAD that differ from the blobs the last
+    red commit locked."""
+    tdd = run.get("tdd") or {}
+    if not tdd.get("red_commit"):
+        return None
+    current = gitio.blob_map(wt, "HEAD", lambda p: globs.match(p, tdd["test_globs"]))
+    changed = sorted(p for p in set(current) | set(tdd["locked"])
+                     if current.get(p) != tdd["locked"].get(p))
+    return ", ".join(changed) or None
+
+
+def _unfinished_work(old):
+    """The old run's work since its base, as a diff with every test file
+    left out: the new run's red writes its own."""
+    wt, base = old["worktree"], old["base_commit"]
+    gitio.git_ok(wt, "add", "-A", "-N")
+    test_globs = (old.get("tdd") or {}).get("test_globs") or []
+    paths = [p for p in gitio.git_ok(wt, "diff", "--name-only", "--no-renames", "-z", base).split("\0")
+             if p and not globs.match(p, test_globs)]
+    if not paths:
+        return ""
+    return gitio.git_ok(wt, "--literal-pathspecs", "diff", base, "--", *paths, strip=False)
+
+
+def _send_back(home, run, source, ref, detail):
+    """A failed gate or a changes-requested review is one repair: the run
+    goes back into the tdd loop, or, past the repair cap, pauses with an
+    escalation. Returns the run's new phase."""
+    phase = model.repair_or_pause(run, source, ref)
+    budgets = run["budgets"]
+    detail = {**detail, "source": source, "report": ref["name"],
+              "repairs_used": budgets["repairs_used"], "repair_cap": budgets["repair_cap"]}
+    if phase == "tdd":
+        _save(home, run, "tdd-repair", {**detail, "step": run["tdd"]["step"],
+                                         "mode": run["tdd"]["mode"]})
+    else:
+        _save(home, run, "repair-cap", detail)
+    return phase
+
+
 def _last_compacted_error(home, run):
     """Factor 9: the next worker gets a compacted error, not raw logs."""
     path = model.events_path(home, run["task_id"])
@@ -141,7 +234,9 @@ def _last_compacted_error(home, run):
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if event.get("type") in ("gate-failed", "replay-failed", "red-failed"):
+            if event.get("type") in ("gate-failed", "red-failed", "tdd-list-failed",
+                                     "tdd-green-failed", "tdd-refactor-failed",
+                                     "tdd-final-failed"):
                 last = event
     if not last:
         return None
@@ -169,14 +264,29 @@ def _manifest_text(run):
     for criterion in run["acceptance_criteria"]:
         lines.append(f"  - {criterion}")
     lines.append("")
-    if run["red"]:
-        r = run["red"]
-        lines += [
-            f"red commit: {r['commit']}  test: {r['test_path']}  blob: {r['test_blob'][:12]}",
-            f"red command: {' '.join(r['command'])}  exit={r['exit_code']}",
-            f"red output: {r['output']['name']} sha256={r['output']['sha256'][:16]}",
-            "",
-        ]
+    tdd = run.get("tdd")
+    if tdd:
+        summary = model.tdd_summary(run)
+        lines.append(f"tdd: {summary['cycles']} cycles, "
+                     f"{summary['items_done']}/{summary['items_total']} items done")
+        lines.append(f"test command: {' '.join(tdd['test_command'])}")
+        lines.append("lint command: " + (" ".join(tdd["lint_command"])
+                                         if tdd.get("lint_command") else "not configured"))
+        for item in tdd["items"]:
+            built = f"  {item['test_file']}::{item['test_name']}" if item.get("test_file") else ""
+            lines.append(f"  - {item['id']} [{item['status']}] {item['text']}{built}")
+        for entry in tdd["history"]:
+            if entry.get("red"):
+                lines.append(f"red commit: {entry['commits']['red']}  item: {entry['item_id']}  "
+                             f"output sha256={entry['red']['sha256'][:16]}")
+        final = tdd.get("final")
+        if final:
+            lines.append(f"final run: tests exit={final['tests']['observation']['exit_code']} "
+                         f"on {final['commit'][:12]} sha256={final['tests']['sha256'][:16]}")
+            if final.get("lint"):
+                lines.append(f"final lint: exit={final['lint']['observation']['exit_code']} "
+                             f"sha256={final['lint']['sha256'][:16]}")
+        lines.append("")
     if run["candidate"]:
         lines.append(f"candidate commit: {run['candidate']['commit']}")
         lines.append("")
@@ -188,13 +298,6 @@ def _manifest_text(run):
             extra = f" exit={obs['observation']['exit_code']} sha256={obs['sha256'][:16]}"
         lines.append(f"  - {gate['name']}: {gate['status']}{extra}")
     lines.append("")
-    if run["replay"]:
-        rp = run["replay"]
-        lines += [
-            f"replay: exit={rp['exit_code']} on {rp['commit'][:12]}",
-            f"replay output: {rp['output']['name']} sha256={rp['output']['sha256'][:16]}",
-            "",
-        ]
     b = run["budgets"]
     lines.append("")
     lines.append(f"Sandbox adapter: {run.get('sandbox_adapter') or 'unknown'}"
@@ -273,9 +376,9 @@ CARRIED_PATCH_CHARS = 12000
 
 def _carry_from(home, old, archive):
     """What a human-approved restart keeps from the stopped run: the
-    answers it received, and the builder's unfinished work as a patch
-    (never a commit; the new run's red, gates and review run normally).
-    The old red test is left out of the patch."""
+    answers it received, and its unfinished work as a patch for the
+    analyzer to read (never a commit; the new run's tdd loop, gates and
+    review run normally). The old run's test files are left out."""
     carried = {"from": archive, "patch": None,
                "answers": list((old.get("carried") or {}).get("answers") or []),
                "open_questions": [e["question"] for e in old.get("escalations") or []
@@ -283,8 +386,7 @@ def _carry_from(home, old, archive):
     carried["answers"] += [{"question": e["question"], "answer": e["answer"]}
                            for e in old.get("escalations") or [] if e["answer"] is not None]
     if os.path.isdir(old["worktree"]):
-        patch = gitio.work_diff(old["worktree"], old["base_commit"],
-                                (old.get("red") or {}).get("test_path"))
+        patch = _unfinished_work(old)
         if patch.strip():
             carried["patch"] = evidence.write_evidence(
                 home, old["task_id"], f"carried-{archive}.patch", patch.encode("utf-8"))
@@ -316,6 +418,12 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(
                 f"gate {gate.get('name')!r} rejected at admission: {exc}"
             ) from exc
+    for key in ("test_command", "lint_command"):
+        if task.get(key):
+            try:
+                sandbox.check_command(task[key])
+            except T12Error as exc:
+                raise StateError(f"{key} rejected at admission: {exc}") from exc
     supersedes = None
     carried = None
     if os.path.exists(model.run_path(home, task_id)):
@@ -347,6 +455,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         run[key] = profile[key]
     run["trunk"] = trunk
     run["trunk_commit"] = trunk_commit
+    run["tdd"] = model.new_tdd(profile, task, base_commit)
     if carried:
         run["carried"] = carried
     if gitio.branch_exists(repo, run["branch"]):
@@ -374,100 +483,42 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     return 0
 
 
-def cmd_context(args):
-    home = _home(args)
-    run = _run(home, args.task_id)
-    kind = model.role_kind(run, args.role)
-    used = instructions.resolve(run["repo"], run["trunk_commit"], run["role_map"],
-                                args.role, PROJECT_ROOT)
-    wt = run["worktree"]
-    changed = gitio.dirty_paths(wt) if os.path.isdir(wt) else []
-    prior_review = None
-    if kind == "review":
-        for review in reversed(run.get("reviews") or []):
-            if review["role"] == args.role:
-                # Refuse a prior report that no longer matches its hash,
-                # as verify would; then pass its findings, not its text.
-                evidence.verify_ref(home, run["task_id"], review["report"])
-                with open(review["report"]["path"], encoding="utf-8", errors="replace") as fh:
-                    text = fh.read()
-                try:
-                    findings = tools.parse(text, kind)[1].get("findings")
-                except StateError:
-                    findings = None
-                prior_review = {
-                    "verdict": review["verdict"],
-                    "commit": review["commit"],
-                    "report": review["report"]["name"],
-                    "voided": review["voided"],
-                    "voided_reason": review.get("voided_reason"),
-                    "findings": findings if isinstance(findings, list) else text[-4000:],
-                }
-                break
-    elif kind == "builder":
-        review = model.changes_requested(run)
-        if review is not None:
-            with open(review["report"]["path"], encoding="utf-8", errors="replace") as fh:
-                findings = fh.read()[-4000:]
-            prior_review = {
-                "role": review["role"],
-                "verdict": review["verdict"],
-                "commit": review["commit"],
-                "report": review["report"]["name"],
-                "report_path": review["report"]["path"],
-                "findings": findings,
-            }
-    gates = [{"name": g["name"], "status": g["status"]} for g in run["gates"]]
-    replay = None
-    if kind == "review":
-        # Pass what the factory observed on the current candidate, never
-        # the builder's own summary; results of a superseded candidate drop.
-        current = run["candidate"]["commit"] if run["candidate"] else None
-        for entry, g in zip(gates, run["gates"]):
-            ref = g.get("observation")
-            if current and ref and g.get("commit") == current:
-                entry.update(command=g["command"], commit=g["commit"],
-                             exit_code=ref["observation"]["exit_code"],
-                             sha256=ref["sha256"])
-        rp = run["replay"]
-        if current and rp and rp["commit"] == current:
-            replay = {"command": rp["command"], "exit_code": rp["exit_code"],
-                      "commit": rp["commit"], "sha256": rp["output"]["sha256"]}
+def _report_findings(home, run, ref):
+    """The findings of a stored review report (a structured review's list,
+    else the report's tail), after checking it still matches its hash."""
+    evidence.verify_ref(home, run["task_id"], ref)
+    with open(ref["path"], encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+    try:
+        findings = tools.parse(text, "review")[1].get("findings")
+    except StateError:
+        findings = None
+    return findings if isinstance(findings, list) else text[-4000:]
+
+
+def _ran(ref):
+    obs = (ref or {}).get("observation")
+    if not obs:
+        return None
+    return {"command": obs["argv"], "exit_code": obs["exit_code"], "sha256": ref["sha256"]}
+
+
+def _analyzer_context(home, run):
+    tdd = run["tdd"]
+    findings = None
+    if tdd["mode"] == "review-fix" and (tdd.get("findings") or {}).get("report"):
+        findings = _report_findings(home, run, tdd["findings"]["report"])
     context = {
-        "task_id": run["task_id"],
-        "title": run["title"],
-        "acceptance_criteria": run["acceptance_criteria"],
-        "phase": run["phase"],
-        "requested_phase": args.phase,
-        "branch": run["branch"],
-        "worktree": wt,
-        "base": run["base"],
-        "touches": run.get("touches"),
-        "protected_paths": run.get("protected_paths", []),
-        "budgets": {
-            "time_left_s": int(model.time_left_s(run)),
-            "ops_left": run["budgets"]["op_limit"] - run["budgets"]["ops_used"],
-            "repairs_left": run["budgets"]["repair_cap"] - run["budgets"]["repairs_used"],
-        },
-        "gates": gates,
-        "replay": replay,
-        "roles": run.get("roles", {}),
-        "prior_review": prior_review,
-        "covers": run["red"].get("covers") if run["red"] else None,
-        "red_test": {k: run["red"][k] for k in ("test_path", "command", "marker", "commit")}
-        if run["red"] else None,
-        "changed_files": changed,
-        "last_compacted_error": _last_compacted_error(home, run),
-        "carried_open_questions": (run.get("carried") or {}).get("open_questions", []),
-        "human_responses": (run.get("carried") or {}).get("answers", []) + [
-            {"question": e["question"], "answer": e["answer"]}
-            for e in run.get("escalations") or [] if e["answer"] is not None
-        ],
-        "tools": tools.schema_for(kind),
-        "instructions": [{k: entry[k] for k in ("source", "path", "sha256")} for entry in used],
+        "mode": tdd["mode"],
+        "criteria": list(run["acceptance_criteria"]),
+        "items": [{k: i[k] for k in ("id", "text", "kind", "status", "criteria")}
+                  for i in tdd["items"]],
+        "findings": findings,
+        "files": gitio.tracked_files(run["worktree"])[:tdd_mod.FILE_LIST_LIMIT],
+        "last_error": tdd.get("last_error"),
     }
     carried_patch = (run.get("carried") or {}).get("patch")
-    if kind == "builder" and carried_patch:
+    if carried_patch:
         evidence.verify_ref(home, run["task_id"], carried_patch)
         with open(carried_patch["path"], encoding="utf-8", errors="replace") as fh:
             text = fh.read()
@@ -475,6 +526,110 @@ def cmd_context(args):
             "from": run["carried"]["from"], "text": text[:CARRIED_PATCH_CHARS],
             "truncated": len(text) > CARRIED_PATCH_CHARS,
         }
+    return context
+
+
+def _review_context(home, run, role):
+    prior_review = None
+    for review in reversed(run.get("reviews") or []):
+        if review["role"] == role:
+            prior_review = {
+                "verdict": review["verdict"],
+                "commit": review["commit"],
+                "report": review["report"]["name"],
+                "voided": review["voided"],
+                "voided_reason": review.get("voided_reason"),
+                "findings": _report_findings(home, run, review["report"]),
+            }
+            break
+    # Pass what the factory observed on the current candidate, never a
+    # worker's own summary; results of a superseded candidate drop.
+    candidate = run["candidate"]["commit"] if run["candidate"] else None
+    gates = []
+    for g in run["gates"]:
+        entry = {"name": g["name"], "status": g["status"]}
+        ref = g.get("observation")
+        if candidate and ref and g.get("commit") == candidate:
+            entry.update(command=g["command"], commit=g["commit"],
+                         exit_code=ref["observation"]["exit_code"], sha256=ref["sha256"])
+        gates.append(entry)
+    tdd = run["tdd"]
+    final = tdd.get("final")
+    summary = model.tdd_summary(run)
+    wt = run["worktree"]
+    return {
+        "task_id": run["task_id"],
+        "title": run["title"],
+        "acceptance_criteria": run["acceptance_criteria"],
+        "base": run["base"],
+        "touches": run.get("touches"),
+        "candidate": candidate,
+        "gates": gates,
+        "tdd": {
+            "cycles": summary["cycles"],
+            "items": [{k: i[k] for k in ("id", "text", "kind", "status", "test_file",
+                                          "test_name", "defeats")} for i in tdd["items"]],
+            "final": None if not final or final["commit"] != candidate else {
+                "commit": final["commit"], "tests": _ran(final["tests"]),
+                "lint": _ran(final.get("lint"))},
+            "lint_command": tdd.get("lint_command"),
+        },
+        "security_paths_touched": list(run.get("security_paths_touched") or []),
+        "prior_review": prior_review,
+        "changed_files": gitio.dirty_paths(wt) if os.path.isdir(wt) else [],
+        "last_compacted_error": _last_compacted_error(home, run),
+    }
+
+
+def cmd_context(args):
+    home = _home(args)
+    run = _run(home, args.task_id)
+    kind = model.role_kind(run, args.role)
+    used = instructions.resolve(run["repo"], run["trunk_commit"], run["role_map"],
+                                args.role, PROJECT_ROOT)
+    tdd = run.get("tdd")
+    if tdd is None:
+        raise StateError("this run has no tdd state; stop it and prepare it again with --supersede")
+    context = {
+        "role": args.role,
+        "tools": tools.schema_for(kind),
+        "budgets": {
+            "time_left_s": int(model.time_left_s(run)),
+            "ops_left": run["budgets"]["op_limit"] - run["budgets"]["ops_used"],
+            "repairs_left": run["budgets"]["repair_cap"] - run["budgets"]["repairs_used"],
+        },
+        "human_responses": (run.get("carried") or {}).get("answers", []) + [
+            {"question": e["question"], "answer": e["answer"]}
+            for e in run.get("escalations") or [] if e["answer"] is not None
+        ],
+        "worktree": run["worktree"],
+        "test_globs": list(tdd["test_globs"]),
+        "protected_paths": run.get("protected_paths", []),
+    }
+    pins = profile_mod.parse(gitio.file_at(run["repo"], run["trunk_commit"], profile_mod.PATH))
+    context["skills"] = profile_mod.applicable_skills(pins, args.role, run["repo"],
+                                                      run["base_commit"])
+    if kind in ("green", "refactor"):
+        context.update(tdd_mod.green_context(run) if kind == "green"
+                       else tdd_mod.refactor_context(run))
+    else:
+        if kind == "analyzer":
+            context.update(_analyzer_context(home, run))
+        elif kind == "red":
+            context.update(tdd_mod.red_context(run))
+        else:
+            context.update(_review_context(home, run, args.role))
+        context.update({
+            "task_id": run["task_id"],
+            "title": run["title"],
+            "phase": run["phase"],
+            "requested_phase": args.phase,
+            "branch": run["branch"],
+            "touches": run.get("touches"),
+            "carried_open_questions": (run.get("carried") or {}).get("open_questions", []),
+            "instructions": [{k: entry[k] for k in ("source", "path", "sha256")} for entry in used],
+        })
+        context.setdefault("criteria", list(run["acceptance_criteria"]))
     prompt, *skills = used
     print(prompt["text"])
     for skill in skills:
@@ -485,243 +640,6 @@ def cmd_context(args):
     return 0
 
 
-def _parse_covers(raw, criteria_count):
-    """The test-writer's map from each acceptance criterion index to the
-    tests that check it. Every criterion must be named."""
-    try:
-        covers = json.loads(raw) if isinstance(raw, str) else raw
-    except json.JSONDecodeError as exc:
-        raise StateError(f"cannot parse --covers as JSON: {exc}") from exc
-    if not isinstance(covers, dict):
-        raise StateError("--covers must map criterion indices to lists of test names")
-    indices = [str(i) for i in range(criteria_count)]
-    unknown = sorted(k for k in covers if k not in indices)
-    if unknown:
-        raise StateError(f"refusing red: covers names unknown criterion indices {unknown}; "
-                         f"criteria are {indices}")
-    missing = [i for i in indices if i not in covers]
-    if missing:
-        raise StateError(f"refusing red: covers is missing criterion indices {missing}")
-    for index, tests in covers.items():
-        if (not isinstance(tests, list) or not tests
-                or not all(isinstance(t, str) and t.strip() for t in tests)):
-            raise StateError(f"refusing red: covers[{index!r}] must be a non-empty list of test names")
-    return covers
-
-
-def _named(name, text):
-    return re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text) is not None
-
-
-def _short_test_name(name):
-    return re.split(r"::|\.", name)[-1]
-
-
-_FAILURE_WORD = re.compile(r"(?<!\w)(?:FAIL|FAILED|ERROR|not ok)(?!\w)")
-
-
-def _defines_test(name, source):
-    """True when the source defines a function with the test's short name."""
-    short = re.escape(_short_test_name(name))
-    return re.search(rf"^\s*(?:async\s+)?def\s+{short}\s*\(", source, re.M) is not None
-
-
-def _names_test(name, line):
-    """True when the line names the test. A qualified name (Class.method or
-    path::Class::method) must appear qualified, in either separator style,
-    so a test cannot borrow the failure of a same-named method elsewhere."""
-    parts = [re.escape(p) for p in re.split(r"::|\.", name) if p]
-    if len(parts) == 1:
-        return _named(name, line)
-    joined = r"(?:\.|::)".join(parts)
-    return re.search(rf"(?<![\w]){joined}(?!\w)", line) is not None
-
-
-def _reported_failing(name, output):
-    """True when a line of the runner's output names the test and marks it failed."""
-    return any(_names_test(name, line) and _FAILURE_WORD.search(line)
-               for line in output.splitlines())
-
-
-_SETUP_FRAME = re.compile(r'^\s*File ".*", line \d+, in (setUp|setUpClass|setUpModule|setup_method)\b', re.M)
-
-
-def _setup_errored(name, output):
-    """True when the test errored before its body ran: unittest's traceback
-    for it passes through a setUp-style frame and never enters the test,
-    or pytest says `ERROR at setup of`."""
-    short = _short_test_name(name)
-    if re.search(rf"ERROR at setup of (?:\S*::)?{re.escape(short)}\b", output):
-        return True
-    for block in re.split(r"^={20,}$", output, flags=re.M):
-        header = block.strip().splitlines()[:1]
-        if not header or not header[0].startswith("ERROR: ") or not _names_test(name, header[0]):
-            continue
-        if _SETUP_FRAME.search(block) and not re.search(rf"in {re.escape(short)}\s*$", block, re.M):
-            return True
-    return False
-
-
-def cmd_red(args):
-    home = _home(args)
-    run = _run(home, args.task_id)
-    if run["phase"] != "ready":
-        raise StateError(f"red requires phase 'ready', run is {run['phase']!r}")
-    model.check_budgets(run)
-    _require_probes(run)
-    model.check_session(run, args.role, args.session)
-    wt = _check_worktree(run)
-    test_path = args.test_path
-    if not os.path.exists(os.path.join(wt, test_path)):
-        raise StateError(f"test file not found in worktree: {test_path}")
-    if model.outside_touches(run, [os.path.normpath(test_path)]):
-        raise StateError(f"refusing red: the test is outside the task's touches: {test_path}")
-    dirty = set(gitio.dirty_paths(wt))
-    if dirty - {test_path}:
-        raise StateError(f"refusing red: unrelated dirty files: {sorted(dirty - {test_path})}")
-    if test_path not in dirty:
-        raise StateError(f"refusing red: {test_path} has no changes to commit")
-    try:
-        command = shlex.split(args.command)
-    except ValueError as exc:
-        raise StateError(f"cannot parse --command: {exc}") from exc
-    if not command:
-        raise StateError("--command must not be empty")
-    covers = _parse_covers(args.covers, len(run["acceptance_criteria"]))
-    covered = sorted({t for tests in covers.values() for t in tests})
-    commit = gitio.commit_with_path(wt, test_path, f"test({run['task_id']}): red test")
-    test_source = gitio.file_at(wt, commit, test_path)
-    absent = [t for t in covered if not _defines_test(t, test_source)]
-    if absent:
-        raise StateError(f"refusing red: covers names tests not in the red commit's {test_path}: {absent}")
-    obs = _run_on_commit(home, run, wt, commit, command)
-    model.bump_op(run)
-    if obs["timed_out"] or obs["exit_code"] == 0:
-        _save(home, run, "red-failed", {
-            "step": "red", "exit_code": obs["exit_code"],
-            "output": (obs["stdout"] + obs["stderr"])[-4000:],
-        })
-        hint = ""
-        if not obs["timed_out"] and re.search(r"\bskipped\b", obs["stdout"] + obs["stderr"], re.I):
-            hint = (
-                "; some tests were skipped, and a skipped test counts as passing. "
-                "Verification runs in a cage that denies all network, loopback included, "
-                "so tests that open a socket or start a local server skip. "
-                "Do not open sockets: inject a fake into the code under test"
-            )
-        raise StateError(
-            "red test did not fail as required "
-            f"(exit={obs['exit_code']}, timed_out={obs['timed_out']}); "
-            f"a passing test cannot be the red test{hint}"
-        )
-    combined = obs["stdout"] + obs["stderr"]
-    if args.marker not in combined:
-        _save(home, run, "red-failed", {
-            "step": "red", "exit_code": obs["exit_code"],
-            "output": combined[-4000:],
-        })
-        raise StateError(f"red output lacks the expected failure marker: {args.marker!r}")
-    passing = [t for t in covered if not _reported_failing(t, combined)]
-    if passing:
-        _save(home, run, "red-failed", {
-            "step": "red", "exit_code": obs["exit_code"],
-            "output": combined[-4000:],
-        })
-        raise StateError(f"refusing red: covered tests do not fail at the red commit: {passing}")
-    broken = [t for t in covered if _setup_errored(t, combined)]
-    if broken:
-        _save(home, run, "red-failed", {
-            "step": "red", "exit_code": obs["exit_code"],
-            "output": combined[-4000:],
-        })
-        raise StateError(
-            f"refusing red: covered tests errored in test setup (setUp, setUpClass or a fixture), "
-            f"so they never ran their assertions: {broken}. Fix the setup; "
-            "a red test must fail in its body"
-        )
-    ref = evidence.write_observation(home, run["task_id"], "red-output.txt", obs)
-    gitio.move_branch_to(wt, commit)
-    run["red"] = {
-        "test_path": test_path,
-        "command": command,
-        "marker": args.marker,
-        "exit_code": obs["exit_code"],
-        "output": ref,
-        "test_blob": gitio.blob_at(wt, commit, test_path),
-        "commit": commit,
-        "covers": covers,
-    }
-    model.bind_session(run, args.role, args.session)
-    model.transition(run, "red")
-    _save(home, run, "red", {"commit": commit, "test_path": test_path})
-    print(f"red: commit={commit[:12]} test={test_path}")
-    return 0
-
-
-def cmd_stage(args):
-    home = _home(args)
-    run = _run(home, args.task_id)
-    if run["phase"] not in ("red", "gates", "green"):
-        raise StateError(f"stage requires phase 'red', 'gates' or 'green', run is {run['phase']!r}")
-    model.check_budgets(run)
-    model.check_session(run, args.role, args.session)
-    wt = _check_worktree(run)
-    if not gitio.is_clean(wt):
-        raise StateError("refusing stage: worktree has uncommitted changes")
-    candidate = gitio.head(wt)
-    review = model.changes_requested(run)
-    if review is not None and candidate == review["commit"]:
-        model.bump_op(run)
-        _save(home, run, "stage-refused", {
-            "reason": "no new commit after changes requested",
-            "review": review["report"]["name"], "commit": candidate[:12],
-        })
-        raise StateError(
-            f"refusing stage: the {review['role']} review ({review['report']['name']}) "
-            f"asked for changes on {candidate[:12]} and no new commit was made — "
-            "address its findings, commit, then stage"
-        )
-    if candidate == run["red"]["commit"]:
-        raise StateError("refusing stage: no implementation commit after the red commit")
-    if not gitio.is_ancestor(wt, run["red"]["commit"], candidate):
-        raise StateError("refusing stage: candidate does not descend from the red commit")
-    if gitio.blob_hash(wt, run["red"]["test_path"]) != run["red"]["test_blob"]:
-        raise StateError("refusing stage: red test file changed after the red phase")
-    sensitive = []
-    if run.get("base_commit") and "trunk_commit" not in run:
-        raise StateError("refusing stage: this run was prepared before project profiles; "
-                         "stop it and prepare it again with --supersede")
-    if run.get("base_commit"):
-        changed = gitio.changed_paths(wt, run["base_commit"], candidate)
-        outside = model.outside_touches(run, changed)
-        if outside:
-            raise StateError("refusing stage: the candidate changes paths outside the "
-                             f"task's touches: {', '.join(outside)}")
-        # Measured from where the candidate leaves trunk, so a base that
-        # already carries an unreviewed edit cannot hide it.
-        fork = gitio.merge_base(wt, run["trunk_commit"], candidate)
-        changed = sorted(set(changed) | set(gitio.changed_paths(wt, fork, candidate)))
-        protected = [p for p in changed if model.under(p, run["protected_paths"])]
-        if protected:
-            raise StateError("refusing stage: the candidate changes protected paths: "
-                             f"{', '.join(protected)}")
-        roots = profile_mod.security_roots(run)
-        sensitive = [p for p in changed if model.under(p, roots)]
-        if sensitive and "security" not in run["required_reviews"]:
-            run["required_reviews"].append("security")
-    if run["phase"] in ("gates", "green"):
-        gate_mod.reset_for_new_candidate(run)
-        run["replay"] = None
-        model.void_reviews(run, f"superseded by {candidate[:12]}")
-    run["candidate"] = {"commit": candidate, "staged_at": time.time()}
-    model.bump_op(run)
-    model.bind_session(run, args.role, args.session)
-    model.transition(run, "gates")
-    _save(home, run, "staged", {"commit": candidate, "security_paths": sensitive})
-    print(f"staged: candidate={candidate[:12]}")
-    return 0
-
-
 def cmd_gate(args):
     home = _home(args)
     run = _run(home, args.task_id)
@@ -729,84 +647,59 @@ def cmd_gate(args):
         raise StateError(f"gate requires phase 'gates', run is {run['phase']!r}")
     model.check_budgets(run)
     _require_probes(run)
-    if model.role_kind(run, args.role) != "qa":
-        raise StateError(f"gates run under a qa-kind role; {args.role!r} is not one")
-    model.check_session(run, args.role, args.session)
     wt = _check_candidate_tree(run, "gate")
-    gate = gate_mod.find_gate(run, args.name)
+    gate = gate_mod.find_gate(run, args.name) if args.name else gate_mod.next_gate(run)
+    if gate is None:
+        raise StateError("every gate has passed on this candidate")
     gate_mod.check_order(run, gate)
-    obs = _run_on_commit(home, run, wt, run["candidate"]["commit"], gate["command"])
-    ref = evidence.write_observation(home, run["task_id"], f"gate-{gate['name']}-output.txt", obs)
-    gate["run_by"] = args.session
-    gate["run_by_role"] = args.role
-    model.bind_session(run, args.role, args.session)
-    gate["commit"] = run["candidate"]["commit"]
+    commit = run["candidate"]["commit"]
+    obs = _run_on_commit(home, run, wt, commit, gate["command"])
+    failed = obs["timed_out"] or obs["exit_code"] != 0
+    # A failing output is the findings the next repair reads, so each failure
+    # keeps its own file: a later run of the gate must not rewrite it.
+    name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
+            else f"gate-{gate['name']}-output.txt")
+    ref = evidence.write_observation(home, run["task_id"], name, obs)
+    gate["commit"] = commit
+    gate["observation"] = ref
     model.bump_op(run)
-    if obs["timed_out"] or obs["exit_code"] != 0:
+    if failed:
         gate["status"] = "failed"
-        gate["observation"] = ref
-        run["budgets"]["repairs_used"] += 1
         _save(home, run, "gate-failed", {
             "step": gate["name"], "exit_code": obs["exit_code"],
             "duration_s": obs["duration_s"],
             "output": (obs["stdout"] + obs["stderr"])[-4000:],
         })
-        if run["budgets"]["repairs_used"] > run["budgets"]["repair_cap"]:
-            run["phase"] = "stopped"
-            run["stop_reason"] = "repair-cap"
-            model.record_measurements(run)
-            _save(home, run, "stopped", {"reason": "repair-cap"})
+        phase = _send_back(home, run, "gate", ref, {"gate": gate["name"]})
+        b = run["budgets"]
+        if phase == "paused":
             raise StateError(
-                f"gate {gate['name']!r} failed and the repair cap "
-                f"({run['budgets']['repair_cap']}) is exceeded; run stopped"
-            )
+                f"gate {gate['name']!r} failed (exit={obs['exit_code']}) and the repair cap "
+                f"({b['repair_cap']}) is exceeded; run paused for a human — "
+                f"the failing output is {ref['name']}")
         raise StateError(
-            f"gate {gate['name']!r} failed (exit={obs['exit_code']}); "
-            f"repairs used {run['budgets']['repairs_used']}/{run['budgets']['repair_cap']} — "
-            "fix in the worktree and re-stage"
-        )
+            f"gate {gate['name']!r} failed (exit={obs['exit_code']}); back to tdd at "
+            f"green, repairs used {b['repairs_used']}/{b['repair_cap']}")
     gate["status"] = "passed"
-    gate["observation"] = ref
-    _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
     if gate_mod.all_passed(run):
-        print(f"gate {gate['name']}: passed — all gates passed, run replay next")
+        model.transition(run, "review")
+    _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
+    if run["phase"] == "review":
+        print(f"gate {gate['name']}: passed — all gates passed, review next")
     else:
-        nxt = gate_mod.next_gate(run)
-        print(f"gate {gate['name']}: passed — next gate: {nxt['name']}")
+        print(f"gate {gate['name']}: passed — next gate: {gate_mod.next_gate(run)['name']}")
     return 0
 
 
-def cmd_replay(args):
+def cmd_tdd_step(args):
+    """The deterministic end of the tdd loop: every red test and lint on the
+    tip commit, in the sandbox, then pin it as the candidate."""
     home = _home(args)
     run = _run(home, args.task_id)
-    if run["phase"] != "gates":
-        raise StateError(f"replay requires phase 'gates', run is {run['phase']!r}")
-    if not gate_mod.all_passed(run):
-        raise StateError("replay requires all gates to pass first")
     model.check_budgets(run)
     _require_probes(run)
-    wt = _check_candidate_tree(run, "replay")
-    obs = _run_on_commit(home, run, wt, run["candidate"]["commit"], run["red"]["command"])
-    model.bump_op(run)
-    if obs["timed_out"] or obs["exit_code"] != 0:
-        _save(home, run, "replay-failed", {
-            "step": "replay", "exit_code": obs["exit_code"],
-            "output": (obs["stdout"] + obs["stderr"])[-4000:],
-        })
-        raise StateError(
-            f"replay failed (exit={obs['exit_code']}): the red test does not "
-            "pass on the candidate — fix in the worktree and re-stage"
-        )
-    ref = evidence.write_observation(home, run["task_id"], "replay-output.txt", obs)
-    run["replay"] = {
-        "command": run["red"]["command"],
-        "exit_code": obs["exit_code"],
-        "output": ref,
-        "commit": run["candidate"]["commit"],
-    }
-    model.transition(run, "green")
-    _save(home, run, "replayed", {"commit": run["candidate"]["commit"]})
-    print(f"replay: passed on {run['candidate']['commit'][:12]} — run green next")
+    _check_worktree(run)
+    print(tdd_mod.final(home, run, runner=_tdd_runner(home, run)))
     return 0
 
 
@@ -817,16 +710,17 @@ def cmd_review(args):
     kind = model.role_kind(run, role)
     if kind != "review":
         raise StateError(f"{role!r} is a {kind} role; only review roles record reviews")
-    if run["phase"] not in ("gates", "green"):
-        raise StateError(f"review requires phase 'gates' or 'green', run is {run['phase']!r}")
+    if run["phase"] != "review":
+        raise StateError(f"review requires phase 'review', run is {run['phase']!r}")
     if not gate_mod.all_passed(run):
         raise StateError("review requires all gates to pass first")
     model.check_budgets(run)
     _require_probes(run)
     model.check_session(run, role, args.session)
     wt = _check_worktree(run)
-    if gitio.head(wt) != run["candidate"]["commit"]:
-        raise StateError("refusing review: HEAD moved since stage")
+    commit = run["candidate"]["commit"]
+    if gitio.head(wt) != commit:
+        raise StateError("refusing review: HEAD moved since the final step")
     report_path = os.path.abspath(args.report)
     if not os.path.isfile(report_path):
         raise StateError(f"review report not found: {args.report}")
@@ -847,34 +741,39 @@ def cmd_review(args):
         "role": role,
         "session": args.session,
         "verdict": args.verdict,
-        "commit": run["candidate"]["commit"],
+        "commit": commit,
         "report": ref,
         "prior_review": prior["report"]["name"] if prior else None,
         "voided": False,
         "voided_reason": None,
         "at": time.time(),
     })
-    # Each changes-requested round is one repair, so a builder that
-    # cannot satisfy the reviewer (or a finding the builder does not
-    # own) stops at the cap instead of looping review forever.
+    _save(home, run, "reviewed", {"role": role, "verdict": args.verdict, "commit": commit[:12]})
     if args.verdict == "changes-requested":
-        run["budgets"]["repairs_used"] += 1
-    _save(home, run, "reviewed", {
-        "role": role, "verdict": args.verdict,
-        "commit": run["candidate"]["commit"][:12],
-    })
-    if args.verdict == "changes-requested":
-        if run["budgets"]["repairs_used"] > run["budgets"]["repair_cap"]:
-            run["phase"] = "stopped"
-            run["stop_reason"] = "repair-cap"
-            model.record_measurements(run)
-            _save(home, run, "stopped", {"reason": "repair-cap", "review": ref["name"]})
-            raise StateError(
-                f"{role} requested changes ({ref['name']}) and the repair cap "
-                f"({run['budgets']['repair_cap']}) is exceeded; run stopped — "
-                f"the unresolved findings are in {ref['name']}"
-            )
-    print(f"review: {role} {args.verdict} on {run['candidate']['commit'][:12]}")
+        # Each changes-requested round is one repair, so a reviewer and a
+        # tdd loop that cannot agree end at the cap, with a human, instead
+        # of looping review forever.
+        if _send_back(home, run, "review", ref, {"role": role}) == "paused":
+            cap = run["budgets"]["repair_cap"]
+            print(f"review: {role} requested changes on {commit[:12]} ({ref['name']}); the repair "
+                  f"cap ({cap}) is exceeded, run paused for a human")
+        else:
+            print(f"review: {role} requested changes on {commit[:12]}; back to tdd at the analyzer")
+        return 0
+    if args.verdict == "human-gated":
+        question = (f"{role} marked the candidate {commit[:12]} human-gated ({ref['name']}): "
+                    "a human decision is needed before the review can continue. "
+                    "Answer with the decision.")
+        run["prior_phase"] = run["phase"]
+        run.setdefault("escalations", []).append({
+            "question": question, "kind": "human-gated", "asked_at": time.time(),
+            "answer": None, "answered_at": None,
+        })
+        model.transition(run, "paused")
+        _save(home, run, "human-contact", {"question": question, "kind": "human-gated"})
+        print(f"review: {role} human-gated on {commit[:12]}; run paused for a human")
+        return 0
+    print(f"review: {role} {args.verdict} on {commit[:12]}")
     return 0
 
 
@@ -891,7 +790,7 @@ def cmd_deliver(args):
     _verify_chain_or_raise(home, run)
     wt = _check_worktree(run)
     if gitio.head(wt) != run["candidate"]["commit"]:
-        raise StateError("refusing deliver: HEAD moved since stage")
+        raise StateError("refusing deliver: HEAD moved since the final step")
     report_path = os.path.abspath(args.report)
     if not os.path.isfile(report_path):
         raise StateError(f"delivery report not found: {args.report}")
@@ -930,21 +829,23 @@ def cmd_deliver(args):
     return 0
 
 
-def cmd_green(args):
+def cmd_check(args):
+    """Certification: the whole evidence chain re-verified, then local-verified."""
     home = _home(args)
     run = _run(home, args.task_id)
-    if run["phase"] != "green":
-        raise StateError(f"green requires phase 'green', run is {run['phase']!r}")
+    if run["phase"] != "review":
+        raise StateError(f"check requires phase 'review', run is {run['phase']!r}")
     model.check_budgets(run)
     _verify_chain_or_raise(home, run)
     wt = _check_worktree(run)
     if not gitio.is_clean(wt):
-        raise StateError("refusing green: worktree has uncommitted changes")
+        raise StateError("refusing check: worktree has uncommitted changes")
     if gitio.head(wt) != run["candidate"]["commit"]:
-        raise StateError("refusing green: HEAD moved since stage")
-    if gitio.blob_hash(wt, run["red"]["test_path"]) != run["red"]["test_blob"]:
-        raise StateError("refusing green: red test file changed after the red phase")
-    evidence.verify_green(home, run)
+        raise StateError("refusing check: HEAD moved since the final step")
+    changed = _locked_tests_problem(run, wt)
+    if changed:
+        raise StateError(f"refusing check: test files changed since the red commit: {changed}")
+    evidence.verify_check(home, run)
     model.check_reviews(run)
     model.bump_op(run)
     model.transition(run, "local-verified")
@@ -960,9 +861,9 @@ def cmd_green(args):
 def cmd_manifest(args):
     home = _home(args)
     run = _run(home, args.task_id)
-    if run["phase"] not in ("green", "local-verified"):
+    if run["phase"] not in ("review", "local-verified"):
         raise StateError(
-            f"manifest requires phase 'green' or 'local-verified', run is {run['phase']!r}"
+            f"manifest requires phase 'review' or 'local-verified', run is {run['phase']!r}"
         )
     text = _manifest_text(run)
     if args.out:
@@ -988,14 +889,7 @@ def cmd_verify(args):
     problems = model.verify_chain(home, run)
     check("event-chain", not problems, "; ".join(problems[:3]))
 
-    refs = []
-    if run["red"]:
-        refs.append(("red", run["red"]["output"]))
-    if run["replay"]:
-        refs.append(("replay", run["replay"]["output"]))
-    for gate in run["gates"]:
-        if gate["observation"]:
-            refs.append((f"gate:{gate['name']}", gate["observation"]))
+    refs = _evidence_refs(run)
     for probe in run.get("probes") or []:
         if probe.get("output"):
             refs.append((f"probe:{probe['name']}", probe["output"]))
@@ -1011,18 +905,31 @@ def cmd_verify(args):
             ref_problems.append(f"{label}: {exc}")
     check("evidence-refs", not ref_problems, "; ".join(ref_problems[:3]))
 
+    def observed(ref):
+        return (ref or {}).get("observation") or {}
+
+    def passing(ref):
+        obs = observed(ref)
+        return obs.get("exit_code") == 0 and not obs.get("timed_out")
+
     exit_problems = []
-    if run["red"]:
-        obs = run["red"]["output"].get("observation", {})
-        if run["red"]["exit_code"] == 0:
-            exit_problems.append("red exit_code is 0 (red must fail)")
-        if obs.get("exit_code") != run["red"]["exit_code"]:
-            exit_problems.append("red exit_code disagrees with its observation")
-    if run["replay"]:
-        if run["replay"]["exit_code"] != 0:
-            exit_problems.append("replay exit_code is not 0")
-        if run["candidate"] and run["replay"]["commit"] != run["candidate"]["commit"]:
-            exit_problems.append("replay commit is not the candidate")
+    tdd = run.get("tdd") or {}
+    for entry in tdd.get("history") or []:
+        where = f"tdd cycle {entry.get('cycle')}"
+        if entry.get("red"):
+            obs = observed(entry["red"])
+            if obs.get("exit_code") == 0 or obs.get("timed_out"):
+                exit_problems.append(f"{where}: the red run did not fail")
+        for key in ("green_tests", "green_lint", "refactor_tests", "refactor_lint"):
+            if entry.get(key) and not passing(entry[key]):
+                exit_problems.append(f"{where}: {key} did not pass")
+    final = tdd.get("final")
+    if final:
+        for key in ("tests", "lint"):
+            if final.get(key) and not passing(final[key]):
+                exit_problems.append(f"tdd final {key} did not pass")
+        if run["candidate"] and final["commit"] != run["candidate"]["commit"]:
+            exit_problems.append("tdd final run was not made on the candidate")
     for gate in run["gates"]:
         if gate["status"] == "passed":
             obs = (gate["observation"] or {}).get("observation", {})
@@ -1037,18 +944,13 @@ def cmd_verify(args):
     wt_ok, wt_detail = True, ""
     try:
         wt = _check_worktree(run)
-        if run["red"] and gitio.blob_hash(wt, run["red"]["test_path"]) != run["red"]["test_blob"]:
-            wt_ok, wt_detail = False, "red test file changed"
+        changed = _locked_tests_problem(run, wt)
+        if changed:
+            wt_ok, wt_detail = False, f"test files changed since the red commit: {changed}"
         phase = run["phase"]
         if phase == "paused":
             phase = run.get("prior_phase")
-        expected = None
-        if phase == "red":
-            expected = run["red"]["commit"]
-        elif phase in ("gates", "green", "local-verified"):
-            expected = run["candidate"]["commit"]
-        elif phase == "ready":
-            expected = gitio.rev_parse(_config(home)["repo"], run["base"])
+        expected = _expected_head(run, phase)
         if expected is not None and gitio.head(wt) != expected:
             wt_ok, wt_detail = False, f"HEAD moved (expected {expected[:12]})"
     except T12Error as exc:
@@ -1097,13 +999,24 @@ def cmd_verify(args):
 def cmd_status(args):
     home = _home(args)
     run = _run(home, args.task_id)
+    tdd = run.get("tdd")
     print(json.dumps({
         "task_id": run["task_id"],
         "title": run["title"],
         "phase": run["phase"],
         "branch": run["branch"],
         "worktree": run["worktree"],
-        "red_commit": run["red"]["commit"] if run["red"] else None,
+        "tdd": None if not tdd else {
+            "step": tdd["step"],
+            "mode": tdd["mode"],
+            "cycle": tdd["cycle"],
+            "items_done": sum(1 for i in tdd["items"] if i["status"] == "done"),
+            "items_total": len(tdd["items"]),
+            "attempts": tdd["attempts"],
+            "red_commit": tdd["red_commit"],
+            "last_good_commit": tdd["last_good_commit"],
+            "test_globs": tdd["test_globs"],
+        },
         "candidate": run["candidate"]["commit"] if run["candidate"] else None,
         "gates": [{ "name": g["name"], "status": g["status"]} for g in run["gates"]],
         "sandbox_adapter": run.get("sandbox_adapter"),
@@ -1117,6 +1030,8 @@ def cmd_status(args):
             "op_limit": run["budgets"]["op_limit"],
             "repairs_used": run["budgets"]["repairs_used"],
             "repair_cap": run["budgets"]["repair_cap"],
+            "cycle_limit": run["budgets"]["cycle_limit"],
+            "attempt_limit": run["budgets"]["attempt_limit"],
         },
         "stop_reason": run["stop_reason"],
         "deliveries": run.get("deliveries", []),
@@ -1150,43 +1065,49 @@ def cmd_resume(args):
         )
     if answer and not pending:
         raise StateError("no open question to answer; resume without --answer")
+    budgets = run["budgets"]
+    repair_cap = budgets["repair_cap"] if args.repair_cap is None else args.repair_cap
+    cycle_limit = budgets["cycle_limit"] if args.cycle_limit is None else args.cycle_limit
+    if repair_cap < budgets["repair_cap"] or cycle_limit < budgets["cycle_limit"]:
+        raise StateError("--repair-cap and --cycle-limit can only raise a limit "
+                         f"(now {budgets['repair_cap']} and {budgets['cycle_limit']})")
+    if budgets["repairs_used"] > repair_cap:
+        raise StateError(
+            f"refusing resume: {budgets['repairs_used']} repairs are used and the repair cap is "
+            f"{repair_cap}, so every step would be refused again; the operator decides whether "
+            f"the run may try more: resume --repair-cap N with N >= {budgets['repairs_used']}")
+    if pending and pending.get("kind") == "cycle-limit" and run["tdd"]["cycle"] >= cycle_limit:
+        raise StateError(
+            f"refusing resume: {run['tdd']['cycle']} cycles are done and the cycle limit is "
+            f"{cycle_limit}; raise it: resume --cycle-limit N with N > {run['tdd']['cycle']}")
     prior = run["prior_phase"]
     wt = _check_worktree(run)
-    repo = _config(home)["repo"]
-    expected = None
-    if prior == "ready":
-        expected = gitio.rev_parse(repo, run["base"])
-    elif prior == "red":
-        expected = run["red"]["commit"]
-    elif prior in ("gates", "green"):
-        expected = run["candidate"]["commit"]
+    expected = _expected_head(run, prior)
     if expected is not None and gitio.head(wt) != expected:
         raise StateError(
             f"refusing resume: HEAD moved while paused "
             f"(expected {expected[:12]}, found {gitio.head(wt)[:12]})"
         )
-    if run["red"] and gitio.blob_hash(wt, run["red"]["test_path"]) != run["red"]["test_blob"]:
-        raise StateError("refusing resume: red test file changed while paused")
+    changed = _locked_tests_problem(run, wt)
+    if changed:
+        raise StateError(f"refusing resume: test files changed while paused: {changed}")
     # Resume consistency: every recorded evidence ref must still hash
     # to what was recorded. A changed byte while paused fails closed.
-    refs = []
-    if run["red"]:
-        refs.append(run["red"]["output"])
-    if run["replay"]:
-        refs.append(run["replay"]["output"])
-    for gate in run["gates"]:
-        if gate["observation"]:
-            refs.append(gate["observation"])
-    for ref in refs:
+    for _, ref in _evidence_refs(run):
         evidence.verify_ref(home, run["task_id"], ref)
     _verify_chain_or_raise(home, run)
+    budgets["repair_cap"] = repair_cap
+    budgets["cycle_limit"] = cycle_limit
     if pending:
         pending["answer"] = answer
         pending["answered_at"] = time.time()
         _save(home, run, "human-response", {"question": pending["question"], "answer": answer})
+        if pending.get("kind") == "attempt-limit":
+            run["tdd"]["attempts"] = {step: 0 for step in run["tdd"]["attempts"]}
     model.transition(run, prior)
     run["prior_phase"] = None
-    _save(home, run, "resumed", {"phase": prior})
+    _save(home, run, "resumed", {"phase": prior, "repair_cap": repair_cap,
+                                 "cycle_limit": cycle_limit})
     print(f"resumed: task={run['task_id']} phase={prior}")
     return 0
 
@@ -1218,6 +1139,9 @@ def cmd_board(args):
             "task_id": run["task_id"],
             "phase": run["phase"],
             "candidate": (run["candidate"] or {}).get("commit"),
+            "tdd_step": (run.get("tdd") or {}).get("step"),
+            "cycle": (run.get("tdd") or {}).get("cycle"),
+            "gates_passed": sum(g["status"] == "passed" for g in run["gates"]),
             "time_left_s": None if done else int(model.time_left_s(run)),
             "ops_left": None if done else b["op_limit"] - b["ops_used"],
             "repairs_left": None if done else b["repair_cap"] - b["repairs_used"],
@@ -1321,7 +1245,36 @@ def cmd_escalate(args):
     return 0
 
 
-PARSED_BY = ("raw", "schema", "extracted")
+PARSED_BY = ("raw", "schema", "extracted", "host-tool")
+
+
+TDD_HANDLERS = {
+    "test_list_ready": tdd_mod.analyze,
+    "red_test_ready": tdd_mod.red,
+    "no_cheat_left": tdd_mod.no_cheat_left,
+    "green_ready": tdd_mod.green,
+    "refactor_done": tdd_mod.refactor,
+}
+PATCH_TOOLS = ("green_ready", "refactor_done")
+REVIEW_VERDICTS = {"merge-ready": "approve", "blocked": "changes-requested",
+                   "unverified": "changes-requested", "human-gated": "human-gated"}
+
+
+def _worker_patch(tool, path):
+    """The blind worktree's diff the host passed with --patch, which a green
+    or refactor call needs (an empty file: nothing changed) and no other does."""
+    if tool not in PATCH_TOOLS:
+        if path is not None:
+            raise StateError(f"--patch applies only to {' and '.join(PATCH_TOOLS)}, not {tool}")
+        return None
+    if path is None:
+        raise StateError(f"{tool} needs --patch FILE: the diff of the blind worktree "
+                         "(an empty file when nothing changed)")
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError as exc:
+        raise StateError(f"cannot read --patch {path}: {exc}") from exc
 
 
 def cmd_act(args):
@@ -1346,34 +1299,41 @@ def cmd_act(args):
     try:
         tool, targs = tools.parse(data.decode("utf-8", "replace"), kind)
         model.check_session(run, args.role, args.session)
+        patch = _worker_patch(tool, args.patch)
+        if patch is not None:
+            detail["patch"] = evidence.write_evidence(
+                home, run["task_id"], f"worker-patch-{seq}.patch", patch)
+            try:
+                patch = patch.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise StateError(f"the patch is not valid UTF-8: {exc}") from exc
     except StateError as exc:
         model.bump_op(run)
         _save(home, run, "worker-output-rejected", {**detail, "error": str(exc)})
         raise
-    if tool == "qa_report":
-        model.bind_session(run, args.role, args.session)
+    model.bind_session(run, args.role, args.session)
     _save(home, run, "worker-output", {**detail, "tool": tool})
     step = dict(home=args.home, task_id=args.task_id, session=args.session, role=args.role)
-    if tool == "red_test_ready":
-        return cmd_red(argparse.Namespace(
-            **step, test_path=targs["test_path"],
-            command=shlex.join(targs["command"]), marker=targs["marker"],
-            covers=targs["covers"]))
-    if tool == "implementation_ready":
-        return cmd_stage(argparse.Namespace(**step))
     if tool == "review":
-        verdict = "approve" if targs["verdict"] == "merge-ready" else "changes-requested"
-        return cmd_review(argparse.Namespace(**step, verdict=verdict, report=args.input))
+        return cmd_review(argparse.Namespace(
+            **step, verdict=REVIEW_VERDICTS[targs["verdict"]], report=args.input))
     if tool == "escalate":
         return cmd_escalate(argparse.Namespace(
             home=args.home, task_id=args.task_id, question=targs["question"]))
-    print(f"{tool}: recorded for {args.role}")
+    _require_probes(run)
+    _check_worktree(run)
+    if tool in ("test_list_ready", "no_cheat_left"):
+        model.bump_op(run)
+    extra = {"patch": patch} if tool in PATCH_TOOLS else {}
+    print(TDD_HANDLERS[tool](home, run, args.role, args.session, targs,
+                             runner=_tdd_runner(home, run), **extra))
     return 0
 
 
 def cmd_tool_schema(args):
     run = _run(_home(args), args.task_id)
-    print(json.dumps(tools.json_schema(model.role_kind(run, args.role))))
+    kind = model.role_kind(run, args.role)
+    print(json.dumps(tools.host_tools(kind) if args.host_tools else tools.json_schema(kind)))
     return 0
 
 
@@ -1393,45 +1353,33 @@ def build_parser():
                    help="archive a stopped run for this task and start a fresh one")
     p.add_argument("--carry", action="store_true",
                    help="with --supersede: keep the old run's answered questions, and give the "
-                        "builder its unfinished work as a patch to start from")
+                        "analyzer its unfinished work as a patch to start from")
     p.set_defaults(func=cmd_prepare)
 
     p = sub.add_parser("context"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
     p.add_argument("--role", required=True); p.add_argument("--phase", required=True)
     p.set_defaults(func=cmd_context)
 
-    p = sub.add_parser("red"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
-    p.add_argument("--test-path", required=True); p.add_argument("--command", required=True)
-    p.add_argument("--marker", required=True); p.add_argument("--session", required=True,
-                   help="test-writer session id (must differ from every other role's session)")
-    p.add_argument("--covers", required=True,
-                   help='JSON map of criterion index to the tests that check it, e.g. {"0": ["test_a"]}')
-    p.set_defaults(func=cmd_red, role="test-writer")
-
-    p = sub.add_parser("stage"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
-    p.add_argument("--session", required=True,
-                   help="builder session id (must differ from the test-writer session)")
-    p.set_defaults(func=cmd_stage, role="builder")
+    p = sub.add_parser("tdd-step", help="the deterministic end of the tdd loop: every red test "
+                                        "and lint on the tip commit, then pin the candidate")
+    p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
+    p.set_defaults(func=cmd_tdd_step)
 
     p = sub.add_parser("gate"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
-    p.add_argument("--name", required=True); p.add_argument("--session", required=True,
-                   help="QA session id (must differ from the builder session)")
-    p.add_argument("--role", default="qa", help="a qa-kind role from the run (default qa)")
+    p.add_argument("--name", help="a gate of the run (default: the next pending one)")
     p.set_defaults(func=cmd_gate)
-
-    p = sub.add_parser("replay"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
-    p.set_defaults(func=cmd_replay)
 
     p = sub.add_parser("review"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
     p.add_argument("--role", required=True, help="a review role of the run")
     p.add_argument("--session", required=True,
                    help="reviewer session id (must differ from every other role's session)")
-    p.add_argument("--verdict", required=True, choices=["approve", "changes-requested"])
+    p.add_argument("--verdict", required=True, choices=["approve", "changes-requested", "human-gated"])
     p.add_argument("--report", required=True, help="review report file (stored as evidence)")
     p.set_defaults(func=cmd_review)
 
-    p = sub.add_parser("green"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
-    p.set_defaults(func=cmd_green)
+    p = sub.add_parser("check", help="certify: re-verify the whole evidence chain, then local-verified")
+    p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
+    p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("manifest"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
     p.add_argument("--out")
@@ -1478,6 +1426,10 @@ def build_parser():
 
     p = sub.add_parser("resume"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
     p.add_argument("--answer", help="the human's answer to an open escalation (Factor 7)")
+    p.add_argument("--repair-cap", type=int,
+                   help="raise the repair cap; required to resume after a repair-cap pause")
+    p.add_argument("--cycle-limit", type=int,
+                   help="raise the cycle limit; required to resume after a cycle-limit pause")
     p.set_defaults(func=cmd_resume)
 
     p = sub.add_parser("stop"); p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
@@ -1496,13 +1448,19 @@ def build_parser():
                                  "(stored as evidence)")
     p.add_argument("--parsed-by", choices=PARSED_BY, default="raw",
                    help="how the host got --input from the reply: raw (it is the reply), "
-                        "schema (the model CLI enforced the tool-call schema) or extracted "
-                        "(the one tool call found in the reply's text)")
+                        "schema (the model CLI enforced the tool-call schema), extracted "
+                        "(the one tool call found in the reply's text) or host-tool (the "
+                        "model called the factory's tool, registered with its schema)")
+    p.add_argument("--patch", help="the blind worktree's diff, for green_ready and refactor_done "
+                                   "(required for those, refused for every other call)")
     p.set_defaults(func=cmd_act)
 
     p = sub.add_parser("tool-schema", help="JSON Schema of one tool call for a role of the run")
     p.add_argument("--home", required=True); p.add_argument("--task-id", required=True)
     p.add_argument("--role", required=True)
+    p.add_argument("--host-tools", action="store_true",
+                   help="print one definition per tool instead, for agent hosts that "
+                        "register the factory's tools as real tools")
     p.set_defaults(func=cmd_tool_schema)
 
     return parser

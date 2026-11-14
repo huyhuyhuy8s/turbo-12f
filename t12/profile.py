@@ -15,11 +15,25 @@ an issue, so the profile is the floor:
 - require_probes: on if either turns it on.
 - sandbox_adapter, sandbox_image: a task may set them only where the
   profile does not.
+- test_command, test_globs, lint_command, assertion_pattern,
+  failure_count_pattern, red_stub_max_lines, refactor_skip_max_lines: the tdd loop's test and
+  lint settings; a task may set one only where the profile does not.
+  test_command is required, from one or the other. test_globs says
+  which files are tests (red writes them, green and refactor cannot
+  see them); it defaults to tests/**. lint_command defaults to none,
+  assertion_pattern to AssertionError, red_stub_max_lines to 10. Green
+  patches of at most refactor_skip_max_lines production lines (added plus
+  deleted, summed since the last refactor; default 5, 0 = never skip) skip
+  the refactor step unless structural directives are pending.
 - verify_deps: a task may only narrow the profile's list, and no
   entry may overlap a protected path, since gates load deps from the
-  builder's worktree.
-- budgets: the task wins.
-- protected_paths, security_review_paths, roles, intake: profile only.
+  worker's worktree.
+- budgets (time_limit_s, op_limit, repair_cap, cycle_limit,
+  attempt_limit): the task wins.
+- protected_paths, security_review_paths, roles, intake, skills: profile
+  only. `skills` pins third-party skills per role (repo, commit, hash);
+  the core checks their shape and picks a role's applicable pins from
+  the repo at the base commit, and never fetches anything.
 
 Roles are names a project picks, each mapped to a kind the core
 enforces (see tools.TOOLS). The built-in roles are always present; a
@@ -31,6 +45,7 @@ import json
 import os
 import re
 
+from . import gitio, globs
 from .errors import StateError
 from .tools import KINDS
 
@@ -39,12 +54,16 @@ LEGACY_PATH = ".t12/policy.json"
 VERSION = 1
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 BUILTIN_ROLES = {
-    "test-writer": "test-writer",
-    "builder": "builder",
-    "qa": "qa",
+    "analyzer": "analyzer",
+    "red": "red",
+    "green": "green",
+    "refactor": "refactor",
     "reviewer": "review",
-    "security": "review",
 }
+DEFAULT_TEST_GLOBS = ["tests/**"]
+DEFAULT_ASSERTION_PATTERN = "AssertionError"
+DEFAULT_RED_STUB_MAX_LINES = 10
+DEFAULT_REFACTOR_SKIP_MAX_LINES = 5
 
 
 def _append(profile_value, task_value):
@@ -85,20 +104,30 @@ def _task_wins(profile_value, task_value):
     return task_value
 
 
+NONE = type(None)
 TASK_KEYS = {
     "gates": (list, _append),
     "required_reviews": (list, _union),
     "require_probes": (bool, _either),
     "sandbox_adapter": (str, _fixed("sandbox_adapter")),
     "sandbox_image": (str, _fixed("sandbox_image")),
+    "test_command": (list, _fixed("test_command")),
+    "test_globs": (list, _fixed("test_globs")),
+    "lint_command": ((list, NONE), _fixed("lint_command")),
+    "assertion_pattern": (str, _fixed("assertion_pattern")),
+    "failure_count_pattern": ((str, NONE), _fixed("failure_count_pattern")),
+    "red_stub_max_lines": (int, _fixed("red_stub_max_lines")),
+    "refactor_skip_max_lines": (int, _fixed("refactor_skip_max_lines")),
     "verify_deps": (list, _subset),
     "time_limit_s": (int, _task_wins),
     "op_limit": (int, _task_wins),
     "repair_cap": (int, _task_wins),
+    "cycle_limit": (int, _task_wins),
+    "attempt_limit": (int, _task_wins),
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
-PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake")
-OTHER_KEYS = ("version", "name", "roles", "intake")
+PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills")
+OTHER_KEYS = ("version", "name", "roles", "intake", "skills")
 
 
 def _paths(key, value):
@@ -161,6 +190,118 @@ def _intake(value):
             if v is not None}
 
 
+SKILL_KEYS = {"repo", "rev", "path", "include", "wrap", "roles", "when", "sha256"}
+SKILL_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+SKILL_REV_RE = re.compile(r"^[0-9a-f]{40}$")
+SKILL_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _skill_path(path):
+    """A path inside the archive or the skill dir: relative, no `..`."""
+    return (isinstance(path, str) and bool(path) and not os.path.isabs(path)
+            and ".." not in path.split("/") and "\\" not in path)
+
+
+def _skill_when(where, when):
+    if when is None:
+        return None
+    if (not isinstance(when, dict) or len(when) != 1
+            or next(iter(when)) not in ("dependency", "files")):
+        raise StateError(f"{where}: when must be null, {{\"dependency\": name}} "
+                         "or {\"files\": [globs]}")
+    key, value = next(iter(when.items()))
+    if key == "dependency":
+        if not isinstance(value, str) or not value:
+            raise StateError(f"{where}: when.dependency must be a package name")
+    elif (not isinstance(value, list) or not value
+          or not all(isinstance(g, str) and g for g in value)):
+        raise StateError(f"{where}: when.files must be a non-empty list of globs")
+    return {key: value}
+
+
+def _skills(value, roles):
+    """Third-party skills pinned per role. The core validates shape only:
+    `adapters/skills.py` fetches and hashes them, the runner mounts them."""
+    if not isinstance(value, dict):
+        raise StateError(f"{PATH}: skills must be an object of skill name to pin")
+    skills = {}
+    for name, pin in value.items():
+        where = f"{PATH}: skill {name!r}"
+        if not NAME_RE.match(name):
+            raise StateError(f"{where}: a skill name must match {NAME_RE.pattern}")
+        if not isinstance(pin, dict) or set(pin) - SKILL_KEYS:
+            raise StateError(f"{where} must be an object of {sorted(SKILL_KEYS)}")
+        repo, rev, path = pin.get("repo"), pin.get("rev"), pin.get("path")
+        if not isinstance(repo, str) or not SKILL_REPO_RE.match(repo):
+            raise StateError(f"{where}: repo must look like owner/name")
+        if not isinstance(rev, str) or not SKILL_REV_RE.match(rev):
+            raise StateError(f"{where}: rev must be a 40-hex commit sha")
+        if not _skill_path(path):
+            raise StateError(f"{where}: path must be a relative path inside the repo, "
+                             f"without '..': {path!r}")
+        wrap = pin.get("wrap", False)
+        if not isinstance(wrap, bool):
+            raise StateError(f"{where}: wrap must be true or false")
+        include = pin.get("include", [])
+        if (not isinstance(include, list) or not all(_skill_path(g) for g in include)
+                or (not wrap and not include)):
+            raise StateError(f"{where}: include must be a list of relative globs, "
+                             "non-empty unless the skill is wrapped")
+        if wrap and include:
+            raise StateError(f"{where}: a wrapped skill is one file; it takes no include")
+        for_roles = pin.get("roles")
+        if (not isinstance(for_roles, list) or not for_roles
+                or not all(isinstance(r, str) and r in roles for r in for_roles)):
+            raise StateError(f"{where}: roles must be a non-empty list of this run's "
+                             f"roles {sorted(roles)}")
+        sha256 = pin.get("sha256")
+        if not isinstance(sha256, str) or not SKILL_SHA256_RE.match(sha256):
+            raise StateError(f"{where}: sha256 must be the 64-hex hash of the synced "
+                             "tree; run adapters/skills.py sync --update-hashes")
+        skills[name] = {"repo": repo, "rev": rev, "path": path, "include": list(include),
+                        "wrap": wrap, "roles": list(dict.fromkeys(for_roles)),
+                        "when": _skill_when(where, pin.get("when")), "sha256": sha256}
+    return skills
+
+
+def applicable_skills(run_profile, role, repo, commit):
+    """The pins `role` gets on this run: [{name, rev, sha256}], by name.
+    A pin's `when` is read from the repo at `commit` (package.json
+    dependencies, tracked files): git only, no network."""
+    pins = {name: pin for name, pin in (run_profile.get("skills") or {}).items()
+            if role in pin["roles"]}
+    if not pins:
+        return []
+    manifest = None
+    paths = None
+    chosen = []
+    for name in sorted(pins):
+        pin = pins[name]
+        when = pin["when"]
+        if when is not None and "dependency" in when:
+            if manifest is None:
+                text = gitio.file_at(repo, commit, "package.json")
+                try:
+                    data = json.loads(text) if text is not None else {}
+                except ValueError as exc:
+                    raise StateError(f"package.json at {commit[:12]} is not valid JSON: {exc}") from exc
+                if not isinstance(data, dict):
+                    raise StateError(f"package.json at {commit[:12]} must be a JSON object")
+                manifest = {}
+                for table in ("dependencies", "devDependencies"):
+                    if isinstance(data.get(table), dict):
+                        manifest.update(data[table])
+            if when["dependency"] not in manifest:
+                continue
+        elif when is not None:
+            if paths is None:
+                paths = list(gitio.blob_map(repo, commit, lambda p: True))
+            if not any(globs.match(p, when["files"]) for p in paths):
+                continue
+        chosen.append({"name": name, "rev": pin["rev"], "sha256": pin["sha256"]})
+    return chosen
+
+
 def review_roles(roles):
     return sorted(name for name, spec in roles.items() if spec["kind"] == "review")
 
@@ -193,6 +334,8 @@ def parse(text):
     data["roles"] = _roles(data.get("roles", {}))
     if "intake" in data:
         data["intake"] = _intake(data["intake"])
+    if "skills" in data:
+        data["skills"] = _skills(data["skills"], data["roles"])
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:
@@ -201,17 +344,54 @@ def parse(text):
     return data
 
 
-ELEMENTS = {"gates": dict, "required_reviews": str, "verify_deps": str}
+ELEMENTS = {"gates": dict, "required_reviews": str, "verify_deps": str,
+            "test_command": str, "test_globs": str, "lint_command": str}
+
+
+def _type_name(kind):
+    if isinstance(kind, tuple):
+        return " or ".join("null" if k is NONE else k.__name__ for k in kind)
+    return kind.__name__
+
+
+def _check_pattern(where, key, value, groups=0):
+    try:
+        compiled = re.compile(value)
+    except re.error as exc:
+        raise StateError(f"{where}: {key} is not a valid regular expression: {exc}") from exc
+    if compiled.groups < groups:
+        raise StateError(f"{where}: {key} needs a capture group for the count")
+
+
+def _check_value(where, key, value):
+    """What a value must be beyond its type, for the tdd keys."""
+    if key in ("test_command", "lint_command") and value is not None:
+        if not value or not all(v.strip() for v in value):
+            raise StateError(f"{where}: {key} must be a non-empty argv of non-empty strings")
+    elif key == "test_globs":
+        bad = [g for g in value if not g.strip() or os.path.isabs(g) or ".." in g.split("/")]
+        if not value or bad:
+            raise StateError(f"{where}: test_globs must be a non-empty list of relative "
+                             f"globs: {value!r}")
+    elif key == "assertion_pattern":
+        _check_pattern(where, key, value)
+    elif key == "failure_count_pattern" and value is not None:
+        _check_pattern(where, key, value, groups=1)
+    elif key in ("red_stub_max_lines", "refactor_skip_max_lines") and value < 0:
+        raise StateError(f"{where}: {key} must be >= 0")
+    elif key in ("cycle_limit", "attempt_limit") and value <= 0:
+        raise StateError(f"{where}: {key} must be > 0")
 
 
 def _check_type(where, key, value, kind):
     if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
-        raise StateError(f"{where}: {key} must be a {kind.__name__}")
+        raise StateError(f"{where}: {key} must be a {_type_name(kind)}")
     element = ELEMENTS.get(key)
-    if element and not all(isinstance(v, element) for v in value):
+    if element and isinstance(value, list) and not all(isinstance(v, element) for v in value):
         raise StateError(f"{where}: every {key} entry must be a {element.__name__}")
     if key == "gates" and not all(isinstance(g.get("name"), str) and g["name"] for g in value):
         raise StateError(f"{where}: every gate needs a non-empty string name")
+    _check_value(where, key, value)
 
 
 def apply(profile, task):
@@ -238,11 +418,19 @@ def apply(profile, task):
         for root in sorted(roots):
             if dep_path == root or dep_path.startswith(root + os.sep) or root.startswith(dep_path + os.sep):
                 raise StateError(f"verify_deps entry {dep!r} overlaps protected path {root!r}")
+    merged.setdefault("test_globs", list(DEFAULT_TEST_GLOBS))
+    merged.setdefault("lint_command", None)
+    merged.setdefault("assertion_pattern", DEFAULT_ASSERTION_PATTERN)
+    merged.setdefault("failure_count_pattern", None)
+    merged.setdefault("red_stub_max_lines", DEFAULT_RED_STUB_MAX_LINES)
+    merged.setdefault("refactor_skip_max_lines", DEFAULT_REFACTOR_SKIP_MAX_LINES)
+    if not merged.get("test_command"):
+        raise StateError(f"test_command is required: set it in {PATH} or the task file")
     return merged
 
 
 def security_roots(profile):
-    """Paths whose change needs a security review. `.t12/` is always
-    one, so a candidate can neither loosen the profile nor add the
-    first one without a security review."""
+    """Paths whose change the reviewer is told about. `.t12/` is always
+    one, so a candidate that loosens the profile or adds the first
+    security path is flagged to the review."""
     return profile["security_review_paths"] + [os.path.dirname(PATH)]

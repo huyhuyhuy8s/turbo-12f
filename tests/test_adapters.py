@@ -861,40 +861,56 @@ class EndToEndCase(unittest.TestCase):
                 "id": "demo-1", "title": "Add greet()",
                 "acceptance_criteria": ["greet('Ana') returns 'Hello, Ana!'"],
                 "base": "main", "time_limit_s": 600, "op_limit": 50, "repair_cap": 2,
+                "test_command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"],
+                "test_globs": ["tests/**"], "refactor_skip_max_lines": 0,
                 "gates": [{"name": "unit", "command": ["python3", "-m", "unittest",
                                                        "discover", "-s", "tests", "-q"]}],
                 **task_fields,
             }, fh)
         self.t12("prepare", "--home", self.home, "--task", task_path)
+        self.act("analyzer", "sess-analyzer", "test_list_ready", {
+            "items": [{"text": "greet(name) greets the name", "kind": "behavior",
+                       "source": "criterion 0", "needed": "greet('Ana') is 'Hello, Ana!'",
+                       "criteria": [0]}], "gaps": [], "directives": []})
         test_file = ('import unittest\nfrom app import greet\n\n'
                      'class TestGreet(unittest.TestCase):\n'
                      '    def test_named(self):\n'
                      '        self.assertEqual(greet("Ana"), "Hello, Ana!")\n')
         with open(os.path.join(wt, "tests", "test_greet.py"), "w") as fh:
             fh.write(test_file)
-        self.t12("red", "--home", self.home, "--task-id", "demo-1",
-                 "--test-path", "tests/test_greet.py",
-                 "--command", "python3 -m unittest tests.test_greet -q",
-                 "--marker", "FAILED", "--session", "sess-test-writer", "--covers", json.dumps({"0": ["test_named"]}))
+        self.act("red", "sess-red", "red_test_ready", {
+            "item_id": "T1", "test_file": "tests/test_greet.py", "test_name": "test_named",
+            "last_assertion_line": 6, "defeats": "a greet() that ignores its argument",
+            "add_items": []})
         with open(os.path.join(wt, "app.py"), "w") as fh:
             fh.write('def greet(name="world"):\n    return f"Hello, {name}!"\n')
-        self._git(wt, "add", ".")
-        self._git(wt, "commit", "-m", "feat: implement greet")
-        self.t12("stage", "--home", self.home, "--task-id", "demo-1", "--session", "sess-builder")
-        self.t12("gate", "--home", self.home, "--task-id", "demo-1",
-                 "--name", "unit", "--session", "sess-qa")
-        self.t12("replay", "--home", self.home, "--task-id", "demo-1")
-        review = os.path.join(self.tmp.name, "review.md")
-        with open(review, "w") as fh:
-            fh.write("Verdict: approve\n")
-        self.t12("review", "--home", self.home, "--task-id", "demo-1",
-                 "--role", "reviewer", "--session", "sess-reviewer",
-                 "--verdict", "approve", "--report", review)
-        self.t12("green", "--home", self.home, "--task-id", "demo-1")
+        patch = os.path.join(self.tmp.name, "green.patch")
+        with open(patch, "w") as fh:
+            fh.write(self._git(wt, "diff") + "\n")
+        self._git(wt, "checkout", "--", "app.py")
+        self.act("green", "sess-green", "green_ready", {"summary": "greet() takes a name"},
+                 patch=patch)
+        empty = os.path.join(self.tmp.name, "refactor.patch")
+        open(empty, "w").close()
+        self.act("refactor", "sess-refactor", "refactor_done",
+                 {"summary": "nothing to tidy", "changed": False}, patch=empty)
+        self.act("red", "sess-red-devil", "no_cheat_left", {"reason": "no cheat left"})
+        self.t12("tdd-step", "--home", self.home, "--task-id", "demo-1")
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.act("reviewer", "sess-reviewer", "review", {
+            "verdict": "merge-ready", "findings": [], "verification": "read the diff"})
+        self.t12("check", "--home", self.home, "--task-id", "demo-1")
         self.t12("manifest", "--home", self.home, "--task-id", "demo-1")
         with open(os.path.join(self.home, "runs", "demo-1.json")) as fh:
             candidate = json.load(fh)["candidate"]["commit"]
         return candidate
+
+    def act(self, role, session, tool, args, patch=None):
+        path = os.path.join(self.tmp.name, f"{session}.json")
+        with open(path, "w") as fh:
+            json.dump({"tool": tool, "args": args}, fh)
+        self.t12("act", "--home", self.home, "--task-id", "demo-1", "--role", role,
+                 "--session", session, "--input", path, *(["--patch", patch] if patch else []))
 
     def deliver_and_check(self, adapter, script, command, token_env, url, ref):
         report = os.path.join(self.tmp.name, "delivery.json")

@@ -1,10 +1,10 @@
 """Limits (Phase 5): budget reporting and calibration from real runs.
 
 Defaults are guesses until measured. This module collects what runs
-actually used (wall time, operations, repairs) from the run records,
-summarizes the distribution over completed runs, and recommends
-defaults from the 90th percentile — with floors, so a handful of
-toy runs cannot calibrate the factory down to nothing, and a
+actually used (wall time, operations, repairs, tdd cycles, attempts)
+from the run records, summarizes the distribution over completed runs,
+and recommends defaults from the 90th percentile — with floors, so a
+handful of toy runs cannot calibrate the factory down to nothing, and a
 minimum sample, so one run cannot set the defaults. A task's own
 budgets always win over calibrated defaults; calibrated defaults
 win over the built-ins.
@@ -18,12 +18,16 @@ import time
 from . import store
 from .errors import StateError
 
-BUILTIN_DEFAULTS = {"time_limit_s": 3600, "op_limit": 100, "repair_cap": 3}
-FLOORS = {"time_limit_s": 600, "op_limit": 20, "repair_cap": 2}
-STEPS = {"time_limit_s": 60, "op_limit": 5, "repair_cap": 1}
+BUILTIN_DEFAULTS = {"time_limit_s": 3600, "op_limit": 300, "repair_cap": 3,
+                    "cycle_limit": 50, "attempt_limit": 3}
+FLOORS = {"time_limit_s": 600, "op_limit": 20, "repair_cap": 2,
+          "cycle_limit": 5, "attempt_limit": 2}
+STEPS = {"time_limit_s": 60, "op_limit": 5, "repair_cap": 1,
+         "cycle_limit": 1, "attempt_limit": 1}
 MIN_SAMPLE = 3
-KEYS = ("time_limit_s", "op_limit", "repair_cap")
-MEASURED = {"time_limit_s": "wall_used_s", "op_limit": "ops_used", "repair_cap": "repairs_used"}
+KEYS = ("time_limit_s", "op_limit", "repair_cap", "cycle_limit", "attempt_limit")
+MEASURED = {"time_limit_s": "wall_used_s", "op_limit": "ops_used", "repair_cap": "repairs_used",
+            "cycle_limit": "cycles", "attempt_limit": "tdd_attempts"}
 
 
 def percentile(values, pct):
@@ -79,24 +83,29 @@ def load_limits(home):
 
 
 def save_limits(home, recommendation):
-    data = {
-        "time_limit_s": recommendation["recommended"]["time_limit_s"],
-        "op_limit": recommendation["recommended"]["op_limit"],
-        "repair_cap": recommendation["recommended"]["repair_cap"],
-        "calibrated_from": {
-            "runs": recommendation["sample"],
-            "at": time.time(),
-            "stats": recommendation["stats"],
-        },
+    data = {key: recommendation["recommended"][key] for key in KEYS}
+    data["calibrated_from"] = {
+        "runs": recommendation["sample"],
+        "at": time.time(),
+        "stats": recommendation["stats"],
     }
     store.save_json(limits_path(home), data)
     return data
 
 
+def _hit_repair_cap(record):
+    """A run paused on the repair cap asked a human for help: how many
+    repairs it needed is unknown, so it cannot calibrate anything. One a
+    human then stopped is the same run."""
+    escalations = record.get("escalations") or []
+    return (record.get("phase") in ("paused", "stopped") and bool(escalations)
+            and escalations[-1].get("kind") == "repair-cap")
+
+
 def collect(home):
     """Read every run record in the state home and split it into
     what can calibrate defaults and what cannot. Completed runs
-    (local-verified with measurements) calibrate; runs stopped by
+    (local-verified with measurements) calibrate; runs that paused on
     the repair cap are censored — their true need is unknown — and
     are reported as such, not folded into the numbers."""
     runs_dir = os.path.join(home, "runs")
@@ -112,6 +121,7 @@ def collect(home):
                 "task_id": record.get("task_id", "?"),
                 "phase": record.get("phase"),
                 "stop_reason": record.get("stop_reason"),
+                "repair_cap_hit": _hit_repair_cap(record),
                 "superseded": ".superseded-" in os.path.basename(path),
                 "measurements": record.get("measurements"),
                 "budgets": record.get("budgets", {}),
@@ -120,8 +130,7 @@ def collect(home):
     completed = [r for r in runs
                  if r["phase"] == "local-verified" and r["measurements"]
                  and not r["superseded"]]
-    censored = [r for r in runs
-                if r["stop_reason"] == "repair-cap" and not r["superseded"]]
+    censored = [r for r in runs if r["repair_cap_hit"] and not r["superseded"]]
     return {
         "runs": runs,
         "unreadable": unreadable,
@@ -143,7 +152,8 @@ def collect(home):
 def recommend(completed):
     """Recommended defaults from completed runs, or None when the
     sample is too small to say anything. The recommendation is the
-    p90 rounded up to a sane step, never below the floor."""
+    p90 rounded up to a sane step, never below the floor. A key no
+    completed run measured keeps its built-in default."""
     if len(completed) < MIN_SAMPLE:
         return None
     stats = {}
@@ -154,8 +164,18 @@ def recommend(completed):
                   if isinstance(r["measurements"].get(measured_key), (int, float))]
         summary = summarize(values)
         stats[key] = summary
-        recommended[key] = max(FLOORS[key], round_up(summary["p90"], STEPS[key]))
+        if summary is None:
+            recommended[key] = BUILTIN_DEFAULTS[key]
+        else:
+            recommended[key] = max(FLOORS[key], round_up(summary["p90"], STEPS[key]))
     return {"sample": len(completed), "stats": stats, "recommended": recommended}
+
+
+def _stat_text(label, summary, fmt="{}"):
+    if summary is None:
+        return f"{label} n/a"
+    return (f"{label} p50 {fmt.format(summary['p50'])} p90 {fmt.format(summary['p90'])} "
+            f"max {fmt.format(summary['max'])}")
 
 
 def report_text(home, data, recommendation):
@@ -179,7 +199,8 @@ def report_text(home, data, recommendation):
                 f"  {entry['task_id']}: {entry['phase']} "
                 f"wall {wall:.1f}s/{budgets.get('time_limit_s')}s "
                 f"ops {m.get('ops_used')}/{budgets.get('op_limit')} "
-                f"repairs {m.get('repairs_used')}/{budgets.get('repair_cap')}"
+                f"repairs {m.get('repairs_used')}/{budgets.get('repair_cap')} "
+                f"cycles {m.get('cycles', 0)}/{budgets.get('cycle_limit')}"
                 + (" (superseded)" if entry["superseded"] else "")
             )
         else:
@@ -193,7 +214,7 @@ def report_text(home, data, recommendation):
     )
     if data["censored"]:
         lines.append(
-            f"censored from calibration (stopped by repair cap): "
+            f"censored from calibration (paused on the repair cap): "
             f"{', '.join(r['task_id'] for r in data['censored'])}"
         )
     if recommendation is None:
@@ -206,18 +227,13 @@ def report_text(home, data, recommendation):
         stats = recommendation["stats"]
         lines.append(
             f"calibration: from {recommendation['sample']} completed runs — "
-            f"wall p50 {stats['time_limit_s']['p50']:.1f}s "
-            f"p90 {stats['time_limit_s']['p90']:.1f}s "
-            f"max {stats['time_limit_s']['max']:.1f}s; "
-            f"ops p50 {stats['op_limit']['p50']} "
-            f"p90 {stats['op_limit']['p90']} "
-            f"max {stats['op_limit']['max']}; "
-            f"repairs p50 {stats['repair_cap']['p50']} "
-            f"p90 {stats['repair_cap']['p90']} "
-            f"max {stats['repair_cap']['max']}"
+            + _stat_text("wall", stats["time_limit_s"], "{:.1f}s") + "; "
+            + _stat_text("ops", stats["op_limit"]) + "; "
+            + _stat_text("repairs", stats["repair_cap"]) + "; "
+            + _stat_text("cycles", stats["cycle_limit"]) + "; "
+            + _stat_text("attempts", stats["attempt_limit"])
         )
         lines.append(
-            f"recommended defaults: time_limit_s={rec['time_limit_s']} "
-            f"op_limit={rec['op_limit']} repair_cap={rec['repair_cap']}"
+            "recommended defaults: " + " ".join(f"{key}={rec[key]}" for key in KEYS)
         )
     return "\n".join(lines) + "\n"

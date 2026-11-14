@@ -1,6 +1,10 @@
 {
   "version": 1,
   "name": "turbo-12f",
+  "test_command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"],
+  "test_globs": ["tests/**"],
+  "lint_command": null,
+  "assertion_pattern": "AssertionError",
   "gates": [
     {"name": "unit", "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"]}
   ],

@@ -7,6 +7,7 @@ they skip, and the probe tests assert the gap is recorded, not hidden.
 import json
 import os
 import socket
+import shutil
 import socketserver
 import tempfile
 import threading
@@ -129,6 +130,29 @@ class LandlockTest(unittest.TestCase):
         self.assertNotEqual(obs["exit_code"], 0)
         self.assertIn("PermissionError", obs["stderr"])
         self.assertFalse(os.path.exists(target))
+
+    def test_toolchain_dirs_are_readable_only_when_declared(self):
+        toolchain = tempfile.mkdtemp(dir=os.path.expanduser("~"), prefix=".t12-toolchain-")
+        self.addCleanup(shutil.rmtree, toolchain)
+        tool = os.path.join(toolchain, "tool.txt")
+        with open(tool, "w") as fh:
+            fh.write("v1\n")
+        read = ["python3", "-c", f"print(open({tool!r}).read().strip())"]
+        write = ["python3", "-c", f"open({tool!r}, 'w').write('x')"]
+        denied = runner.run(read, cwd=self.worktree, timeout_s=10, sandbox=self.ctx)
+        self.assertNotEqual(denied["exit_code"], 0)
+        with mock.patch.dict(os.environ, {"T12_TOOLCHAIN_DIRS": toolchain}):
+            obs = runner.run(read, cwd=self.worktree, timeout_s=10, sandbox=self.ctx)
+            self.assertEqual((obs["exit_code"], obs["stdout"].strip()), (0, "v1"))
+            self.assertEqual(obs["toolchain_dirs"], [os.path.realpath(toolchain)])
+            self.assertNotEqual(
+                runner.run(write, cwd=self.worktree, timeout_s=10, sandbox=self.ctx)["exit_code"], 0)
+
+    def test_toolchain_dirs_refuse_home_and_relative_paths(self):
+        for value in (os.path.expanduser("~"), "/", "relative/dir"):
+            with mock.patch.dict(os.environ, {"T12_TOOLCHAIN_DIRS": value}):
+                with self.assertRaises(StateError):
+                    sandbox.toolchain_dirs()
 
     @unittest.skipIf(LOOPBACK_DENIED, CAGED)
     def test_localhost_tcp_denied_but_allowed_without_sandbox(self):

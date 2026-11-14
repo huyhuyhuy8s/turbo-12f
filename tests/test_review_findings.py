@@ -1,6 +1,7 @@
-"""gh-46: after a changes-requested review the builder sees the review,
-and re-staging the very commit that was reviewed is refused instead of
-looping review forever."""
+"""gh-46, ported to the tdd lane: after a changes-requested review the run
+goes back to the analyzer with the review's findings, a second cycle of
+red, green and refactor answers them, and finishing without a new commit is
+refused instead of looping review forever."""
 
 import json
 import os
@@ -8,12 +9,23 @@ import subprocess
 import tempfile
 import unittest
 
-from tests.test_t12 import APP_V1, APP_V2, BIN, COVERS, TEST_FILE, task_dict
+from tests.test_t12 import APP_V1, BIN, TddFlow, task_dict
 
-FINDING = "greet() drops the trailing newline contract"
+FINDING = "greet('') returns 'Hello, !' instead of falling back to the default name"
+FINDINGS = [{"id": "F1", "class": "Contract", "severity": "Major", "where": "app.py:2",
+             "finding": FINDING, "owner": "green"}]
+EMPTY_TEST = """import unittest
+from app import greet
 
 
-class ChangesRequestedLoop(unittest.TestCase):
+class TestGreetEmpty(unittest.TestCase):
+    def test_empty(self):
+        self.assertEqual(greet(""), "Hello, world!")
+"""
+APP_V3 = 'def greet(name="world"):\n    return f"Hello, {name or \'world\'}!"\n'
+
+
+class ChangesRequestedLoop(TddFlow, unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -32,28 +44,11 @@ class ChangesRequestedLoop(unittest.TestCase):
             json.dump(task_dict(), fh)
         self.t12("init", "--repo", repo, "--home", self.home)
         self.t12("prepare", "--home", self.home, "--task", task_path)
-        wt = os.path.join(self.home, "worktrees", "demo-1")
-
-        self.write(wt, "tests/test_greet.py", TEST_FILE)
-        self.t12("red", "--home", self.home, "--task-id", "demo-1",
-                 "--test-path", "tests/test_greet.py",
-                 "--command", "python3 -m unittest tests.test_greet -q",
-                 "--marker", "FAILED", "--session", "sess-test-writer", "--covers", COVERS)
-        self.write(wt, "app.py", APP_V2)
-        self.git(wt, "add", ".")
-        self.git(wt, "commit", "-m", "feat: implement greet")
-        self.commit = self.git(wt, "rev-parse", "HEAD")
-        self.t12("stage", "--home", self.home, "--task-id", "demo-1",
-                 "--session", "sess-builder")
-        self.t12("gate", "--home", self.home, "--task-id", "demo-1",
-                 "--name", "unit", "--session", "sess-qa")
-        self.t12("replay", "--home", self.home, "--task-id", "demo-1")
-        report = os.path.join(self.tmp.name, "review.md")
-        with open(report, "w") as fh:
-            fh.write(f"Verdict: changes-requested\n\n## Findings\n\n- {FINDING}\n")
-        self.t12("review", "--home", self.home, "--task-id", "demo-1",
-                 "--role", "reviewer", "--session", "sess-reviewer",
-                 "--verdict", "changes-requested", "--report", report)
+        self.worktree = os.path.join(self.home, "worktrees", "demo-1")
+        self.run_to_review()
+        self.commit = self.git(self.worktree, "rev-parse", "HEAD")
+        self.call("reviewer", "review", {"verdict": "blocked", "findings": FINDINGS,
+                                         "verification": "re-ran the unit gate"})
 
     def git(self, cwd, *args):
         result = subprocess.run(["git", *args], cwd=cwd, capture_output=True,
@@ -77,28 +72,74 @@ class ChangesRequestedLoop(unittest.TestCase):
         out = self.t12("status", "--home", self.home, "--task-id", "demo-1").stdout
         return json.loads(out)
 
-    def test_builder_context_carries_the_changes_requested_review(self):
+    def context(self, role):
         out = self.t12("context", "--home", self.home, "--task-id", "demo-1",
-                       "--role", "builder", "--phase", "green").stdout
-        context = json.loads(out.split("--- context (JSON) ---\n", 1)[1])
-        review = context["prior_review"]
-        self.assertIsNotNone(review, "builder context has no prior_review")
-        self.assertEqual(review["verdict"], "changes-requested")
-        self.assertEqual(review["commit"], self.commit)
-        blob = json.dumps(review)
-        self.assertTrue(FINDING in blob or "review-reviewer-1.md" in blob,
-                        f"neither the findings nor their report are in {review}")
+                       "--role", role, "--phase", "tdd").stdout
+        return json.loads(out.rsplit("--- context (JSON) ---\n", 1)[1])
 
-    def test_restaging_the_reviewed_commit_is_refused_for_one_op(self):
-        before = self.status()["budgets"]["ops_used"]
-        result = self.t12("stage", "--home", self.home, "--task-id", "demo-1",
-                          "--session", "sess-builder", expect=1)
+    def test_the_run_goes_back_to_the_analyzer_in_review_fix_mode(self):
+        status = self.status()
+        self.assertEqual(status["phase"], "tdd")
+        self.assertEqual((status["tdd"]["step"], status["tdd"]["mode"]), ("analyzer", "review-fix"))
+        self.assertEqual(status["budgets"]["repairs_used"], 1)
+        self.assertEqual(status["candidate"], self.commit)
+
+    def test_analyzer_context_carries_the_changes_requested_review(self):
+        context = self.context("analyzer")
+        self.assertEqual(context["mode"], "review-fix")
+        self.assertEqual([f["id"] for f in context["findings"]], ["F1"])
+        self.assertIn(FINDING, json.dumps(context["findings"]))
+        self.assertEqual([i["status"] for i in context["items"]], ["done"])
+
+    def test_the_findings_never_reach_green_before_the_analyzer_has_answered(self):
+        out = self.t12("context", "--home", self.home, "--task-id", "demo-1",
+                       "--role", "green", "--phase", "tdd").stdout
+        context = json.loads(out.rsplit("--- context (JSON) ---\n", 1)[1])
+        self.assertNotIn(FINDING, json.dumps(context))
+        self.assertIsNone(context["findings"])
+
+    def test_finishing_without_a_new_commit_is_refused(self):
+        self.analyze(items=[], directives=["F1: tidy greet"])
+        self.refactor()
+        self.no_cheat()
+        before = self.status()["candidate"]
+        result = self.tdd_step(expect=1)
         message = result.stderr.lower()
         self.assertIn("changes", message)
         self.assertIn("no new commit", message)
         after = self.status()
-        self.assertEqual(after["budgets"]["ops_used"], before + 1)
-        self.assertEqual(after["candidate"], self.commit)
+        self.assertEqual(after["candidate"], before)
+        self.assertEqual(after["phase"], "tdd")
+        self.assertEqual(after["tdd"]["step"], "green")
+
+    def test_a_second_cycle_answers_the_finding_and_reaches_local_verified(self):
+        self.analyze(items=[{
+            "text": "greet('') falls back to the default name", "kind": "edge",
+            "source": f"F1: {FINDING}", "needed": "greet that formats an empty name",
+            "criteria": [1]}])
+        self.assertEqual(self.status()["tdd"]["step"], "red")
+        self.red(item_id="T2", test_file="tests/test_greet_empty.py", text=EMPTY_TEST,
+                 line=7, name="test_empty")
+        self.green(app=APP_V3)
+        self.refactor()
+        self.no_cheat()
+        self.tdd_step()
+        status = self.status()
+        self.assertEqual(status["phase"], "gates")
+        self.assertEqual(status["tdd"]["cycle"], 2)
+        self.assertNotEqual(status["candidate"], self.commit)
+        record = self.flow_record()
+        self.assertTrue(record["reviews"][0]["voided"])
+        self.assertEqual(record["gates"][0]["status"], "pending")
+        self.run_gates()
+        self.call("reviewer", "review", {"verdict": "merge-ready", "findings": [],
+                                         "verification": "F1 fixed; unit gate re-run: OK"})
+        self.check()
+        self.assertEqual(self.status()["phase"], "local-verified")
+        self.t12("verify", "--home", self.home, "--task-id", "demo-1")
+        reviews = self.flow_record()["reviews"]
+        self.assertEqual([r["verdict"] for r in reviews], ["changes-requested", "approve"])
+        self.assertEqual(reviews[1]["prior_review"], reviews[0]["report"]["name"])
 
 
 if __name__ == "__main__":

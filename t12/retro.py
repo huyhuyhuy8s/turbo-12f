@@ -12,6 +12,10 @@ import statistics
 from . import model, store
 
 MIN_COUNT = 3
+# The events where the core refused a worker's step; their detail names the
+# step and the check that failed.
+REFUSAL_EVENTS = ("tdd-list-failed", "red-failed", "tdd-green-failed",
+                  "tdd-refactor-failed", "tdd-final-failed")
 
 
 def _events(path):
@@ -47,6 +51,7 @@ def collect(home):
                                              "failures": 0, "durations_s": []})
     stops = collections.Counter()
     rejected = collections.Counter()
+    refusals = collections.Counter()
     findings = collections.Counter()
     escalations = collections.defaultdict(set)
     reviews = unreadable = runs = 0
@@ -73,6 +78,8 @@ def collect(home):
                     gate["failures"] += 1
             elif kind == "stopped":
                 stops[detail.get("reason")] += 1
+            elif kind in REFUSAL_EVENTS:
+                refusals[(detail.get("step"), detail.get("check"))] += 1
             elif kind == "worker-output-rejected":
                 rejected[(detail.get("role"), detail.get("error"))] += 1
             elif kind == "human-contact":
@@ -90,6 +97,8 @@ def collect(home):
         "stops": dict(stops),
         "rejected": [{"role": role, "error": error, "count": n}
                      for (role, error), n in rejected.most_common()],
+        "refusals": [{"step": step, "check": check, "count": n}
+                     for (step, check), n in refusals.most_common()],
         "reviews": reviews,
         "unreadable_reviews": unreadable,
         "reviewed_runs": len(reviewed_runs),
@@ -107,8 +116,17 @@ def proposals(data, min_count=MIN_COUNT):
                 "kind": "gate",
                 "evidence": f"gate {name} failed in {gate['failed_runs']} of {gate['runs']} runs "
                             f"({gate['failures']} failures)",
-                "proposal": f"find what the builder keeps missing and catch it before {name}: "
-                            "a refusal in `stage`, or a cheaper gate ordered first",
+                "proposal": f"find what the tdd loop keeps missing and catch it before {name}: "
+                            "a refusal in `tdd-step`, or a cheaper gate ordered first",
+            })
+    for item in data["refusals"]:
+        if item["count"] >= min_count:
+            out.append({
+                "kind": "tdd-refusal",
+                "evidence": f"the core refused {item['step']} {item['count']} times "
+                            f"on check {item['check']}",
+                "proposal": f"name the {item['check']} check and its fix in the {item['step']} "
+                            "prompt, or catch it earlier in the loop",
             })
     for item in data["rejected"]:
         if item["count"] >= min_count:

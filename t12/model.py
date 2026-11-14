@@ -16,37 +16,42 @@ from . import profile as profile_mod
 from . import store
 from .errors import BudgetError, StateError
 
-VERSION = 1
+VERSION = 2
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 PROVENANCE = "observed-helper-execution"
 
 PHASES = (
     "unadmitted",
     "ready",
-    "red",
+    "tdd",
     "gates",
-    "green",
+    "review",
     "local-verified",
     "paused",
     "stopped",
 )
 
-# Allowed transitions. "gates -> gates" is a re-stage after a repair:
-# it re-pins the candidate and resets gate observations bound to the
-# old candidate.
+# Allowed transitions. "gates -> tdd" is a gate failure: the run goes
+# back to green with the failing output as findings. "review -> tdd" is
+# changes-requested: back to the analyzer with the review findings. Both
+# are repairs and count against the repair cap; a candidate is only
+# pinned again by the final step of the tdd loop (tdd -> gates).
 TRANSITIONS = {
     "unadmitted": {"ready"},
-    "ready": {"red", "paused", "stopped"},
-    "red": {"gates", "paused", "stopped"},
-    "gates": {"gates", "green", "paused", "stopped"},
-    # green -> gates is the review loop: after replay, a review can
-    # ask for changes, so the builder re-stages a new candidate.
-    # The re-stage voids the review and resets gates + replay.
-    "green": {"gates", "local-verified", "paused", "stopped"},
+    "ready": {"tdd", "paused", "stopped"},
+    "tdd": {"gates", "paused", "stopped"},
+    "gates": {"tdd", "review", "paused", "stopped"},
+    "review": {"tdd", "local-verified", "paused", "stopped"},
     "local-verified": set(),
-    "paused": {"ready", "red", "gates", "green", "stopped"},
+    "paused": {"ready", "tdd", "gates", "review", "stopped"},
     "stopped": set(),
 }
+
+TDD_STEPS = ("analyzer", "red", "green", "refactor", "final", "done")
+TDD_MODES = ("initial", "repair", "review-fix")
+ATTEMPT_STEPS = ("analyzer", "red", "green", "refactor")
+# Where a repair re-enters the loop, by what sent the run back.
+REPAIR_ENTRY = {"gate": ("green", "repair"), "review": ("analyzer", "review-fix")}
 
 
 def run_path(home, task_id):
@@ -120,9 +125,6 @@ def bound_sessions(run):
     bound = {}
     for role, record in (run.get("roles") or {}).items():
         bound[record["session"]] = role
-    for gate in run["gates"]:
-        if gate.get("run_by"):
-            bound[gate["run_by"]] = gate.get("run_by_role", "qa")
     for review in run.get("reviews") or []:
         bound[review["session"]] = review["role"]
     for record in run.get("bindings") or []:
@@ -192,48 +194,48 @@ def changes_requested(run):
 
 
 def check_reviews(run):
-    """Green requires an approving review for every required role, on
+    """Check requires an approving review for every required role, on
     the current candidate. A changes-requested review newer than the
     latest approval blocks; a missing review blocks."""
     candidate = (run["candidate"] or {}).get("commit")
     if not candidate:
-        raise StateError("green requires a staged candidate")
+        raise StateError("check requires a pinned candidate")
     for role in run.get("required_reviews") or []:
         review = latest_review(run, role, commit=candidate)
         if review is None:
             raise StateError(
-                f"green requires an approving {role} review on {candidate[:12]}; none recorded"
+                f"check requires an approving {role} review on {candidate[:12]}; none recorded"
             )
         if review["verdict"] != "approve":
             raise StateError(
-                f"green blocked: the latest {role} review on {candidate[:12]} "
+                f"check blocked: the latest {role} review on {candidate[:12]} "
                 f"is {review['verdict']!r}"
             )
 
 
 def next_step(run):
-    """Who acts next on this run, and on what, as one short line."""
+    """Who acts next on this run, and on what, as one short line. The
+    runner routes on it: `tdd-step`, `gate` and `check` are scripted
+    steps, `<role>: <verb>` is a worker, `human: ...` waits."""
     phase = run["phase"]
     if phase == "ready":
-        return "test-writer: red"
-    if phase == "red":
-        return "builder: stage"
+        return "analyzer: analyze"
+    if phase == "tdd":
+        step = (run.get("tdd") or {}).get("step", "analyzer")
+        if step == "analyzer":
+            return "analyzer: analyze"
+        if step in ("red", "green", "refactor"):
+            return f"{step}: {step}"
+        return "tdd-step"
     if phase == "gates":
-        for gate in run["gates"]:
-            if gate["status"] == "failed":
-                return f"builder: repair gate {gate['name']}"
-            if gate["status"] != "passed":
-                return f"qa: gate {gate['name']}"
-        return "replay"
-    if phase == "green":
+        return "gate"
+    if phase == "review":
         commit = run["candidate"]["commit"]
         for role in run.get("required_reviews") or []:
             review = latest_review(run, role, commit=commit)
-            if review is None:
+            if review is None or review["verdict"] != "approve":
                 return f"{role}: review"
-            if review["verdict"] != "approve":
-                return f"builder: changes requested by {role}"
-        return "green"
+        return "check"
     if phase == "local-verified":
         return "human: merge"
     if phase == "paused":
@@ -247,7 +249,7 @@ def next_step(run):
 
 
 def void_reviews(run, reason):
-    """A re-stage voids reviews bound to the old candidate. They stay
+    """A newly pinned candidate voids reviews bound to the old one. They stay
     in the record (audit trail) and the next review for the role
     starts from the voided one — review remembers."""
     for review in run.get("reviews") or []:
@@ -261,10 +263,17 @@ def record_measurements(run):
     Calibration reads these; a run without measurements cannot
     calibrate anything and is reported as such."""
     budgets = run["budgets"]
+    tdd = run.get("tdd") or {}
+    history = tdd.get("history") or []
+    lint_runs = sum(1 for h in history for key in ("green_lint", "refactor_lint") if h.get(key))
+    lint_runs += 1 if (tdd.get("final") or {}).get("lint") else 0
     run["measurements"] = {
         "wall_used_s": round(time.time() - budgets["started_at"], 1),
         "ops_used": budgets["ops_used"],
         "repairs_used": budgets["repairs_used"],
+        "cycles": tdd.get("cycle", 0),
+        "tdd_attempts": tdd.get("attempts_peak", 0),
+        "lint_runs": lint_runs,
         "gates": len(run["gates"]),
         "finished_at": time.time(),
     }
@@ -299,6 +308,129 @@ def open_escalation(run):
     if escalations and escalations[-1]["answer"] is None:
         return escalations[-1]
     return None
+
+
+def _setting(key, default, *sources):
+    for source in sources:
+        if source and key in source:
+            return source[key]
+    return default
+
+
+def new_tdd(profile, task, base_commit=None):
+    """The tdd record at prepare: the loop's position, the test list, the
+    settings frozen from the profile (a task value wins where it has one,
+    since `profile.apply` has already merged the two), and what to roll back
+    to. `last_good_commit` is the base commit until the first accepted step."""
+    test_command = _setting("test_command", None, task, profile)
+    if not test_command:
+        raise StateError("test_command is required: set it in .t12/project.json or the task file")
+    return {
+        "step": "analyzer",
+        "mode": "initial",
+        "cycle": 0,
+        "attempts": {step: 0 for step in ATTEMPT_STEPS},
+        "attempts_peak": 0,
+        "items": [],
+        "gaps": [],
+        "directives": [],
+        "current": None,
+        "test_command": list(test_command),
+        "test_globs": list(_setting("test_globs", ["tests/**"], task, profile)),
+        "lint_command": _setting("lint_command", None, task, profile),
+        "assertion_pattern": _setting("assertion_pattern", "AssertionError", task, profile),
+        "failure_count_pattern": _setting("failure_count_pattern", None, task, profile),
+        "red_stub_max_lines": _setting("red_stub_max_lines", 10, task, profile),
+        "refactor_skip_max_lines": _setting("refactor_skip_max_lines", 5, task, profile),
+        "lines_since_refactor": 0,
+        "locked": {},
+        "last_good_commit": base_commit,
+        "red_commit": None,
+        "green_commit": None,
+        "red": None,
+        "history": [],
+        "final": None,
+        "last_error": None,
+        "findings": None,
+    }
+
+
+def new_item(tdd, spec):
+    """Append a test-list item with the next id ("T1", "T2", ...). Ids are
+    never reused: items are never removed."""
+    item = {
+        "id": f"T{len(tdd['items']) + 1}",
+        "text": spec["text"],
+        "kind": spec["kind"],
+        "source": spec["source"],
+        "needed": spec["needed"],
+        "criteria": list(spec["criteria"]),
+        "status": "todo",
+        "test_file": None,
+        "test_name": None,
+        "defeats": None,
+    }
+    tdd["items"].append(item)
+    return item
+
+
+def bump_attempt(tdd, step):
+    """One failed try of a worker step since its last accept. Returns the
+    count; the caller compares it with budgets.attempt_limit."""
+    tdd["attempts"][step] += 1
+    tdd["attempts_peak"] = max(tdd.get("attempts_peak", 0), tdd["attempts"][step])
+    return tdd["attempts"][step]
+
+
+def repair_or_pause(run, source, findings_ref):
+    """A gate failure (`source` "gate") or a changes-requested review
+    ("review") sends the run back into the tdd loop: green in repair mode,
+    or the analyzer in review-fix mode, with `findings_ref` as its findings.
+    That is one repair. Past the repair cap the run pauses with an
+    escalation of kind "repair-cap" instead of stopping, and resumes into the
+    same tdd step. Returns the run's new phase, "tdd" or "paused"."""
+    if source not in REPAIR_ENTRY:
+        raise StateError(f"repair source must be one of {sorted(REPAIR_ENTRY)}, got {source!r}")
+    step, mode = REPAIR_ENTRY[source]
+    budgets = run["budgets"]
+    budgets["repairs_used"] += 1
+    tdd = run["tdd"]
+    tdd["step"] = step
+    tdd["mode"] = mode
+    tdd["findings"] = {"source": source, "report": findings_ref}
+    tdd["attempts"] = {name: 0 for name in ATTEMPT_STEPS}
+    if budgets["repairs_used"] <= budgets["repair_cap"]:
+        transition(run, "tdd")
+        return "tdd"
+    run["prior_phase"] = "tdd"
+    run.setdefault("escalations", []).append({
+        "question": (f"repair cap exceeded: {budgets['repairs_used']} repairs used, "
+                     f"{budgets['repair_cap']} allowed; the {source} findings are in "
+                     f"{findings_ref}. Answer with guidance to continue."),
+        "kind": "repair-cap",
+        "asked_at": time.time(),
+        "answer": None,
+        "answered_at": None,
+    })
+    transition(run, "paused")
+    return "paused"
+
+
+def tdd_summary(run):
+    """The tdd loop in a few numbers, for review context and the manifest."""
+    tdd = run.get("tdd") or {}
+    items = tdd.get("items") or []
+    final = tdd.get("final") or {}
+    return {
+        "step": tdd.get("step"),
+        "mode": tdd.get("mode"),
+        "cycles": tdd.get("cycle", 0),
+        "items_done": sum(1 for i in items if i["status"] == "done"),
+        "items_total": len(items),
+        "final": final.get("tests"),
+        "final_commit": final.get("commit"),
+        "final_lint": final.get("lint"),
+    }
 
 
 SOURCE_URL_RE = re.compile(r"https?://\S+")
@@ -398,6 +530,8 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
             "time_limit_s": limits["time_limit_s"],
             "op_limit": limits["op_limit"],
             "repair_cap": limits["repair_cap"],
+            "cycle_limit": limits["cycle_limit"],
+            "attempt_limit": limits["attempt_limit"],
             "started_at": now,
             "ops_used": 0,
             "repairs_used": 0,
@@ -405,9 +539,8 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
         "budget_source": budget_source,
         "measurements": None,
         "gates": gates,
-        "red": None,
+        "tdd": None,
         "candidate": None,
-        "replay": None,
         "stop_reason": None,
         "require_probes": bool(task.get("require_probes", False)),
         "probes": [],

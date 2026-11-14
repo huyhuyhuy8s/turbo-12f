@@ -74,7 +74,7 @@ def check_allowed(run, adapter, resolves):
 def check_head(run, head):
     candidate = (run["candidate"] or {}).get("commit")
     if not candidate:
-        raise StateError("deliver requires a staged candidate")
+        raise StateError("deliver requires a pinned candidate")
     if head != candidate:
         raise StateError(
             f"deliver is pinned to the reviewed head {candidate[:12]}; "

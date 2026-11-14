@@ -1,6 +1,8 @@
 """The gate ladder. Gates run in task-file order; a later gate cannot
 run until every prior gate passed on the same candidate. A failed gate
-counts against the repair cap; exceeding it stops the run.
+counts as a repair: the run goes back into the tdd loop, and past the
+repair cap it pauses for a human. A script runs them, `gate` takes the
+next pending one by default.
 """
 
 from .errors import StateError
@@ -35,7 +37,7 @@ def check_order(run, gate):
 
 
 def reset_for_new_candidate(run):
-    """A re-stage invalidates gate observations bound to the old candidate."""
+    """A newly pinned candidate invalidates gate observations bound to the old one."""
     for gate in run["gates"]:
         gate["status"] = "pending"
         gate["observation"] = None

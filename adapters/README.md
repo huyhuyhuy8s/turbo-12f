@@ -195,43 +195,69 @@ could not run (missing token, no label, unreadable profile).
 
 ```bash
 python3 adapters/runner.py --home <state-home> --queue <queue dir> --max 2 \
-  --model-cmd "claude -p" [--notify-cmd "notify-send t12"]
+  [--omp-cmd omp] [--omp-profile t12-worker] [--omp-model <id>] \
+  [--role-model ROLE=MODEL]... [--role-thinking ROLE=LEVEL]... \
+  [--omp-max-cost <usd>] [--skills-cache <dir>] [--notify-cmd "notify-send t12"]
 ```
 
 Each pass admits tasks through `bin/t12-queue`, then takes one step
 per run from `t12 board --json`. A step that leaves a run where it
-was (a refused `act`, a failed replay, a failed model call) is not
-retried in the same invocation. The runner exits when a pass moves no
-run, so run it again from cron or when a task file lands in the queue.
+was (a refused `act`, a failed gate, a worker that never calls a tool)
+is not retried in the same invocation. The runner exits when a pass
+moves no run, so run it again from cron or when a task file lands in
+the queue.
 
-- `replay`, `green` and `qa: gate N` run as `t12` commands. No model
-  is called.
-- Every other role step is a worker call. `t12 context` builds the
-  prompt, the runner pipes it to `--model-cmd` in the run's worktree
-  with `T12_TASK_ID`, `T12_ROLE`, `T12_SESSION` and `T12_WORKTREE`
-  set, and passes the tool call in its reply to `t12 act`. The command
-  must be allowed to edit the worktree and run `git commit` without a
-  prompt. Each call gets a session id never used before.
-- The runner takes the tool call out of the reply one of two ways, and
-  `act` records which as `parsed_by`, with the whole reply as
-  `worker-raw-N.txt` evidence when it differs from the call:
-  - `schema`: for `claude` and `codex exec`, the runner adds the
-    role's JSON Schema (`t12 tool-schema`) to the command, and the CLI
-    holds the model to it while it writes. If the CLI exits with an
-    error in that mode, the runner calls it once more without the
-    schema.
-  - `extracted`: any other reply, or one with no structured result,
-    is searched for exactly one tool call, bare on its own line or in
-    a fence. A call printed twice counts once. Two calls that differ,
-    or none, pass the reply on unchanged as `raw`, and `act` rejects
-    it as before.
+omp is the only worker: each worker step is one `omp --mode rpc`
+session. `--omp-cmd` is split like a shell line (default `omp`),
+`--omp-profile` defaults to `t12-worker`, `--omp-model` and
+`--omp-max-cost` (USD per session) are passed on when set. The
+session's time limit is the run's time left.
 
-  Other CLIs (`agy`, `gemini`) get no schema yet: `agy -p` takes the
-  prompt as an argument, not on stdin.
-- When `act` rejects the output, the runner sends the error back to
-  the same session once, if the budget still has an operation left.
-  A failed model call records nothing, and the next runner tries
-  again.
+**Per-role model and thinking.** `--role-model ROLE=MODEL` gives one
+role its own `--model`; every other role keeps `--omp-model`, or omp's
+profile default when that is unset. `--role-thinking ROLE=LEVEL` does
+the same for `--thinking` (`off`, `minimal`, `low`, `medium`, `high`,
+`xhigh`, `max`, `auto`) and has no fallback: an unlisted role passes no
+`--thinking`. Both repeat, and ROLE is the role name in `next`
+(`analyzer`, `red`, `green`, `refactor`, `reviewer`). A stronger,
+slower reviewer:
+
+```bash
+python3 adapters/runner.py --home <state-home> --queue <queue dir> \
+  --omp-model anthropic/claude-sonnet-4-5 \
+  --role-model reviewer=anthropic/claude-opus-4-1 --role-thinking reviewer=high
+```
+
+A malformed entry (no `=`, an empty ROLE, MODEL or LEVEL, an unknown
+level) or a repeated ROLE exits 2 with the reason, before any run is
+touched.
+
+- `tdd-step`, `gate` and `check` run as `t12` commands, with no role
+  and no session. No model is called.
+- Every other `next` (`analyzer: analyze`, `red: red`, `green: green`,
+  `refactor: refactor`, `reviewer: review`) is a worker step. `t12
+  context` builds the prompt; the worker finishes by calling one of the
+  role's tools. The runner mounts them as omp host tools (`t12
+  tool-schema --host-tools`), so the arguments are checked against the
+  registry while the model writes, and each call goes to `t12 act
+  --parsed-by host-tool`. A call `act` refuses comes back as a tool
+  error in the same session, so the model fixes it there; after three
+  refusals, or when the run has no operations left, the session ends
+  and the run does not move.
+- Green and refactor are blind. The runner makes a git worktree of the
+  run's worktree under its scratch directory with every file matching
+  the profile's `test_globs` deleted (`adapters/workspace.py`), and
+  runs omp there. The role cannot read, search for or run a test, and
+  the guard denies the shell and anything outside that directory. When
+  the role calls `green_ready` or `refactor_done`, the runner exports
+  the worktree's change as a patch and passes it to `t12 act --patch`;
+  the core applies it to the run's worktree, refuses a patch that
+  touches a test or protected path, and runs the red tests and lint.
+  The export refuses a patch that created or edited a hidden path, and
+  that refusal reaches the model as a tool error. The blind worktree is
+  removed after every step. Its prompt leaves out `test_globs`,
+  `protected_paths` and the real worktree's path. `escalate` carries
+  no patch.
 - `human: ...`, `stopped: ...` and a spent budget are never acted on.
   After the last pass the runner prints `waiting <id>: <reason>` for
   each and for each run a step did not move. It runs `--notify-cmd`
@@ -241,8 +267,81 @@ run, so run it again from cron or when a task file lands in the queue.
   it carries on from the run records. A second runner on the same
   state home is refused.
 
-The worker runs outside `bin/t12-cage`, as a hand-driven worker does
-today, so the builder commits its own change.
+Isolated: the omp `--profile` (own auth, settings and MCP servers),
+the owned system prompt `prompts/omp-worker.md`, a built-in tool list
+by role kind, and the guard extension `adapters/omp/guard.ts`, which
+reads a per-step policy from `$T12_GUARD_POLICY`. Skills (unless the
+role has pinned ones, below), rules, context files and other
+extensions are off. Never `task`, `ask`, `eval` or `web_search`.
+
+| Kind | Built-in tools | Turns | Guard policy |
+|---|---|---|---|
+| analyzer | none (`--no-tools`) | 4 | writes nowhere, no shell |
+| red | read, grep, find, glob, edit, write, bash | 20 | protected paths read-only |
+| green | read, grep, find, glob, edit, write | 20 | test globs and protected paths read-only, no shell, confined to the blind worktree |
+| refactor | read, grep, find, glob, edit, write | 15 | as green |
+| review | read, grep, find, glob, bash | 30 | writes nowhere |
+
+Hitting a turn cap aborts the session and the log line says
+`turn-cap`. Every frame, both directions, goes to
+`<scratch>/<task>-<session>.transcript.jsonl`, and the accepted `act`
+records it as the `worker-raw-N.txt` evidence of the call.
+
+Operator step, once per machine: the `t12-worker` profile starts with
+no login. Run `omp --profile t12-worker`, then `/login`, and leave.
+Until then a worker session cannot reach a model and the step is
+reported as an error.
+
+With `FACTORYBENCH_URL` set, the runner reports each issue-sourced
+run as a FactoryBench attempt (`attempt.started`, `pr.linked`,
+`attempt.finished`); the factory config version is the turbo-12f
+commit plus the omp version.
+
+### Pinned third-party skills
+
+A profile can pin skills (`skills` in `.t12/project.json`, shape in
+`docs/generic-factory.md`) to roles. `t12 context` lists, as `skills:
+[{name, rev, sha256}]`, the pins that apply to the role on this run:
+the profile as frozen at the trunk commit, each pin's `when` read from
+the run's base commit (a `package.json` dependency, or a tracked file
+matching a glob). The core never fetches anything.
+
+```bash
+python3 adapters/skills.py sync --profile-json <repo>/.t12/project.json \
+  --cache <state-home>/skills [--update-hashes]
+python3 adapters/runner.py ... [--skills-cache <dir>]   # default <state-home>/skills
+```
+
+`sync` is the one step that touches the network: it downloads each
+pinned `repo@rev` from codeload, keeps only the pin's `include` files
+under `path` (a `wrap` pin turns one command file into a `SKILL.md`),
+installs them as `<cache>/<name>@<rev>/<name>/`, and refuses a tree
+whose hash differs from the pinned `sha256` (`--update-hashes` writes
+the new hashes into the profile). Nothing in an archive is executed.
+
+For a worker step whose context has skills, the runner:
+
+1. verifies each cached skill against its pinned hash. A missing or
+   changed one refuses the step, with the line `run python3
+   adapters/skills.py sync --profile-json <repo>/.t12/project.json
+   --cache <dir>`. The run does not move, and the runner does not
+   retry it in the same invocation.
+2. writes an omp config overlay into its scratch directory and passes
+   it as `--config`, instead of `--no-skills`: `skills.customDirectories`
+   is the mount dirs, `skills.includeSkills` the names, and every
+   other skill provider (`enableAgents*`, `enableClaude*`, `enablePi*`,
+   user and project) is off, so a product repo's own
+   `.agents/skills/` cannot add one. omp's system prompt lists exactly
+   the pins.
+3. adds each mount dir to the guard policy's `allow_read`, so the
+   confined blind roles can read a skill's reference files.
+4. (every session, mounted skills or not) writes `{"dir": "meta",
+   "skills": [{name, rev, sha256}], "model": ..., "thinking": ...}` as
+   the first line of the transcript, so the evidence of a call says
+   which skills, model and thinking level the worker had (`skills` is
+   `[]` and the others `null` when none applies).
+
+A role with no applicable pin keeps `--no-skills`.
 
 ## Report schema
 

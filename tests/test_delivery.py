@@ -9,42 +9,10 @@ import subprocess
 import tempfile
 import unittest
 
-TEST_FILE = '''import unittest
-from app import greet
-
-class TestGreet(unittest.TestCase):
-    def test_named(self):
-        self.assertEqual(greet("Ana"), "Hello, Ana!")
-
-    def test_default(self):
-        self.assertEqual(greet(), "Hello, world!")
-'''
-
-APP_V2 = '''def greet(name="world"):
-    return f"Hello, {name}!"
-'''
+from tests.test_t12 import TddFlow, task_dict
 
 
-COVERS = json.dumps({"0": ["test_named"], "1": ["test_default"]})
-
-
-def task_dict(task_id="demo-1"):
-    return {
-        "id": task_id,
-        "title": "Add greet()",
-        "acceptance_criteria": [
-            "greet('Ana') returns 'Hello, Ana!'",
-            "greet() with no argument returns 'Hello, world!'",
-        ],
-        "base": "main",
-        "time_limit_s": 600,
-        "op_limit": 50,
-        "repair_cap": 2,
-        "gates": [{"name": "unit", "command": ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"]}],
-    }
-
-
-class DeliverCase(unittest.TestCase):
+class DeliverCase(TddFlow, unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = os.path.join(self.tmp.name, "product")
@@ -83,31 +51,6 @@ class DeliverCase(unittest.TestCase):
         self.assertEqual(result.returncode, expect,
                          f"t12 {' '.join(args)} -> {result.returncode}: {result.stderr}")
         return result
-
-    def run_to_verified(self):
-        with open(os.path.join(self.worktree, "tests", "test_greet.py"), "w") as fh:
-            fh.write(TEST_FILE)
-        self.t12("red", "--home", self.home, "--task-id", "demo-1",
-                 "--test-path", "tests/test_greet.py",
-                 "--command", "python3 -m unittest tests.test_greet -q",
-                 "--marker", "FAILED", "--session", "sess-test-writer", "--covers", COVERS)
-        with open(os.path.join(self.worktree, "app.py"), "w") as fh:
-            fh.write(APP_V2)
-        self._git(self.worktree, "add", ".")
-        self._git(self.worktree, "commit", "-m", "feat: implement greet")
-        self.t12("stage", "--home", self.home, "--task-id", "demo-1", "--session", "sess-builder")
-        self.t12("gate", "--home", self.home, "--task-id", "demo-1",
-                 "--name", "unit", "--session", "sess-qa")
-        self.t12("replay", "--home", self.home, "--task-id", "demo-1")
-        report = os.path.join(self.tmp.name, "review.md")
-        with open(report, "w") as fh:
-            fh.write("Verdict: approve\n")
-        self.t12("review", "--home", self.home, "--task-id", "demo-1",
-                 "--role", "reviewer", "--session", "sess-reviewer",
-                 "--verdict", "approve", "--report", report)
-        self.t12("green", "--home", self.home, "--task-id", "demo-1")
-        with open(os.path.join(self.home, "runs", "demo-1.json")) as fh:
-            return json.load(fh)["candidate"]["commit"]
 
     def write_report(self, outcome, head, adapter="github", ref=None, task_id="demo-1",
                      detail="test report"):

@@ -1,5 +1,6 @@
 #!/bin/bash
-# Smoke: happy path on a disposable repo. No network, no model.
+# Smoke: happy path on a disposable repo. No network, no model: the tool
+# calls a worker would make are written out and passed to `t12 act`.
 set -euo pipefail
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -23,6 +24,23 @@ export PYTHONDONTWRITEBYTECODE=1
 "$T12" prepare --home "$HOME_DIR" --task "$ROOT/examples/task.json"
 
 WT="$HOME_DIR/worktrees/demo-1"
+
+# One worker output through `t12 act`; an optional patch is the diff a blind
+# worktree produced (green and refactor).
+act() {
+  local role="$1" session="$2" call="$3" patch="${4:-}"
+  printf '%s' "$call" > "$TMP/call.json"
+  if [ -n "$patch" ]; then
+    "$T12" act --home "$HOME_DIR" --task-id demo-1 --role "$role" --session "$session" \
+      --input "$TMP/call.json" --patch "$patch"
+  else
+    "$T12" act --home "$HOME_DIR" --task-id demo-1 --role "$role" --session "$session" \
+      --input "$TMP/call.json"
+  fi
+}
+
+act analyzer sess-analyzer '{"tool":"test_list_ready","args":{"items":[{"text":"greet returns a greeting for a name and for no name","kind":"behavior","source":"greet() with no argument returns '"'"'Hello, world!'"'"'","needed":"a constant greeting","criteria":[0,1]}],"gaps":[],"directives":[]}}'
+
 cat > "$WT/tests/test_greet.py" <<'EOF'
 import unittest
 from app import greet
@@ -34,18 +52,25 @@ class TestGreet(unittest.TestCase):
     def test_default(self):
         self.assertEqual(greet(), "Hello, world!")
 EOF
+act red sess-red '{"tool":"red_test_ready","args":{"item_id":"T1","test_file":"tests/test_greet.py","test_name":"test_default","last_assertion_line":9,"defeats":"a constant greeting","add_items":[]}}'
 
-"$T12" red --home "$HOME_DIR" --task-id demo-1 \
-  --test-path tests/test_greet.py \
-  --command "python3 -m unittest tests.test_greet -q" \
-  --marker FAILED --session sess-test-writer
+cat > "$TMP/green.patch" <<'EOF'
+diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -1,2 +1,2 @@
+ def greet(name="world"):
+-    return "Hello!"
++    return f"Hello, {name}!"
+EOF
+act green sess-green '{"tool":"green_ready","args":{"summary":"greet formats the name"}}' "$TMP/green.patch"
 
-printf 'def greet(name="world"):\n    return f"Hello, {name}!"\n' > "$WT/app.py"
-git -C "$WT" add . && git -C "$WT" commit -qm "feat: implement greet"
+: > "$TMP/empty.patch"
+act refactor sess-refactor '{"tool":"refactor_done","args":{"summary":"nothing to tidy","changed":false}}' "$TMP/empty.patch"
+act red sess-red '{"tool":"no_cheat_left","args":{"reason":"every case is covered"}}'
 
-"$T12" stage --home "$HOME_DIR" --task-id demo-1 --session sess-builder
-"$T12" gate --home "$HOME_DIR" --task-id demo-1 --name unit --session sess-qa
-"$T12" replay --home "$HOME_DIR" --task-id demo-1
+"$T12" tdd-step --home "$HOME_DIR" --task-id demo-1
+"$T12" gate --home "$HOME_DIR" --task-id demo-1
 
 cat > "$TMP/review.md" <<'EOF'
 Verdict: approve
@@ -57,8 +82,9 @@ EOF
 "$T12" review --home "$HOME_DIR" --task-id demo-1 --role reviewer \
   --session sess-reviewer --verdict approve --report "$TMP/review.md"
 
-"$T12" green --home "$HOME_DIR" --task-id demo-1
+"$T12" check --home "$HOME_DIR" --task-id demo-1
 "$T12" manifest --home "$HOME_DIR" --task-id demo-1
+"$T12" verify --home "$HOME_DIR" --task-id demo-1
 
 PHASE="$("$T12" status --home "$HOME_DIR" --task-id demo-1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["phase"])')"
 test "$PHASE" = "local-verified"

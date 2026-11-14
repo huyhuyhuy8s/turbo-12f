@@ -5,6 +5,7 @@ worker's claim about which commit was tested or reviewed.
 import contextlib
 import os
 import shutil
+import tempfile
 
 from . import runner
 from .errors import GitError
@@ -142,19 +143,90 @@ def detached_checkout(repo, path, commit):
         remove_worktree_force(repo, path)
 
 
-def commit_with_path(repo, rel_path, message):
-    """A commit of HEAD plus `rel_path` as it is in the worktree, built
-    in a private index. No branch and no real index move."""
+def commit_with_paths(repo, paths, message):
+    """A commit of HEAD plus `paths` as they are in the worktree (a
+    deletion included), built in a private index. No branch and no real
+    index move. `["."]` takes every change the worktree has."""
     index = os.path.join(git_ok(repo, "rev-parse", "--absolute-git-dir"), "t12-index")
     env = {"GIT_INDEX_FILE": index}
     try:
         git_ok(repo, "read-tree", "HEAD", env=env)
-        git_ok(repo, "add", "--", rel_path, env=env)
+        git_ok(repo, "add", "-A", "--", *paths, env=env)
         tree = git_ok(repo, "write-tree", env=env)
         return git_ok(repo, "commit-tree", tree, "-p", "HEAD", "-m", message)
     finally:
         if os.path.exists(index):
             os.remove(index)
+
+
+def commit_all(repo, message):
+    """A commit of HEAD plus every change in the worktree."""
+    return commit_with_paths(repo, ["."], message)
+
+
+def diff_numstat(repo, a, b):
+    """[(path, lines added)] between two commits. A binary file counts
+    as unboundedly many lines, so no size limit can wave it through."""
+    obs = git(repo, "diff", "--numstat", "-z", "--no-renames", a, b)
+    if obs["timed_out"] or obs["exit_code"] != 0:
+        raise GitError(f"git diff {a} {b} failed: {obs['stderr'].strip()[:500]}")
+    files = []
+    for record in obs["stdout"].split("\0"):
+        if record:
+            added, _, path = record.split("\t", 2)
+            files.append((path, int(added) if added.isdigit() else 10 ** 9))
+    return files
+
+
+def diff_stat(repo, a, b, paths=None):
+    """`git diff --stat` between two commits, optionally for `paths` only."""
+    spec = ["--", *paths] if paths else []
+    return git_ok(repo, "diff", "--stat", "--no-renames", a, b, *spec, strip=False)
+
+
+def tracked_files(repo):
+    obs = git(repo, "ls-files", "-z")
+    if obs["timed_out"] or obs["exit_code"] != 0:
+        raise GitError(f"git ls-files failed in {repo}: {obs['stderr'].strip()[:500]}")
+    return [p for p in obs["stdout"].split("\0") if p]
+
+
+def blob_map(repo, commit, keep):
+    """{path: blob} for every file at `commit` whose path `keep` accepts."""
+    obs = git(repo, "ls-tree", "-r", "-z", commit)
+    if obs["timed_out"] or obs["exit_code"] != 0:
+        raise GitError(f"git ls-tree {commit} failed: {obs['stderr'].strip()[:500]}")
+    blobs = {}
+    for record in obs["stdout"].split("\0"):
+        if record:
+            meta, path = record.split("\t", 1)
+            if keep(path):
+                blobs[path] = meta.split()[2]
+    return blobs
+
+
+def exists_at(repo, commit, rel_path):
+    return git(repo, "cat-file", "-e", f"{commit}:{rel_path}")["exit_code"] == 0
+
+
+def apply_patch(repo, patch_text):
+    """Apply a unified diff to the worktree files (the index is untouched).
+    Raises GitError when it does not apply cleanly."""
+    with tempfile.TemporaryDirectory(prefix="t12-patch-") as scratch:
+        path = os.path.join(scratch, "change.patch")
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write(patch_text)
+        for extra in (["--check"], []):
+            obs = git(repo, "apply", "--whitespace=nowarn", *extra, path)
+            if obs["timed_out"] or obs["exit_code"] != 0:
+                raise GitError(f"patch does not apply: {obs['stderr'].strip()[:500]}")
+
+
+def reset_hard(repo, commit):
+    """Branch, index and worktree back to `commit`; untracked files the
+    rejected step created are removed too."""
+    git_ok(repo, "reset", "--hard", "-q", commit)
+    git_ok(repo, "clean", "-fdq")
 
 
 def file_at(repo, commit, rel_path):

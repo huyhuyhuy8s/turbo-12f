@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""A stand-in for `omp --mode rpc` in the omp driver and runner tests: the
+JSONL subset of the protocol that adapters/omp_rpc.py speaks, no model and
+no network. It ignores every CLI flag except to record them.
+
+What it calls is decided by $FAKE_OMP_SCRIPT, a JSON list of
+`{"tool":..., "args":...}` steps (the next step answers each rejection;
+the last one repeats), or by $FAKE_OMP_DELEGATE, a command that gets the
+first prompt's text on stdin and prints one `{"tool":..., "args":...}`
+object (so tests/fake_model.py can stand in for the model). When the
+host refuses a call, the delegate is run again with `TOOL ERROR: <the
+refusal>` on stdin and its new call is made: the model fixing its work in
+the same session.
+With neither, it calls `done` with no arguments.
+
+$FAKE_OMP_MODE picks the behaviour:
+  ""              one host tool call per prompt, then done
+  loop            turns forever, never a call (until aborted or stdin closes)
+  bad-then-good   the first call has wrong arguments, the next is the real one
+  silent          the first prompt ends without a call; the follow-up calls
+  never           no call, ever; each prompt ends after one turn
+  ui              an extension_ui_request `confirm` is answered before calling
+  crash           exits 3 after `ready`, with a message on stderr
+
+$FAKE_OMP_LOG, when set, gets one JSONL record per line: `{"argv": [...],
+"pid": N}` first, then `{"frame": <stdin frame>}` for each frame received.
+"""
+
+import json
+import os
+import select
+import subprocess
+import shlex
+import sys
+import time
+
+MODE = os.environ.get("FAKE_OMP_MODE", "")
+LOG = os.environ.get("FAKE_OMP_LOG")
+MAX_LOOP_TURNS = 2000
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+def log(record):
+    if LOG:
+        with open(LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+
+
+class Stdin:
+    """Line reader on fd 0 that select() can wait on."""
+
+    def __init__(self):
+        self.buf = b""
+        self.eof = False
+
+    def readline(self, timeout=None):
+        """A line, "" at EOF, None when `timeout` passes first."""
+        while b"\n" not in self.buf:
+            if self.eof:
+                rest, self.buf = self.buf, b""
+                return rest.decode("utf-8", "replace")
+            if not select.select([0], [], [], timeout)[0]:
+                return None
+            chunk = os.read(0, 65536)
+            if not chunk:
+                self.eof = True
+            self.buf += chunk
+        line, self.buf = self.buf.split(b"\n", 1)
+        return line.decode("utf-8", "replace") + "\n"
+
+
+class Fake:
+    def __init__(self):
+        self.stdin = Stdin()
+        self.host_tools = []
+        self.builtin = []
+        self.steps = None
+        self.first_prompt = None
+        self.next_step = 0
+        self.bad_sent = False
+        self.prompts = 0
+        self.prompt_id = None
+        self.active = False
+        self.call_n = 0
+        self.current_call = None
+        self.ui_pending = None
+        self.ui_sent = False
+        self.error_text = None
+        self.last_bad = False
+
+    def run_delegate(self, text):
+        done = subprocess.run(shlex.split(os.environ["FAKE_OMP_DELEGATE"]), input=text,
+                              text=True, capture_output=True)
+        if done.returncode:
+            sys.stderr.write(done.stderr)
+            sys.stderr.write(f"fake omp: delegate exited {done.returncode}\n")
+            sys.exit(4)
+        return json.loads(done.stdout)
+
+    def script_steps(self):
+        if self.steps is None:
+            script = os.environ.get("FAKE_OMP_SCRIPT")
+            delegate = os.environ.get("FAKE_OMP_DELEGATE")
+            if script:
+                with open(script, encoding="utf-8") as fh:
+                    self.steps = json.load(fh)
+            elif delegate:
+                self.steps = [self.run_delegate(self.first_prompt)]
+            else:
+                self.steps = [{"tool": "done", "args": {}}]
+        return self.steps
+
+    def respond(self, frame, **data):
+        out = {"id": frame.get("id"), "type": "response", "command": frame["type"], "success": True}
+        if data:
+            out["data"] = data
+        emit(out)
+
+    def turn(self):
+        emit({"type": "turn_start"})
+        emit({"type": "turn_end"})
+
+    def finish(self, status):
+        self.active = False
+        self.current_call = None
+        emit({"type": "prompt_result", "id": self.prompt_id, "agentInvoked": True,
+              "status": status, "sessionSettled": True})
+        emit({"type": "session_settled"})
+
+    def handle(self, frame):
+        log({"frame": frame})
+        kind = frame.get("type")
+        if kind == "set_host_tools":
+            self.host_tools = [t["name"] for t in frame.get("tools", [])]
+            self.respond(frame, toolNames=self.host_tools)
+        elif kind == "get_state":
+            self.respond(frame, systemPrompt=["fake omp system prompt"],
+                         dumpTools=[{"name": n, "description": ""} for n in self.builtin + self.host_tools],
+                         model="fake/model", sessionId="fake-session")
+        elif kind == "abort":
+            self.respond(frame)
+            if self.active:
+                self.finish("aborted")
+        elif kind == "prompt":
+            self.on_prompt(frame)
+        elif kind == "host_tool_result":
+            self.on_result(frame)
+        elif kind == "extension_ui_response":
+            if self.ui_pending:
+                resume, self.ui_pending = self.ui_pending, None
+                resume()
+
+    def on_prompt(self, frame):
+        self.respond(frame)
+        self.prompts += 1
+        self.prompt_id = frame.get("id")
+        if self.first_prompt is None:
+            self.first_prompt = frame.get("message", "")
+        self.active = True
+        emit({"type": "agent_start"})
+        if MODE == "loop":
+            self.spin()
+        elif MODE == "never" or (MODE == "silent" and self.prompts == 1):
+            self.turn()
+            self.finish("completed")
+        else:
+            self.start_call()
+
+    def spin(self):
+        for _ in range(MAX_LOOP_TURNS):
+            self.turn()
+            time.sleep(0.005)
+            line = self.stdin.readline(0)
+            while line:
+                self.handle(json.loads(line))
+                if not self.active:
+                    return
+                line = self.stdin.readline(0)
+            if line == "":
+                return
+        self.finish("completed")
+
+    def start_call(self):
+        self.turn()
+        if MODE == "ui" and not self.ui_sent:
+            self.ui_sent = True
+            self.ui_pending = self.emit_call
+            emit({"type": "extension_ui_request", "id": "ui_1", "method": "confirm",
+                  "title": "Proceed?", "message": "fake omp asks a question"})
+        else:
+            self.emit_call()
+
+    def emit_call(self):
+        steps = self.script_steps()
+        if (os.environ.get("FAKE_OMP_DELEGATE") and not os.environ.get("FAKE_OMP_SCRIPT")
+                and self.error_text is not None and not self.last_bad):
+            steps.append(self.run_delegate("TOOL ERROR: " + self.error_text))
+            self.next_step = len(steps) - 1
+        self.error_text = None
+        step = steps[min(self.next_step, len(steps) - 1)]
+        args = step.get("args", {})
+        self.last_bad = False
+        if MODE == "bad-then-good" and not self.bad_sent:
+            self.bad_sent = True
+            self.last_bad = True
+            args = {"wrong": True}
+        else:
+            self.next_step += 1
+        self.call_n += 1
+        self.current_call = f"host_{self.call_n}"
+        emit({"type": "host_tool_call", "id": self.current_call, "toolCallId": f"tc_{self.call_n}",
+              "toolName": step["tool"], "arguments": args})
+
+    def on_result(self, frame):
+        if frame.get("id") != self.current_call:
+            return
+        emit({"type": "tool_execution_end"})
+        self.current_call = None
+        if frame.get("isError"):
+            content = (frame.get("result") or {}).get("content") or [{}]
+            self.error_text = content[0].get("text", "")
+            self.start_call()
+        else:
+            self.finish("completed")
+
+    def run(self):
+        argv = sys.argv[1:]
+        if "--tools" in argv:
+            self.builtin = [n for n in argv[argv.index("--tools") + 1].split(",") if n]
+        log({"argv": argv, "pid": os.getpid()})
+        emit({"type": "ready", "protocolVersion": 1})
+        if MODE == "crash":
+            sys.stderr.write("fake omp crashed: no model configured\n")
+            sys.stderr.flush()
+            sys.exit(3)
+        while True:
+            line = self.stdin.readline()
+            if line == "":
+                return
+            if not line.strip():
+                continue
+            self.handle(json.loads(line))
+
+
+if __name__ == "__main__":
+    Fake().run()

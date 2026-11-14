@@ -11,8 +11,8 @@ The rest is written to that agent.
 
 You are the **operator**: you set up the factory, feed it issues, keep
 it moving, and bring finished work to the human. You are not a worker.
-The factory's runner calls models for the test-writer, builder and
-reviewer roles; you never write the product's code, tests or reviews
+The factory's runner calls models for the analyzer, red, green,
+refactor and reviewer roles; you never write the product's code, tests or reviews
 yourself. That separation is the evidence the factory sells.
 
 Three things belong to the human, always:
@@ -62,12 +62,16 @@ choices, the human picks:
   Tasks still branch from `main`, so pull requests carry no profile.
 
 Write the profile from the product's own docs (its `AGENTS.md`,
-`CONTRIBUTING.md`, CI workflow): gates are the commands the project
-already uses to check a change, as argv arrays. The README section
-"Project profile" lists every key. Run each gate command once in a
-clean checkout before you rely on it; gates run sandboxed (Landlock on
-Linux), and a test that binds a port or reads the user's home can fail
-there and nowhere else.
+`CONTRIBUTING.md`, CI workflow). Three things are the factory's TDD
+lane and must be right: `test_command`, the argv that runs the
+tests; `test_globs`, which files are tests (red writes them, green
+and refactor never see them); and `lint_command`, the lint argv or
+`null`. Gates are the commands the project already uses to check a
+change (the existing suite, e2e), as argv arrays. The README
+sections "The TDD lane" and "Project profile" list every key. Run
+each of these commands once in a clean checkout before you rely on
+it; they run sandboxed (Landlock on Linux), and a test that binds a
+port or reads the user's home can fail there and nowhere else.
 
 ```sh
 factory/bin/t12 init --repo product --home state --trunk <main|t12-trunk>
@@ -106,16 +110,17 @@ runs alone.
 ## 3. Run
 
 ```sh
-python3 factory/adapters/runner.py --home state --queue queue --max <N> \
-  --model-cmd "<model command>"
+python3 factory/adapters/runner.py --home state --queue queue --max <N>
 ```
 
-The model command reads a prompt on stdin and prints the reply, and
-must be able to edit files and run `git commit` in the worktree it is
-started in, for example `claude -p --permission-mode bypassPermissions`
-or `codex exec --dangerously-bypass-approvals-and-sandbox`. For
-`claude` and `codex exec` the runner holds the reply to the role's
-tool-call schema; its first line says whether it does.
+Every worker step is one `omp --mode rpc` session; omp must be
+installed and on the `PATH`. Once per machine, log the worker profile
+in: `omp --profile t12-worker`, then `/login`, and leave. Until then a
+worker step is reported as an error and the run does not move.
+`--omp-profile`, `--omp-model` and `--omp-max-cost` change the
+defaults (see `adapters/README.md`, "omp worker"). The runner runs
+the deterministic steps (`tdd-step`, `gate`, `check`) itself and
+builds a blind worktree for green and refactor.
 
 The runner prints a line only when a step ends, and a model step takes
 minutes. Silence is normal. To see progress, read
@@ -130,12 +135,14 @@ After the runner exits, run `board` and act on each row:
 | Row shows | Action |
 |---|---|
 | phase `local-verified` | Step 5 |
-| next `human: <question>` | Relay the question. When the human answers: `t12 resume --home state --task-id <id> --answer "<their words>"`, then step 3 |
-| next names a role (`builder: stage`) | The runner left a step that did not move the run. Run step 3 again once. If the row is unchanged, read the last events and `t12 status --home state --task-id <id>`, and report what failed |
-| next `stopped: ...`, or a budget column at 0 | Report the reason from `t12 status`. Starting over is the human's call: `t12 prepare --home state --task queue/<id>.json --supersede`. Add `--carry` when the stopped run had questions answered or unfinished builder work (for example the builder found a defect in the test): the new run's builder gets the old patch as a starting point, and every role sees the answers. |
+| next `human: <question>` | Relay the question. A `repair-cap` question means the run spent its repairs (gate failures and review rounds): show the last gate output or review findings from `t12 status` too. When the human answers: `t12 resume --home state --task-id <id> --answer "<their words>"`, then step 3 |
+| next names a role (`green: green`) | The runner left a step that did not move the run. Run step 3 again once. If the row is unchanged, read the last events and `t12 status --home state --task-id <id>`, and report what failed |
+| next `stopped: ...`, or a budget column at 0 | Report the reason from `t12 status`. Starting over is the human's call: `t12 prepare --home state --task queue/<id>.json --supersede`. Add `--carry` when the stopped run had questions answered or unfinished work (for example the analyzer found a defect in the task): the new run's analyzer gets the old patch as a starting point, and every role sees the answers. |
 
-A worker reply that is rejected (`worker output is not valid JSON`, a
-refused step) is recorded as evidence and costs one try; it is not
+A worker call that the factory refuses (a malformed tool call, a
+step the state machine does not allow) comes back to the worker as
+a tool error in the same session, and is recorded as evidence. After
+three refusals the session ends and the run does not move. It is not
 yours to fix by hand.
 
 Done when every row is `local-verified`, waiting on the human, or
@@ -188,5 +195,9 @@ state home.
 - The time budget counts wall-clock time, model calls included. A
   product with a slow test suite may need a larger `time_limit_s` in
   the profile.
+- A red-green-refactor cycle costs about five operations; the built-in
+  `op_limit` is 300. A run that pauses because a role used up its
+  `attempt_limit` (default 3) is waiting for a human answer, not
+  broken: relay the question.
 - To drive a single run by hand instead of the runner, follow
   `skills/orchestrator/SKILL.md`.
