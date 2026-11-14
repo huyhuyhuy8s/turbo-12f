@@ -101,9 +101,11 @@ class NextStepTest(unittest.TestCase):
     def test_every_tdd_step_names_its_actor(self):
         expected = {
             "analyzer": "analyzer: analyze",
+            "lanes": "lanes: in flight",
             "red": "red: red",
             "green": "green: green",
             "refactor": "refactor: refactor",
+            "integration-green": "green: green",
             "final": "tdd-step",
             "done": "tdd-step",
         }
@@ -204,6 +206,161 @@ class NewTddTest(unittest.TestCase):
         tdd["attempts"]["green"] = 0
         self.assertEqual(model.bump_attempt(tdd, "red"), 1)
         self.assertEqual(tdd["attempts_peak"], 2)
+
+
+SPEC = {"id": "U1", "owns": ["src/a.py"], "tests": ["tests/test_a.py"], "after": [],
+        "needed": ""}
+ITEM = {"text": "greets", "kind": "behavior", "source": "AC 1", "needed": "", "criteria": [0]}
+
+
+class LaneStateTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = self.tmp.name
+        os.makedirs(os.path.join(self.home, "runs"))
+        self.run = _tdd_run("tdd", "lanes")
+        self.run["task_id"] = "demo-1"
+        self.run["tdd"]["last_good_commit"] = "abc"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_lane_is_a_tdd_record_with_a_unit_and_its_own_names(self):
+        lane = model.new_lane(self.home, self.run, SPEC, "active")
+        self.assertEqual((lane["unit"], lane["status"], lane["step"]), ("U1", "active", "red"))
+        self.assertEqual((lane["owns"], lane["tests"], lane["after"]),
+                         (["src/a.py"], ["tests/test_a.py"], []))
+        self.assertEqual(lane["branch"], "t12/demo-1/U1")
+        self.assertEqual(lane["worktree"], os.path.join(self.home, "worktrees", "demo-1@U1"))
+        self.assertEqual((lane["budget"], lane["last_good_commit"], lane["fork_commit"]),
+                         ({}, "abc", None))
+        for key in model.TDD_SETTINGS:
+            self.assertEqual(lane[key], self.run["tdd"][key])
+        for key in ("items", "history", "locked", "attempts", "cycle"):
+            self.assertIn(key, lane)
+
+    def test_lane_items_are_prefixed_with_the_unit(self):
+        lane = model.new_lane(self.home, self.run, SPEC, "active")
+        ids = [model.new_item(lane, ITEM)["id"] for _ in range(2)]
+        self.assertEqual(ids, ["U1-T1", "U1-T2"])
+        self.assertEqual(model.new_item(self.run["tdd"], ITEM)["id"], "T1")
+
+    def test_a_lane_record_round_trips_and_lists_in_unit_order(self):
+        for unit in ("U2", "U1"):
+            lane = model.new_lane(self.home, self.run, {**SPEC, "id": unit}, "waiting")
+            model.save_lane(self.home, lane, "demo-1")
+        self.assertEqual([lane["unit"] for lane in model.list_lanes(self.home, "demo-1")],
+                         ["U1", "U2"])
+        self.assertEqual(model.load_lane(self.home, "demo-1", "U1")["status"], "waiting")
+        self.assertEqual(model.list_lanes(self.home, "other"), [])
+        with self.assertRaises(StateError):
+            model.load_lane(self.home, "demo-1", "U9")
+
+    def test_the_lane_table_row_follows_the_lane(self):
+        lane = model.new_lane(self.home, self.run, SPEC, "waiting")
+        model.sync_lane_row(self.run, lane)
+        self.assertEqual(self.run["lanes"], [{"unit": "U1", "status": "waiting",
+                                              "branch": "t12/demo-1/U1", "fork_commit": None,
+                                              "tip": None, "merged_commit": None}])
+        lane.update(status="active", fork_commit="abc", last_good_commit="def")
+        model.sync_lane_row(self.run, lane)
+        self.assertEqual(len(self.run["lanes"]), 1)
+        self.assertEqual((self.run["lanes"][0]["status"], self.run["lanes"][0]["tip"]),
+                         ("active", "def"))
+
+    def test_a_lane_lock_is_separate_from_the_run_lock(self):
+        model.save_lane(self.home, model.new_lane(self.home, self.run, SPEC, "active"), "demo-1")
+        model.save_lane(self.home, model.new_lane(self.home, self.run, {**SPEC, "id": "U2"},
+                                                  "active"), "demo-1")
+        with model.lane_lock(self.home, "demo-1", "U1"):
+            self.assertTrue(model.is_lane_busy(self.home, "demo-1", "U1"))
+            self.assertFalse(model.is_lane_busy(self.home, "demo-1", "U2"))
+            self.assertFalse(model.is_busy(self.home, "demo-1"))
+            with model.run_lock(self.home, "demo-1"), model.lane_lock(self.home, "demo-1", "U2"):
+                pass
+        self.assertFalse(model.is_lane_busy(self.home, "demo-1", "U1"))
+
+    def test_a_held_lane_lock_fails_as_busy(self):
+        model.save_lane(self.home, model.new_lane(self.home, self.run, SPEC, "active"), "demo-1")
+        original, model.LOCK_WAIT_S = model.LOCK_WAIT_S, 0.1
+        try:
+            with model.lane_lock(self.home, "demo-1", "U1"):
+                with self.assertRaisesRegex(StateError, "busy"):
+                    with model.lane_lock(self.home, "demo-1", "U1"):
+                        pass
+        finally:
+            model.LOCK_WAIT_S = original
+
+    def test_a_lane_lock_needs_a_lane(self):
+        with self.assertRaises(StateError):
+            with model.lane_lock(self.home, "demo-1", "U1"):
+                pass
+        with self.assertRaises(StateError):
+            with model.lane_lock(self.home, "demo-1", "../x"):
+                pass
+
+    def test_the_integration_lock_nests_inside_a_lane_lock_and_outside_the_run_lock(self):
+        model.save_lane(self.home, model.new_lane(self.home, self.run, SPEC, "active"), "demo-1")
+        with model.lane_lock(self.home, "demo-1", "U1"), \
+                model.integration_lock(self.home, "demo-1"), model.run_lock(self.home, "demo-1"):
+            pass
+
+    def test_lane_ops_are_counted_in_each_lane(self):
+        for unit, ops in (("U1", 2), ("U2", 3)):
+            lane = model.new_lane(self.home, self.run, {**SPEC, "id": unit}, "active")
+            lane["ops_used"] = ops
+            model.save_lane(self.home, lane, "demo-1")
+        self.assertEqual(model.lane_ops_used(self.home, "demo-1"), 5)
+
+    def test_lane_next_steps(self):
+        lane = model.new_lane(self.home, self.run, {**SPEC, "after": ["U0"]}, "waiting")
+        self.assertEqual(model.lane_next(self.run, lane), "waiting: after U0")
+        lane["status"] = "active"
+        for step in ("red", "green", "refactor"):
+            lane["step"] = step
+            self.assertEqual(model.lane_next(self.run, lane), f"{step}: {step}")
+        lane.update(step="final", status="done")
+        self.assertEqual(model.lane_next(self.run, lane), "tdd-step: integrate")
+        lane.update(step="red", status="paused", escalations=[
+            {"question": "which?", "answer": None}])
+        self.assertEqual(model.lane_next(self.run, lane), "human: answer 'which?'")
+
+    def test_the_run_waits_on_lanes_until_every_one_is_merged(self):
+        self.run["lanes"] = [{"unit": "U1", "status": "merged"}, {"unit": "U2", "status": "done"}]
+        self.assertEqual(model.next_step(self.run), "lanes: in flight")
+        self.run["lanes"][1]["status"] = "merged"
+        self.assertEqual(model.next_step(self.run), "tdd-step")
+
+    def test_archive_takes_the_lanes_with_the_run(self):
+        model.save_lane(self.home, model.new_lane(self.home, self.run, SPEC, "active"), "demo-1")
+        model.save_run(self.home, self.run)
+        base = model.archive_run(self.home, self.run)
+        self.assertEqual(model.list_lanes(self.home, "demo-1"), [])
+        self.assertTrue(os.path.isfile(os.path.join(self.home, "runs", base, "lanes", "U1.json")))
+
+    def test_a_run_of_an_older_version_is_refused(self):
+        self.assertEqual(model.VERSION, 3)
+        self.run["version"] = 2
+        model.save_run(self.home, self.run)
+        with self.assertRaisesRegex(StateError, "unsupported run version"):
+            model.load_run(self.home, "demo-1")
+
+
+class MaxLanesTest(unittest.TestCase):
+    def test_the_default_is_three_and_a_task_or_profile_sets_it(self):
+        self.assertEqual(model.new_tdd({}, {"test_command": TEST_COMMAND})["max_lanes"], 3)
+        merged = profile.apply(profile.parse(json.dumps(
+            {"version": 1, "test_command": TEST_COMMAND, "max_lanes": 2})), {"id": "t"})
+        self.assertEqual(model.new_tdd(merged, merged)["max_lanes"], 2)
+        merged = profile.apply(profile.parse(json.dumps(
+            {"version": 1, "test_command": TEST_COMMAND, "max_lanes": 2})),
+            {"id": "t", "max_lanes": 1})
+        self.assertEqual(model.new_tdd(merged, merged)["max_lanes"], 1)
+
+    def test_max_lanes_must_be_a_positive_integer(self):
+        for bad in (0, -1, True, "2"):
+            with self.assertRaises(StateError):
+                profile.parse(json.dumps({"version": 1, "max_lanes": bad}))
 
 
 class NewRunTest(unittest.TestCase):
@@ -751,6 +908,68 @@ class ApplicableSkillsTest(unittest.TestCase):
         listy = self.commit({"package.json": "[]"})
         with self.assertRaises(StateError):
             profile.applicable_skills(run, "red", self.repo, listy)
+
+
+class IntegrationStateTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = self.tmp.name
+        os.makedirs(os.path.join(self.home, "runs"))
+        self.run = _tdd_run("tdd", "lanes")
+        self.run["task_id"] = "demo-1"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def lane(self, unit, **fields):
+        lane = model.new_lane(self.home, self.run, {**SPEC, "id": unit}, "active")
+        lane.update(fields)
+        return lane
+
+    def test_the_lane_that_finished_first_integrates_first_and_ties_go_by_unit_id(self):
+        done = {"status": "done", "step": "final"}
+        lanes = [self.lane("U1", finished_at=5.0, **done), self.lane("U2", finished_at=3.0, **done),
+                 self.lane("U3", step="red")]
+        self.assertEqual(model.integrate_head(lanes), "U2")
+        lanes[0]["finished_at"] = 3.0
+        self.assertEqual(model.integrate_head(lanes), "U1")
+        lanes[0]["status"] = lanes[1]["status"] = "merged"
+        self.assertIsNone(model.integrate_head(lanes))
+
+    def test_a_finished_lane_waits_for_the_head_and_for_the_integration_green(self):
+        done = {"status": "done", "step": "final"}
+        lanes = [self.lane("U1", finished_at=1.0, **done), self.lane("U2", finished_at=2.0, **done)]
+        self.assertEqual(model.lane_next(self.run, lanes[0], lanes), "tdd-step: integrate")
+        self.assertEqual(model.lane_next(self.run, lanes[1], lanes), "waiting: after U1")
+        self.run["tdd"].update(step="integration-green", pending_merge={"unit": "U1", "owns": []})
+        self.assertEqual(model.lane_next(self.run, lanes[0], lanes), "green: green")
+        self.assertEqual(model.lane_next(self.run, lanes[1], lanes),
+                         "waiting: after integration-green")
+        self.assertEqual(model.pending_merge(self.run)["unit"], "U1")
+        self.run["tdd"]["step"] = "lanes"
+        self.assertIsNone(model.pending_merge(self.run))
+        self.assertEqual(model.lane_next(self.run, self.lane("U1", status="merged")), "merged")
+
+    def test_merged_lanes_ops_are_not_counted_twice(self):
+        for unit, status, ops in (("U1", "merged", 4), ("U2", "active", 3)):
+            model.save_lane(self.home, self.lane(unit, status=status, ops_used=ops), "demo-1")
+        self.assertEqual(model.lane_ops_used(self.home, "demo-1"), 3)
+
+    def test_a_run_counts_its_merge_attempts_and_failures_in_its_measurements(self):
+        run = _tdd_run("tdd", "lanes")
+        run["budgets"]["started_at"] = time.time()
+        self.assertEqual((run["tdd"]["integrations"], run["tdd"]["integration_failures"]), (0, []))
+        run["tdd"]["integrations"] = 4
+        run["tdd"]["integration_failures"] = [{"route": "own-tests"}, {"route": "conflict"}]
+        measured = model.record_measurements(run)
+        self.assertEqual((measured["integrations"], measured["integration_failures"]), (4, 2))
+
+    def test_a_calibrated_max_lanes_is_the_default_the_task_and_profile_override(self):
+        self.assertEqual(model.new_tdd({}, {"test_command": TEST_COMMAND}, "b", 2)["max_lanes"], 2)
+        self.assertEqual(model.new_tdd({}, {"test_command": TEST_COMMAND, "max_lanes": 3}, "b",
+                                       2)["max_lanes"], 3)
+        self.assertEqual(model.new_tdd({}, {"test_command": TEST_COMMAND}, "b")["max_lanes"],
+                         model.DEFAULT_MAX_LANES)
 
 
 if __name__ == "__main__":

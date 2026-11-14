@@ -7,7 +7,7 @@ import os
 import tempfile
 import unittest
 
-from t12 import limits, store
+from t12 import limits, model, retro, store
 from t12.errors import StateError
 
 
@@ -93,7 +93,7 @@ class RecommendTest(unittest.TestCase):
         self.assertIsNone(rec["stats"]["cycle_limit"])
         self.assertIn("cycles n/a", limits.report_text("/h", {
             "runs": [], "unreadable": [], "completed": completed, "censored": [],
-            "cap_hits": {"repair": 0, "ops": 0, "time": 0}}, rec))
+            "integration": {}, "cap_hits": {"repair": 0, "ops": 0, "time": 0}}, rec))
 
     def test_the_builtin_defaults(self):
         self.assertEqual(limits.BUILTIN_DEFAULTS,
@@ -243,6 +243,111 @@ class LimitsFileTest(unittest.TestCase):
         store.save_json(limits.limits_path(self.home), {"op_limit": 0})
         with self.assertRaises(StateError):
             limits.load_limits(self.home)
+
+
+class IntegrationRateTest(unittest.TestCase):
+    """Step 6: merge failures per project, the calibrated max_lanes, and retro."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.home = self.tmp.name
+        os.makedirs(os.path.join(self.home, "runs"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _run(self, name, repo, attempts, failures):
+        record = _record(name, "stopped")
+        record["repo"] = repo
+        record["tdd"] = {"integrations": attempts,
+                         "integration_failures": [{"unit": "U1", "route": route}
+                                                  for route in failures]}
+        with open(os.path.join(self.home, "runs", f"{name}.json"), "w") as fh:
+            json.dump(record, fh)
+
+    @staticmethod
+    def _data(attempts, failures):
+        return {"integration": {"/p": {"attempts": attempts, "failures": failures,
+                                       "rate": failures / attempts if attempts else 0,
+                                       "routes": {}}}}
+
+    def test_collect_counts_merge_attempts_and_failures_per_project_and_route(self):
+        self._run("a1", "/p/a", 2, [])
+        self._run("a2", "/p/a", 3, ["own-tests", "integration-green"])
+        self._run("b1", "/p/b", 1, ["conflict"])
+        self._run("serial", "/p/a", 0, [])
+        projects = limits.collect(self.home)["integration"]
+        self.assertEqual(projects["/p/a"], {"attempts": 5, "failures": 2, "rate": 0.4,
+                                            "routes": {"own-tests": 1, "integration-green": 1}})
+        self.assertEqual(projects["/p/b"]["routes"], {"conflict": 1})
+        self.assertEqual(sorted(projects), ["/p/a", "/p/b"])
+
+    def test_a_home_without_lane_merges_reports_none(self):
+        self._run("serial", "/p/a", 0, [])
+        data = limits.collect(self.home)
+        self.assertEqual(data["integration"], {})
+        self.assertIsNone(limits.recommend_lanes(data))
+        self.assertNotIn("integration failures", limits.report_text(self.home, data, None))
+
+    def test_max_lanes_falls_with_the_failure_rate(self):
+        self.assertIsNone(limits.recommend_lanes(self._data(2, 2)))
+        for attempts, failures, expected in ((10, 0, 3), (10, 2, 3), (10, 3, 2), (10, 5, 2),
+                                             (10, 6, 1), (3, 3, 1)):
+            with self.subTest(attempts=attempts, failures=failures):
+                rec = limits.recommend_lanes(self._data(attempts, failures))
+                self.assertEqual(rec["max_lanes"], expected)
+                self.assertEqual((rec["attempts"], rec["failures"]), (attempts, failures))
+        self.assertEqual(limits.LANE_STEPS[0][1], model.DEFAULT_MAX_LANES)
+
+    def test_the_report_names_the_rate_and_the_recommended_max_lanes(self):
+        self._run("a2", "/p/a", 5, ["own-tests", "integration-green"])
+        data = limits.collect(self.home)
+        text = limits.report_text(self.home, data, None)
+        self.assertIn("integration failures: /p/a: 2 of 5 merges (40%); routes: "
+                      "integration-green 1, own-tests 1", text)
+        self.assertIn("recommended max_lanes=2", text)
+
+    def test_a_calibrated_max_lanes_is_saved_and_loaded(self):
+        recommended = {"time_limit_s": 600, "op_limit": 20, "repair_cap": 2,
+                       "cycle_limit": 5, "attempt_limit": 2}
+        rec = {"sample": 3, "stats": {}, "recommended": recommended}
+        lanes = limits.recommend_lanes(self._data(10, 6))
+        saved = limits.save_limits(self.home, rec, lanes)
+        self.assertEqual((saved["max_lanes"], saved["lanes_calibrated_from"]["rate"]), (1, 0.6))
+        self.assertEqual(limits.load_limits(self.home)["max_lanes"], 1)
+        limits.save_limits(self.home, rec)
+        self.assertNotIn("max_lanes", limits.load_limits(self.home))
+        store.save_json(limits.limits_path(self.home), {"max_lanes": 0})
+        with self.assertRaises(StateError):
+            limits.load_limits(self.home)
+
+    def test_retro_reports_the_failure_rate_per_project(self):
+        store.save_json(os.path.join(self.home, "config.json"), {"repo": "/work/product"})
+        events = [("tdd-integrated", {"via": "merge", "unit": "U1"}),
+                  ("tdd-integrated", {"via": "merge", "unit": "U2"}),
+                  ("tdd-integration-failed", {"route": "own-tests", "unit": "U3"}),
+                  ("tdd-integration-rerouted", {"route": "scope-refused", "unit": "U3"}),
+                  ("tdd-integrated", {"via": "integration-green", "unit": "U3"}),
+                  ("tdd-integration-conflict", {"unit": "U4", "files": ["b.py"]})]
+        with open(os.path.join(self.home, "runs", "demo.events.jsonl"), "w") as fh:
+            for kind, detail in events:
+                fh.write(json.dumps({"type": kind, "task_id": "demo", "detail": detail}) + "\n")
+        data = retro.collect(self.home)
+        self.assertEqual(data["integration"], {"/work/product": {
+            "attempts": 4, "failures": 2, "rate": 0.5,
+            "routes": {"scope-refused": 1, "conflict": 1}}})
+        found = retro.proposals(data, 3)
+        self.assertEqual([p["kind"] for p in found if p["kind"] == "integration"], ["integration"])
+        self.assertEqual([p for p in retro.proposals(data, 5) if p["kind"] == "integration"], [])
+        self.assertIn("Lane merges in /work/product: 2 of 4 failed (50%)",
+                      retro.report_text(self.home, data, found))
+
+    def test_retro_without_lane_merges_has_no_integration_section(self):
+        with open(os.path.join(self.home, "runs", "demo.events.jsonl"), "w") as fh:
+            fh.write(json.dumps({"type": "stopped", "task_id": "demo", "detail": {"reason": "x"}}) + "\n")
+        data = retro.collect(self.home)
+        self.assertEqual(data["integration"], {})
+        self.assertNotIn("Lane merges", retro.report_text(self.home, data, []))
 
 
 if __name__ == "__main__":

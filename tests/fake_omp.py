@@ -21,6 +21,9 @@ $FAKE_OMP_MODE picks the behaviour:
   never           no call, ever; each prompt ends after one turn
   ui              an extension_ui_request `confirm` is answered before calling
   crash           exits 3 after `ready`, with a message on stderr
+  rate-limit      the provider refuses the first prompt (see rate_limit); the first
+                  $FAKE_OMP_RATE_LIMITS sessions only, counted in $FAKE_OMP_STATE (a
+                  directory), then the sessions behave as in the default mode
 
 $FAKE_OMP_LOG, when set, gets one JSONL record per line: `{"argv": [...],
 "pid": N}` first, then `{"frame": <stdin frame>}` for each frame received.
@@ -37,6 +40,8 @@ import time
 MODE = os.environ.get("FAKE_OMP_MODE", "")
 LOG = os.environ.get("FAKE_OMP_LOG")
 MAX_LOOP_TURNS = 2000
+RATE_ERROR = ('429 {"type":"error","error":{"type":"rate_limit_error",'
+              '"message":"Number of request tokens has exceeded your per-minute rate limit"}}')
 
 
 def emit(obj):
@@ -162,7 +167,9 @@ class Fake:
             self.first_prompt = frame.get("message", "")
         self.active = True
         emit({"type": "agent_start"})
-        if MODE == "loop":
+        if MODE == "rate-limit" and self.prompts == 1 and self.claim_rate_limit():
+            self.rate_limit()
+        elif MODE == "loop":
             self.spin()
         elif MODE == "never" or (MODE == "silent" and self.prompts == 1):
             self.turn()
@@ -183,6 +190,43 @@ class Fake:
             if line == "":
                 return
         self.finish("completed")
+
+    def claim_rate_limit(self):
+        """Whether this session is one of the first $FAKE_OMP_RATE_LIMITS (all of them when
+        unset) to be refused. Sessions are separate processes, so each limit is claimed by
+        creating a marker file under $FAKE_OMP_STATE (O_EXCL: one claimant each)."""
+        limits = os.environ.get("FAKE_OMP_RATE_LIMITS")
+        if limits is None:
+            return True
+        for n in range(int(limits)):
+            try:
+                os.close(os.open(os.path.join(os.environ["FAKE_OMP_STATE"], f"rate-limit-{n}"),
+                                 os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            except FileExistsError:
+                continue
+            return True
+        return False
+
+    def rate_limit(self):
+        """What omp sends when the provider refuses. $FAKE_OMP_RATE_STYLE: `retry` (default),
+        omp's own retries run out (auto_retry_start, auto_retry_end success false); `stop`, the
+        prompt just ends on an assistant message that stopped with the error; `stall`, omp is
+        still retrying and never gives up."""
+        text = os.environ.get("FAKE_OMP_RATE_ERROR", RATE_ERROR)
+        message = {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": text}
+        emit({"type": "turn_start"})
+        emit({"type": "message_end", "message": message})
+        emit({"type": "turn_end", "message": message, "toolResults": []})
+        style = os.environ.get("FAKE_OMP_RATE_STYLE", "retry")
+        if style == "stop":
+            self.finish("completed")
+            return
+        emit({"type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 1,
+              "errorMessage": text})
+        if style == "stall":
+            self.spin()
+            return
+        emit({"type": "auto_retry_end", "success": False, "attempt": 3, "finalError": text})
 
     def start_call(self):
         self.turn()

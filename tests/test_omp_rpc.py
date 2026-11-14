@@ -84,8 +84,8 @@ class RunWorkerCase(unittest.TestCase):
         return path
 
     def run_fake(self, mode="", steps=(), delegate=None, on_call=checker, max_turns=50, timeout_s=10,
-                 prompt="Do the task.", **kwargs):
-        env = dict(os.environ, FAKE_OMP_MODE=mode, FAKE_OMP_LOG=self.log)
+                 prompt="Do the task.", env=None, **kwargs):
+        env = dict(os.environ, FAKE_OMP_MODE=mode, FAKE_OMP_LOG=self.log, **(env or {}))
         if steps:
             env["FAKE_OMP_SCRIPT"] = self.script(*steps)
         if delegate:
@@ -206,6 +206,49 @@ class RunWorkerCase(unittest.TestCase):
         out = self.run_fake("loop", max_turns=10 ** 9, timeout_s=0.5)
         self.assertEqual(out.status, "timeout")
         self.assertGreater(out.turns, 0)
+        self.assertProcessGone()
+
+    def test_omp_giving_up_its_own_retries_is_rate_limited(self):
+        out = self.run_fake("rate-limit", steps=[{"tool": "done", "args": {}}])
+        self.assertEqual(out.status, "rate-limited")
+        self.assertIn("rate_limit_error", out.detail)
+        self.assertIn("gave up retrying", out.detail)
+        self.assertEqual(out.calls, [])
+        self.assertEqual(len(self.frames("abort")), 1)
+        self.assertProcessGone()
+
+    def test_a_prompt_that_ends_on_a_provider_error_is_rate_limited(self):
+        for text in ('429 {"error": {"type": "rate_limit_error"}}',
+                     '529 {"type":"overloaded_error","message":"Overloaded"}',
+                     "Too Many Requests"):
+            with self.subTest(text=text):
+                if os.path.exists(self.log):
+                    os.remove(self.log)
+                out = self.run_fake("rate-limit", env={"FAKE_OMP_RATE_STYLE": "stop",
+                                                       "FAKE_OMP_RATE_ERROR": text})
+                self.assertEqual((out.status, out.detail), ("rate-limited", text))
+                self.assertEqual(len(self.frames("prompt")), 1)
+
+    def test_other_assistant_errors_are_not_rate_limits(self):
+        out = self.run_fake("rate-limit", steps=[{"tool": "done", "args": {}}],
+                            env={"FAKE_OMP_RATE_STYLE": "stop",
+                                 "FAKE_OMP_RATE_ERROR": "401 invalid x-api-key"})
+        self.assertNotEqual(out.status, "rate-limited")
+        self.assertEqual(out.status, "accepted")
+
+    def test_a_session_after_the_scripted_limits_runs_normally(self):
+        state = os.path.join(self.tmp.name, "state")
+        os.makedirs(state)
+        env = {"FAKE_OMP_RATE_LIMITS": "1", "FAKE_OMP_STATE": state}
+        steps = [{"tool": "done", "args": {"x": 6}}]
+        first = self.run_fake("rate-limit", steps=steps, env=env)
+        second = self.run_fake("rate-limit", steps=steps, env=env)
+        self.assertEqual((first.status, second.status), ("rate-limited", "accepted"))
+
+    def test_a_retry_still_in_flight_at_the_wall_clock_is_rate_limited_not_a_timeout(self):
+        out = self.run_fake("rate-limit", timeout_s=0.5, max_turns=10 ** 9,
+                            env={"FAKE_OMP_RATE_STYLE": "stall"})
+        self.assertEqual(out.status, "rate-limited")
         self.assertProcessGone()
 
     def test_the_transcript_records_both_directions(self):

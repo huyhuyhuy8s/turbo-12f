@@ -5,6 +5,7 @@ on disk (Factor 12): load state, apply one event, persist atomically.
 """
 
 import contextlib
+import copy
 import fcntl
 import json
 import os
@@ -16,7 +17,7 @@ from . import profile as profile_mod
 from . import store
 from .errors import BudgetError, StateError
 
-VERSION = 2
+VERSION = 3
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 PROVENANCE = "observed-helper-execution"
 
@@ -47,7 +48,9 @@ TRANSITIONS = {
     "stopped": set(),
 }
 
-TDD_STEPS = ("analyzer", "red", "green", "refactor", "final", "done")
+INTEGRATION_GREEN = "integration-green"
+TDD_STEPS = ("analyzer", "lanes", "red", "green", "refactor", INTEGRATION_GREEN, "final", "done")
+LANE_STATUSES = ("waiting", "active", "done", "paused", "merged")
 TDD_MODES = ("initial", "repair", "review-fix")
 ATTEMPT_STEPS = ("analyzer", "red", "green", "refactor")
 # Where a repair re-enters the loop, by what sent the run back.
@@ -71,10 +74,39 @@ def lock_path(home, task_id):
     return os.path.join(home, "runs", f"{task_id}.lock")
 
 
-def is_busy(home, task_id):
-    """True while another command holds the run's lock."""
+def lanes_dir(home, task_id):
+    return os.path.join(home, "runs", task_id, "lanes")
+
+
+def lane_path(home, task_id, unit):
+    return os.path.join(lanes_dir(home, task_id), f"{unit}.json")
+
+
+def lane_lock_path(home, task_id, unit):
+    return os.path.join(lanes_dir(home, task_id), f"{unit}.lock")
+
+
+def integration_lock_path(home, task_id):
+    return os.path.join(home, "runs", task_id, "integration.lock")
+
+
+def lane_branch(task_id, unit):
+    return f"t12/{task_id}/{unit}"
+
+
+def lane_worktree(home, task_id, unit):
+    return os.path.join(home, "worktrees", f"{task_id}@{unit}")
+
+
+def _check_id(kind, value):
+    if not isinstance(value, str) or not TASK_ID_RE.match(value):
+        raise StateError(f"{kind} id must match {TASK_ID_RE.pattern}: {value!r}")
+
+
+def _probe(path):
+    """True while another process holds the flock on `path`."""
     try:
-        fd = os.open(lock_path(home, task_id), os.O_RDWR)
+        fd = os.open(path, os.O_RDWR)
     except FileNotFoundError:
         return False
     try:
@@ -87,14 +119,10 @@ def is_busy(home, task_id):
 
 
 @contextlib.contextmanager
-def run_lock(home, task_id):
-    """Hold the run's lock for one command. The kernel releases it when
-    the process exits, so a crashed command never leaves it held."""
-    if not isinstance(task_id, str) or not TASK_ID_RE.match(task_id):
-        raise StateError(f"task id must match {TASK_ID_RE.pattern}: {task_id!r}")
-    path = lock_path(home, task_id)
-    if not os.path.isdir(os.path.dirname(path)):
-        raise StateError(f"no turbo-12f state home at {home}; run `init` first")
+def _flock(path, busy):
+    """Hold an exclusive flock on `path`, waiting up to LOCK_WAIT_S. The
+    kernel releases it when the process exits, so a crashed command never
+    leaves it held."""
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     deadline = time.monotonic() + LOCK_WAIT_S
     try:
@@ -104,16 +132,66 @@ def run_lock(home, task_id):
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise StateError(f"run {task_id!r} is busy: another t12 command holds "
-                                     f"{path}; retry when it finishes") from None
+                    raise StateError(busy) from None
                 time.sleep(0.05)
         yield
     finally:
         os.close(fd)
 
 
-def verify_checkout_dir(home, task_id):
-    return os.path.join(home, "verify", task_id)
+def is_busy(home, task_id):
+    """True while another command holds the run's lock."""
+    return _probe(lock_path(home, task_id))
+
+
+def is_lane_busy(home, task_id, unit):
+    """True while another command holds the lane's lock."""
+    return _probe(lane_lock_path(home, task_id, unit))
+
+
+@contextlib.contextmanager
+def run_lock(home, task_id):
+    """Hold the run's lock. A command that holds it for its whole length is
+    a serial run's; a lane command takes it only around an event append and
+    a lane-table write, and nothing runs tests under it."""
+    _check_id("task", task_id)
+    path = lock_path(home, task_id)
+    if not os.path.isdir(os.path.dirname(path)):
+        raise StateError(f"no turbo-12f state home at {home}; run `init` first")
+    with _flock(path, f"run {task_id!r} is busy: another t12 command holds {path}; "
+                      "retry when it finishes"):
+        yield
+
+
+@contextlib.contextmanager
+def lane_lock(home, task_id, unit):
+    """Hold one lane's lock for a whole lane command, its test runs
+    included. Taken before the integration and run locks, never after."""
+    _check_id("task", task_id)
+    _check_id("unit", unit)
+    path = lane_lock_path(home, task_id, unit)
+    if not os.path.isfile(lane_path(home, task_id, unit)):
+        raise StateError(f"run {task_id!r} has no lane {unit!r}")
+    with _flock(path, f"lane {unit!r} of run {task_id!r} is busy: another t12 command "
+                      f"holds {path}; retry when it finishes"):
+        yield
+
+
+@contextlib.contextmanager
+def integration_lock(home, task_id):
+    """Held only by integrate, for the whole merge and its test runs. Taken
+    after a lane lock and before the run lock."""
+    _check_id("task", task_id)
+    path = integration_lock_path(home, task_id)
+    if not os.path.isdir(os.path.dirname(path)):
+        raise StateError(f"run {task_id!r} has no lanes")
+    with _flock(path, f"run {task_id!r} is integrating: another t12 command holds {path}; "
+                      "retry when it finishes"):
+        yield
+
+
+def verify_checkout_dir(home, task_id, unit=None):
+    return os.path.join(home, "verify", task_id if unit is None else f"{task_id}@{unit}")
 
 
 def evidence_dir(home, task_id):
@@ -224,8 +302,15 @@ def next_step(run):
         step = (run.get("tdd") or {}).get("step", "analyzer")
         if step == "analyzer":
             return "analyzer: analyze"
+        if step == "lanes":
+            rows = run.get("lanes") or []
+            if rows and all(row["status"] == "merged" for row in rows):
+                return "tdd-step"
+            return "lanes: in flight"
         if step in ("red", "green", "refactor"):
             return f"{step}: {step}"
+        if step == INTEGRATION_GREEN:
+            return "green: green"
         return "tdd-step"
     if phase == "gates":
         return "gate"
@@ -246,6 +331,50 @@ def next_step(run):
     if phase == "stopped":
         return f"stopped: {run['stop_reason']}"
     return "prepare"
+
+
+def integrate_head(lanes):
+    """The unit that integrates next: of the lanes waiting to integrate, the
+    one that finished first, and the lowest unit id among lanes that finished
+    at the same moment. None when no lane waits."""
+    done = [lane for lane in lanes if lane["status"] == "done" and lane["step"] == "final"]
+    if not done:
+        return None
+    return min(done, key=lambda lane: (lane.get("finished_at") or 0, lane["unit"]))["unit"]
+
+
+def pending_merge(run):
+    """The merge an integration green is repairing, or None."""
+    tdd = run.get("tdd") or {}
+    return tdd.get("pending_merge") if tdd.get("step") == INTEGRATION_GREEN else None
+
+
+def lane_next(run, lane, lanes=None):
+    """Who acts next on a lane, in the vocabulary of `next_step`: a worker
+    (`<role>: <role>`), the scripted `tdd-step: integrate`, `human: ...` for
+    a paused lane, and `waiting: after ...` for a lane that cannot move until
+    other units are merged: its `after` units, an earlier-finished lane that
+    integrates first (`lanes`, every lane record, decides that), or the
+    integration green that is repairing a merge."""
+    status = lane["status"]
+    if status == "waiting":
+        return f"waiting: after {', '.join(lane['after'])}"
+    if status == "paused":
+        pending = open_escalation(lane)
+        if pending:
+            return f"human: answer {pending['question']!r}"
+        return "human: resume"
+    if status == "merged":
+        return "merged"
+    if status == "done" or lane["step"] == "final":
+        pending = pending_merge(run)
+        if pending:
+            return "green: green" if pending["unit"] == lane["unit"] else "waiting: after integration-green"
+        head = integrate_head(lanes) if lanes is not None else None
+        if head not in (None, lane["unit"]):
+            return f"waiting: after {head}"
+        return "tdd-step: integrate"
+    return f"{lane['step']}: {lane['step']}"
 
 
 def void_reviews(run, reason):
@@ -275,6 +404,8 @@ def record_measurements(run):
         "tdd_attempts": tdd.get("attempts_peak", 0),
         "lint_runs": lint_runs,
         "gates": len(run["gates"]),
+        "integrations": tdd.get("integrations", 0),
+        "integration_failures": len(tdd.get("integration_failures") or []),
         "finished_at": time.time(),
     }
     return run["measurements"]
@@ -296,7 +427,7 @@ def outside_touches(run, paths):
     return [p for p in paths if not under(p, touches)]
 
 
-def _is_worktree_path(path):
+def is_worktree_path(path):
     if not isinstance(path, str) or not path or os.path.isabs(path):
         return False
     first = os.path.normpath(path).split(os.sep)[0]
@@ -317,14 +448,16 @@ def _setting(key, default, *sources):
     return default
 
 
-def new_tdd(profile, task, base_commit=None):
-    """The tdd record at prepare: the loop's position, the test list, the
-    settings frozen from the profile (a task value wins where it has one,
-    since `profile.apply` has already merged the two), and what to roll back
-    to. `last_good_commit` is the base commit until the first accepted step."""
-    test_command = _setting("test_command", None, task, profile)
-    if not test_command:
-        raise StateError("test_command is required: set it in .t12/project.json or the task file")
+TDD_SETTINGS = ("test_command", "test_globs", "lint_command", "assertion_pattern",
+                "failure_count_pattern", "red_stub_max_lines", "refactor_skip_max_lines")
+DEFAULT_MAX_LANES = 3
+
+
+def _loop(settings, base_commit):
+    """A tdd loop at its start: the position, the test list, the frozen
+    settings, and what to roll back to. `last_good_commit` is `base_commit`
+    until the first accepted step. A serial run's record and a lane's share
+    this shape."""
     return {
         "step": "analyzer",
         "mode": "initial",
@@ -335,13 +468,7 @@ def new_tdd(profile, task, base_commit=None):
         "gaps": [],
         "directives": [],
         "current": None,
-        "test_command": list(test_command),
-        "test_globs": list(_setting("test_globs", ["tests/**"], task, profile)),
-        "lint_command": _setting("lint_command", None, task, profile),
-        "assertion_pattern": _setting("assertion_pattern", "AssertionError", task, profile),
-        "failure_count_pattern": _setting("failure_count_pattern", None, task, profile),
-        "red_stub_max_lines": _setting("red_stub_max_lines", 10, task, profile),
-        "refactor_skip_max_lines": _setting("refactor_skip_max_lines", 5, task, profile),
+        **{key: copy.deepcopy(settings[key]) for key in TDD_SETTINGS},
         "lines_since_refactor": 0,
         "locked": {},
         "last_good_commit": base_commit,
@@ -355,11 +482,101 @@ def new_tdd(profile, task, base_commit=None):
     }
 
 
+def new_tdd(profile, task, base_commit=None, max_lanes=DEFAULT_MAX_LANES):
+    """The tdd record at prepare, from the project profile (a task value
+    wins where it has one, since `profile.apply` has already merged the
+    two). `max_lanes` is the calibrated default for this state home: the
+    task's and the profile's own value win over it."""
+    test_command = _setting("test_command", None, task, profile)
+    if not test_command:
+        raise StateError("test_command is required: set it in .t12/project.json or the task file")
+    settings = {
+        "test_command": list(test_command),
+        "test_globs": list(_setting("test_globs", ["tests/**"], task, profile)),
+        "lint_command": _setting("lint_command", None, task, profile),
+        "assertion_pattern": _setting("assertion_pattern", "AssertionError", task, profile),
+        "failure_count_pattern": _setting("failure_count_pattern", None, task, profile),
+        "red_stub_max_lines": _setting("red_stub_max_lines", 10, task, profile),
+        "refactor_skip_max_lines": _setting("refactor_skip_max_lines", 5, task, profile),
+    }
+    tdd = _loop(settings, base_commit)
+    tdd["max_lanes"] = _setting("max_lanes", max_lanes, task, profile)
+    # Merge attempts of the run's lanes, and the ones that failed with the
+    # route each took; limits and retro read both.
+    tdd["integrations"] = 0
+    tdd["integration_failures"] = []
+    return tdd
+
+
+def new_lane(home, run, spec, status):
+    """One unit's lane record: the run's frozen tdd settings, a loop that
+    starts at red, and the unit's scope. The worktree and branch are named
+    here and made when the lane starts; `fork_commit` is set then."""
+    base = run["tdd"]["last_good_commit"]
+    lane = _loop(run["tdd"], base)
+    lane.update(
+        step="red", unit=spec["id"], owns=list(spec["owns"]), tests=list(spec["tests"]),
+        after=list(spec["after"]), needed=spec.get("needed", ""), status=status,
+        worktree=lane_worktree(home, run["task_id"], spec["id"]),
+        branch=lane_branch(run["task_id"], spec["id"]),
+        fork_commit=None, budget={}, ops_used=0, acts=0, escalations=[], finished_at=None)
+    return lane
+
+
+def lane_row(lane):
+    """A lane as the run record's lane table holds it."""
+    return {"unit": lane["unit"], "status": lane["status"], "branch": lane["branch"],
+            "fork_commit": lane["fork_commit"],
+            "tip": lane["last_good_commit"] if lane["fork_commit"] else None,
+            "merged_commit": lane.get("merged_commit")}
+
+
+def sync_lane_row(run, lane):
+    """Write the lane's row into the run's lane table. Call it under the run
+    lock, on a record just loaded."""
+    row = lane_row(lane)
+    table = run.setdefault("lanes", [])
+    for i, entry in enumerate(table):
+        if entry["unit"] == lane["unit"]:
+            table[i] = row
+            return
+    table.append(row)
+
+
+def load_lane(home, task_id, unit):
+    path = lane_path(home, task_id, unit)
+    if not os.path.isfile(path):
+        raise StateError(f"run {task_id!r} has no lane {unit!r}")
+    return store.load_json(path)
+
+
+def save_lane(home, lane, task_id):
+    store.save_json(lane_path(home, task_id, lane["unit"]), lane)
+
+
+def list_lanes(home, task_id):
+    """Every lane record of a run, in unit-id order. A reader needs no lock:
+    the store writes each record atomically."""
+    directory = lanes_dir(home, task_id)
+    if not os.path.isdir(directory):
+        return []
+    return [store.load_json(os.path.join(directory, name))
+            for name in sorted(os.listdir(directory)) if name.endswith(".json")]
+
+
+def lane_ops_used(home, task_id):
+    """Operations the run's unmerged lanes have spent, each counted in its own
+    record. A merged lane's are in the run's own count: integrate adds them."""
+    return sum(lane.get("ops_used", 0) for lane in list_lanes(home, task_id)
+               if lane["status"] != "merged")
+
+
 def new_item(tdd, spec):
-    """Append a test-list item with the next id ("T1", "T2", ...). Ids are
-    never reused: items are never removed."""
+    """Append a test-list item with the next id ("T1", "T2", ...; in a lane
+    "U1-T1", ...). Ids are never reused: items are never removed."""
+    prefix = f"{tdd['unit']}-" if tdd.get("unit") else ""
     item = {
-        "id": f"T{len(tdd['items']) + 1}",
+        "id": f"{prefix}T{len(tdd['items']) + 1}",
         "text": spec["text"],
         "kind": spec["kind"],
         "source": spec["source"],
@@ -486,7 +703,7 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
             f"required_reviews must be a list of review roles {reviewers}: {required_reviews!r}"
         )
     verify_deps = task.get("verify_deps", [])
-    if not isinstance(verify_deps, list) or not all(_is_worktree_path(d) for d in verify_deps):
+    if not isinstance(verify_deps, list) or not all(is_worktree_path(d) for d in verify_deps):
         raise StateError(
             f"verify_deps must be a list of relative paths inside the worktree: {verify_deps!r}"
         )
@@ -498,7 +715,7 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
     touches = task.get("touches")
     if touches is not None:
         if not isinstance(touches, list) or not touches or not all(
-                _is_worktree_path(t) for t in touches):
+                is_worktree_path(t) for t in touches):
             raise StateError(
                 f"touches must be a non-empty list of relative paths inside the worktree: {touches!r}"
             )
@@ -581,6 +798,9 @@ def archive_run(home, run):
     ev_src = events_path(home, run["task_id"])
     if os.path.exists(ev_src):
         os.replace(ev_src, os.path.join(home, "runs", f"{base}.events.jsonl"))
+    lanes = os.path.join(home, "runs", run["task_id"])
+    if os.path.isdir(lanes):
+        os.replace(lanes, os.path.join(home, "runs", base))
     return base
 
 

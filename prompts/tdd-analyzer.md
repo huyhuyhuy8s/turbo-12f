@@ -25,7 +25,11 @@ The JSON after `--- context (JSON) ---` holds:
   or null in `initial` mode.
 - `human_responses`: answers to your earlier questions. Treat them as part
   of the requirements.
-- `files`: the repository file listing, for naming only. Do not design from it.
+- `files`: the repository file listing, for naming only. Do not design from it
+  (the one exception is Units, below).
+- `touches`, `test_globs`, `max_lanes`: where the task may write, which paths
+  count as tests, and how many lanes may run at once. They matter only for
+  Units.
 - `last_error`: why your previous output was rejected, or null. Fix exactly
   that.
 - `role`, `tools`: your role name and the tool calls you may end with.
@@ -94,6 +98,46 @@ fixing it needs:
 some item, or at the start of some directive; the core rejects the call
 when one is missing. Do not drop a finding because you disagree with it;
 if it is unclear or contradicts the criteria, escalate.
+
+## Units (optional)
+
+By default the red role works through the list one item at a time. When the
+requirements fall into parts that live in different files, you may split the
+list into **units**; the core then runs one lane per unit at the same time.
+A part that uses another part's code is still its own unit: it names that
+unit in `after` and starts once that unit is merged. Split when there are at
+least two parts that share no file and `max_lanes` is above 1; otherwise
+leave `units` out. Do not split one file's behaviour across units, and do not
+make a unit of a part with only one or two items, since a lane has a fixed
+cost. The core checks the paths you declare, not whether the parts are really
+independent, so a split you cannot justify in `needed` is a split not to make.
+`touches: null` means the task may change any file, so every path is inside
+it. In `review-fix` mode you may declare units again for the new items, under
+the same rules, with unit ids no earlier list used.
+
+Each unit is `{id, owns, tests, after, needed}`:
+
+- `id`: a short name (`"U1"`). Every item then carries `unit`, the id of the
+  one unit it belongs to, and every unit needs at least one item.
+- `owns`: the production files the unit's lane may change, each an exact path
+  (`"src/parser.ts"`) or a directory ending in `/` (`"src/format/"`). Never a
+  glob. Every path must be inside `touches`.
+- `tests`: where the unit's tests will be created, in the same form. They
+  must match `test_globs` and must not exist yet. Prefer a directory
+  (`"tests/parser/"`) so red can add a file per case; a single file works,
+  red then adds every test of the unit to it.
+- `after`: ids of units that must be finished first, `[]` when none.
+- `needed`: why this unit cannot share a lane with the others. Required for
+  every unit after the first.
+
+No path may appear in two units, `owns` and `tests` together, and a directory
+overlaps everything under it. A file two units would both edit (an exports
+index, `package.json`, a shared type) belongs to **one** of them; the other
+unit names that unit in `after`, so it starts once the first is done. There
+is no shared unit. `after` may not contain a cycle or an unknown id.
+
+The core refuses a list that breaks any of this, with the reason; fix exactly
+that, or drop `units` and send one list.
 
 ## Ordering
 
@@ -206,11 +250,13 @@ answer, and text outside it is not read. Arguments:
 
 | arg | type |
 |---|---|
-| `items` | list of `{text: str, kind: "behavior"\|"example"\|"edge"\|"error", source: str, needed: str, criteria: [int]}` |
+| `items` | list of `{text: str, kind: "behavior"\|"example"\|"edge"\|"error", source: str, needed: str, criteria: [int], unit?: str}` |
 | `gaps` | list of str |
 | `directives` | list of str |
+| `units` | optional list of `{id: str, owns: [str], tests: [str], after: [str], needed: str}` |
 
 `items`, `gaps` and `directives` are always present; use `[]` when empty.
+`units` and the items' `unit` are present only when you split the work.
 `directives` is `[]` in `initial` mode. `source` is a verbatim quote from a
 criterion, or the finding id plus its request. `needed` is the wrong
 implementation the item kills that earlier items do not.
@@ -218,7 +264,7 @@ implementation the item kills that earlier items do not.
 When ambiguity blocks the list, call `escalate` with `{question: str}`
 instead.
 
-No other tool, no extra args, no ids on items (the core assigns T1, T2, ...).
+No other tool, no extra args, no ids on items (the core assigns T1, T2, ...; in a unit U1-T1, ...).
 The core rejects an item with empty `text`, an uncovered criterion index
 (`initial`) or a missing finding id (`review-fix`). A rejected call comes
 back as a tool error with the reason; fix exactly that and call again.

@@ -2,12 +2,18 @@
 for omp and tests/fake_model.py (its FAKE_OMP_DELEGATE) playing the roles:
 no network, no model calls."""
 
+import concurrent.futures
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
+import types
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 T12 = os.path.join(ROOT, "bin", "t12")
@@ -19,6 +25,7 @@ TEST_COMMAND = ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"]
 sys.path.insert(0, os.path.join(ROOT, "adapters"))
 import runner  # noqa: E402
 import skills  # noqa: E402
+from t12 import model  # noqa: E402
 
 
 class ContextJsonCase(unittest.TestCase):
@@ -74,9 +81,22 @@ class PolicyCase(unittest.TestCase):
         self.addCleanup(setattr, runner, "t12", original)
         for nxt in ("tdd-step", "gate", "check"):
             row = {"task_id": "demo-1", "next": nxt}
-            self.assertEqual(runner.step("/h", row, "/scratch"), "ok")
+            self.assertEqual(runner.step("/h", row, "/scratch").line, "ok")
         self.assertEqual(seen, [(cmd, "--home", "/h", "--task-id", "demo-1")
                                 for cmd in ("tdd-step", "gate", "check")])
+
+    def test_a_lane_row_aims_every_command_at_its_lane(self):
+        seen = []
+        original = runner.t12
+        runner.t12 = lambda *args, **kw: (seen.append(args), subprocess.CompletedProcess(
+            args, 0, "merged\n", ""))[1]
+        self.addCleanup(setattr, runner, "t12", original)
+        row = {"task_id": "demo-1", "unit": "U2", "next": runner.INTEGRATE}
+        self.assertEqual(runner.step("/h", row, "/scratch").line, "merged")
+        self.assertEqual(seen, [("tdd-step", "--home", "/h", "--task-id", "demo-1", "--unit", "U2")])
+        self.assertEqual((runner.label(row), runner.key(row)), ("demo-1@U2", ("demo-1", "U2")))
+        self.assertEqual((runner.label({"task_id": "demo-1", "unit": None}), runner.unit_args(row)),
+                         ("demo-1", ["--unit", "U2"]))
 
     def test_a_refactor_into_the_next_red_counts_as_moving_the_run(self):
         row = {"phase": "tdd", "next": "red: red", "candidate": None}
@@ -92,6 +112,8 @@ class RunnerOmpCase(unittest.TestCase):
         self.repo, self.home, self.queue = join("product"), join("state"), join("queue")
         self.log, self.notes, self.omp_log = join("model.log"), join("notes.log"), join("omp.log")
         self.fake_state = join("fake-state")
+        self.delegate = f"{sys.executable} {FAKE}"
+        self.extra_env = {}
         os.makedirs(os.path.join(self.repo, "tests"))
         os.makedirs(self.queue)
         os.makedirs(self.fake_state)
@@ -120,7 +142,8 @@ class RunnerOmpCase(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith("FACTORYBENCH_")}
         env.update(FAKE_MODE=mode, FAKE_LOG=self.log, FAKE_STATE=self.fake_state,
                    FAKE_OMP_MODE=omp_mode, FAKE_OMP_LOG=self.omp_log,
-                   FAKE_OMP_DELEGATE=f"{sys.executable} {FAKE}", PYTHONDONTWRITEBYTECODE="1")
+                   FAKE_OMP_DELEGATE=self.delegate, PYTHONDONTWRITEBYTECODE="1",
+                   **self.extra_env)
         notify = f"{sys.executable} -c 'import sys; open(sys.argv[1], \"a\").write(sys.argv[2] + \"\\n\")' {self.notes}"
         result = subprocess.run(
             [sys.executable, RUNNER, "--home", self.home, "--queue", self.queue, "--max", "1",
@@ -444,6 +467,34 @@ class RunnerMisbehaviourTest(RunnerOmpCase):
         self.assertEqual(len(self.sessions()), 1)
         self.assertIn("did not move the run", "\n".join(self.lines(self.notes)))
 
+    def test_a_rate_limited_session_uses_no_attempt_and_runs_again_after_a_backoff(self):
+        self.extra_env = {"FAKE_OMP_RATE_LIMITS": "1", "FAKE_OMP_STATE": self.fake_state}
+        out = self.drive(omp_mode="rate-limit", extra=("--backoff-base", "0.05"))
+        self.assertEqual(self.run_record()["phase"], "local-verified")
+        self.assertIn("demo-1: analyzer: analyze -> analyzer rate-limited:", out)
+        self.assertIn("demo-1: rate limited; trying again in 0.05s", out)
+        self.assertNotIn("did not move the run", out)
+        # one extra omp process, and the refused one asked the model nothing
+        self.assertEqual([c["role"] for c in self.calls()], RunnerFlowTest.ROLES)
+        self.assertEqual(len(self.sessions()), len(RunnerFlowTest.ROLES) + 1)
+        self.assertNotIn("worker-output-rejected", self.event_types())
+        self.assertEqual(self.lines(self.notes), ["waiting demo-1: human: merge"])
+
+    def test_a_prompt_that_ends_on_a_provider_error_is_requeued_too(self):
+        self.extra_env = {"FAKE_OMP_RATE_LIMITS": "1", "FAKE_OMP_STATE": self.fake_state,
+                          "FAKE_OMP_RATE_STYLE": "stop",
+                          "FAKE_OMP_RATE_ERROR": '529 {"type":"overloaded_error"}'}
+        out = self.drive(omp_mode="rate-limit", extra=("--backoff-base", "0.05"))
+        self.assertEqual(self.run_record()["phase"], "local-verified")
+        self.assertIn("analyzer rate-limited: 529", out)
+
+    def test_a_step_the_provider_keeps_refusing_is_given_up_on_after_the_retry_cap(self):
+        out = self.drive(omp_mode="rate-limit", extra=("--backoff-base", "0.01", "--backoff-max", "0.02"))
+        self.assertEqual(len(self.sessions()), runner.MAX_RATE_LIMIT_RETRIES + 1)
+        self.assertEqual(self.calls(), [])
+        self.assertNotEqual(self.run_record()["phase"], "local-verified")
+        self.assertIn(f"rate limited {runner.MAX_RATE_LIMIT_RETRIES + 1} times", "\n".join(self.lines(self.notes)))
+
     def test_a_restarted_runner_carries_on_from_the_run_record(self):
         self.drive(omp_mode="loop")
         self.assertNotEqual(self.run_record()["phase"], "local-verified")
@@ -562,6 +613,365 @@ class RunnerSkillsTest(RunnerOmpCase):
         guard = {c["role"]: c["guard"] for c in self.calls()}
         self.assertEqual(guard["green"]["allow_read"],
                          [os.path.join(self.home, "skills", os.path.basename(self.mount))])
+
+
+
+class SchedulerCase(unittest.TestCase):
+    """The runner's scheduler on a scripted board: which rows it steps, how many at once,
+    and what a rate limit does, with a fake clock and no sleeping."""
+
+    def setUp(self):
+        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+        self.rows = {}
+        self.script = {}
+        self.started = []
+        self.sleeps = []
+        self.now = 0.0
+        self.gate = None
+        for name, fake in (("board", lambda home: [dict(r) for r in self.rows.values()]),
+                           ("step", self.step)):
+            self.addCleanup(setattr, runner, name, getattr(runner, name))
+            setattr(runner, name, fake)
+        enabled = mock.patch.object(runner.fb_report, "enabled", return_value=False)
+        enabled.start()
+        self.addCleanup(enabled.stop)
+        self.pool = concurrent.futures.ThreadPoolExecutor(4)
+        self.addCleanup(self.pool.shutdown)
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+    def sched(self, **kw):
+        return runner.Scheduler("/h", "/scratch", types.SimpleNamespace(cmd=[]), lane_cap=4,
+                                backoff_base=10, backoff_max=25, sleep=self.sleep,
+                                clock=lambda: self.now, **kw)
+
+    def row(self, unit=None, nxt="red: red", **kw):
+        row = {"task_id": "t", "unit": unit, "phase": "tdd", "candidate": None, "tdd_step": "red",
+               "cycle": 0, "gates_passed": 0, "time_left_s": 100, "ops_left": 50,
+               "repairs_left": 2, "busy": False, "next": nxt, "waiting": None, "max_lanes": None,
+               **kw}
+        self.rows[(row["task_id"], unit)] = row
+        return row
+
+    def lanes(self, *units, max_lanes=2):
+        self.row(nxt=runner.LANES_IN_FLIGHT, max_lanes=max_lanes)
+        for unit in units:
+            self.row(unit)
+
+    def step(self, home, row, scratch, attempt=None, omp=None):
+        k = runner.key(row)
+        self.started.append(k)
+        if self.gate:
+            self.gate.wait(10)
+        result = self.script.get(k, []).pop(0) if self.script.get(k) else runner.StepResult("ok")
+        if not result.rate_limited:
+            self.rows[k]["next"] = "human: done"
+        return result
+
+    def test_a_rate_limited_row_waits_out_a_doubling_capped_backoff_and_uses_no_attempt(self):
+        self.row()
+        limited = runner.StepResult("red rate-limited: 429", True)
+        self.script[("t", None)] = [limited, limited, limited, limited]
+        sched = self.sched()
+        while sched.run_task(self.pool, "t"):
+            pass
+        self.assertEqual(self.sleeps, [10.0, 20.0, 25.0, 25.0])
+        self.assertEqual(self.started, [("t", None)] * 5)
+        self.assertEqual(self.rows[("t", None)]["next"], "human: done")
+        self.assertEqual(sched.stuck, {})
+
+    def test_a_row_refused_over_and_over_is_given_up_on_as_stuck(self):
+        self.row()
+        self.script[("t", None)] = [runner.StepResult("red rate-limited: 429", True)] * 20
+        sched = self.sched()
+        while sched.run_task(self.pool, "t"):
+            pass
+        self.assertEqual(len(self.started), runner.MAX_RATE_LIMIT_RETRIES + 1)
+        self.assertIn("rate limited", sched.stuck[("t", None)])
+        self.assertEqual(sched.stuck_reason("t"), sched.stuck[("t", None)])
+
+    def test_a_rate_limit_lowers_the_pool_by_one_down_to_one(self):
+        self.lanes("U1", "U2", "U3", max_lanes=3)
+        sched = self.sched()
+        rows = list(self.rows.values())
+        self.assertEqual(sched.limit(rows), 3)
+        sched.settle(self.rows[("t", "U1")], runner.StepResult("x", True))
+        self.assertEqual(sched.limit(rows), 2)
+        sched.settle(self.rows[("t", "U2")], runner.StepResult("x", True))
+        sched.settle(self.rows[("t", "U3")], runner.StepResult("x", True))
+        self.assertEqual(sched.limit(rows), 1)
+
+    def test_lane_steps_start_up_to_the_runs_max_lanes_and_the_cap(self):
+        self.lanes("U1", "U2", "U3", max_lanes=2)
+        self.gate = threading.Event()
+        self.addCleanup(self.gate.set)
+        inflight = {}
+        self.sched().fill(self.pool, "t", inflight, set())
+        self.assertEqual(sorted(runner.key(r) for r in inflight.values()),
+                         [("t", "U1"), ("t", "U2")])
+        capped = self.sched()
+        capped.lane_cap = 1
+        self.assertEqual(capped.limit(list(self.rows.values())), 1)
+
+    def test_a_lane_that_was_rate_limited_is_not_started_before_its_backoff_ends(self):
+        self.lanes("U1", "U2")
+        sched = self.sched()
+        sched.settle(self.rows[("t", "U1")], runner.StepResult("x", True))
+        inflight = {}
+        sched.fill(self.pool, "t", inflight, set())
+        self.assertEqual([runner.key(r) for r in inflight.values()], [("t", "U2")])
+        concurrent.futures.wait(inflight)
+        self.now += 10
+        again = {}
+        sched.fill(self.pool, "t", again, set())
+        self.assertEqual([runner.key(r) for r in again.values()], [("t", "U1")])
+
+    def test_rows_with_no_step_of_their_own_are_neither_stepped_nor_stuck(self):
+        self.lanes("U1", "U2", "U3", "U4", max_lanes=4)
+        self.rows[("t", "U2")].update(next="waiting: after U1", waiting="after U1")
+        self.rows[("t", "U3")].update(next="human: answer 'q'")
+        self.rows[("t", "U4")].update(busy=True)
+        sched = self.sched()
+        self.assertTrue(sched.run_task(self.pool, "t"))
+        self.assertEqual(self.started, [("t", "U1")])
+        self.assertFalse({("t", None), ("t", "U2"), ("t", "U3"), ("t", "U4")} & set(sched.stuck))
+        self.assertEqual(runner.waiting_reason(self.rows[("t", "U3")]), "human: answer 'q'")
+        self.assertIsNone(runner.waiting_reason(self.rows[("t", "U2")]))
+
+    def test_integration_goes_one_lane_at_a_time_and_alone_among_run_steps(self):
+        self.lanes("U1", "U2", "U3", max_lanes=3)
+        self.rows[("t", "U1")].update(next=runner.INTEGRATE)
+        self.rows[("t", "U2")].update(next=runner.INTEGRATE)
+        self.gate = threading.Event()
+        self.addCleanup(self.gate.set)
+        inflight = {}
+        self.sched().fill(self.pool, "t", inflight, set())
+        self.assertEqual(sorted(runner.key(r) for r in inflight.values()),
+                         [("t", "U1"), ("t", "U3")])
+        self.rows.clear()
+        self.row(nxt="tdd-step", max_lanes=3)
+        inflight = {}
+        self.sched().fill(self.pool, "t", inflight, set())
+        self.assertEqual([runner.key(r) for r in inflight.values()], [("t", None)])
+
+    def test_a_step_that_leaves_its_lane_where_it_was_is_not_retried_and_starves_no_sibling(self):
+        for max_lanes in (1, 2):
+            with self.subTest(max_lanes=max_lanes):
+                self.rows.clear()
+                self.started.clear()
+                self.lanes("U1", "U2", max_lanes=max_lanes)
+                runner.step = lambda home, row, scratch, attempt=None, omp=None: (
+                    self.started.append(runner.key(row)), runner.StepResult("refused"))[1]
+                sched = self.sched()
+                while sched.run_task(self.pool, "t"):
+                    pass
+                self.assertEqual(sorted(self.started), [("t", "U1"), ("t", "U2")])
+                self.assertEqual(sorted(sched.stuck), [("t", "U1"), ("t", "U2")])
+                self.assertIn("did not move the run", sched.stuck[("t", "U1")])
+
+
+MODEL = r'''
+import json, os, sys, time
+MARKER = "--- context (JSON) ---"
+prompt = sys.stdin.read()
+role = os.environ["T12_ROLE"]
+context = json.loads(prompt.rsplit(MARKER + "\n", 1)[1]) if MARKER in prompt else {}
+unit = context.get("unit")
+name = {"U1": "a", "U2": "b"}.get(unit)
+other = {"a": "b", "b": "a"}.get(name)
+TEST = ("import unittest\nfrom %(n)s import f%(n)s\n\nclass Test%(u)s(unittest.TestCase):\n"
+        "    def test_%(n)s(self):\n        self.assertEqual(f%(n)s(), 1)\n")
+start = time.time()
+time.sleep(float(os.environ.get("FAKE_LANE_SLEEP", "0.6")))
+
+
+def say(tool, **args):
+    print(json.dumps({"tool": tool, "args": args}))
+
+
+def write(path, text):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
+def sees_the_other_lane():
+    if not other:
+        return False
+    return os.path.exists(f"tests/test_{other}.py") or (
+        os.path.exists(f"{other}.py") and "return 1" in open(f"{other}.py").read())
+
+
+def log():
+    with open(os.environ["FAKE_LANE_LOG"], "a") as fh:
+        fh.write(json.dumps({"role": role, "unit": unit, "start": start, "end": time.time(),
+                             "cwd": os.getcwd(), "sees_other": sees_the_other_lane()}) + "\n")
+
+
+if role == "analyzer":
+    units = [{"id": "U%d" % i, "owns": ["%s.py" % n], "tests": ["tests/test_%s.py" % n],
+              "after": [], "needed": "owns its own module"} for i, n in ((1, "a"), (2, "b"))]
+    items = [{"text": "f%s returns 1" % n, "kind": "behavior", "source": "criterion",
+              "needed": "a constant", "criteria": [i], "unit": "U%d" % (i + 1)}
+             for i, n in enumerate("ab")]
+    log()
+    say("test_list_ready", units=units, items=items, gaps=[], directives=[])
+elif role == "red":
+    item = context.get("current_item")
+    log()
+    if not item:
+        say("no_cheat_left", reason="every case is covered")
+    else:
+        body = TEST % {"n": name, "u": name.upper()}
+        write("tests/test_%s.py" % name, body)
+        say("red_test_ready", item_id=item["id"], test_file="tests/test_%s.py" % name,
+            test_name="test_%s" % name, last_assertion_line=6, defeats="a constant zero",
+            add_items=[])
+elif role == "green":
+    write("%s.py" % name, "def f%s():\n    return 1\n" % name)
+    log()
+    say("green_ready", summary="return one")
+elif role == "refactor":
+    log()
+    say("refactor_done", summary="nothing to tidy", changed=False)
+else:
+    log()
+    say("review", verdict="merge-ready", findings=[], verification="read the diff")
+'''
+
+
+class RunnerLaneTest(RunnerOmpCase):
+    """Two lanes of one run through the real runner, core and git, with a fake omp."""
+    MAX_LANES = 2
+    # Unit U1's test runs take longer than the 2 s a command waits for a lock, so a lane that
+    # held the run lock while it ran tests would make U2's `act` fail as busy.
+    SLOW_TESTS = ["python3", "-c",
+                  "import os, sys, time; time.sleep(2.5 if '@U1' in os.getcwd() else 0); "
+                  "os.execvp(sys.executable, [sys.executable, '-m', 'unittest', 'discover', "
+                  "'-s', 'tests', '-q'])"]
+
+    def setUp(self):
+        super().setUp()
+        for rel, text in {"a.py": "def fa():\n    return 0\n", "b.py": "def fb():\n    return 0\n",
+                          "tests/test_old.py": "import unittest\n\n\nclass Old(unittest.TestCase):\n"
+                                               "    def test_old(self):\n"
+                                               "        self.assertTrue(True)\n"}.items():
+            with open(os.path.join(self.repo, rel), "w") as fh:
+                fh.write(text)
+        for cmd in (["add", "."], ["commit", "-qm", "two modules"]):
+            subprocess.run(["git", *cmd], cwd=self.repo, check=True)
+        self.lane_log = os.path.join(self.tmp.name, "lanes.log")
+        model = os.path.join(self.tmp.name, "lane_model.py")
+        with open(model, "w") as fh:
+            fh.write(MODEL)
+        self.delegate = f"{sys.executable} {model}"
+        self.extra_env = {"FAKE_LANE_LOG": self.lane_log}
+        path = os.path.join(self.queue, "demo-1.json")
+        with open(path) as fh:
+            task = json.load(fh)
+        task.update(title="two modules", acceptance_criteria=["fa returns 1", "fb returns 1"],
+                    touches=["a.py", "b.py", "tests"], op_limit=200, attempt_limit=20,
+                    max_lanes=self.MAX_LANES, test_command=self.SLOW_TESTS)
+        with open(path, "w") as fh:
+            json.dump(task, fh)
+
+    def drive_lanes(self, **kw):
+        return self.drive(extra=("--backoff-base", "0.1", "--backoff-max", "0.2"), **kw)
+
+    def model_log(self, unit=None):
+        records = [json.loads(line) for line in self.lines(self.lane_log)]
+        return [r for r in records if unit is None or r["unit"] == unit]
+
+    def lane_record(self, unit):
+        with open(os.path.join(self.home, "runs", "demo-1", "lanes", f"{unit}.json")) as fh:
+            return json.load(fh)
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.repo, capture_output=True, text=True,
+                              check=True).stdout.split()
+
+    @staticmethod
+    def overlap(a, b):
+        return a["start"] < b["end"] and b["start"] < a["end"]
+
+    def event_index(self, kind, unit):
+        return next(i for i, e in enumerate(self.events())
+                    if e["type"] == kind and e["detail"].get("unit") == unit)
+
+    def test_two_lanes_step_at_the_same_time_and_stay_out_of_each_others_worktree(self):
+        self.drive_lanes()
+        for unit in ("U1", "U2"):
+            lane = self.lane_record(unit)
+            self.assertEqual((lane["step"], [i["status"] for i in lane["items"]]),
+                             ("final", ["done"]), unit)
+        # both reds ran at once; the quick lane's red was accepted while the other's tests ran
+        reds = {u: self.model_log(u)[0] for u in ("U1", "U2")}
+        self.assertEqual({r["role"] for r in reds.values()}, {"red"})
+        self.assertTrue(self.overlap(reds["U1"], reds["U2"]), reds)
+        self.assertLess(self.event_index("tdd-red", "U2"), self.event_index("tdd-red", "U1"))
+        # each lane session ran in its own lane's worktree (blind for green and refactor),
+        # and none of them ever saw the other lane's work
+        sessions = [r for r in self.model_log() if r["unit"]]
+        for record in sessions:
+            self.assertFalse(record["sees_other"], record)
+            if record["role"] == "red":
+                self.assertEqual(os.path.realpath(record["cwd"]), os.path.realpath(
+                    os.path.join(self.home, "worktrees", f"demo-1@{record['unit']}")))
+            else:
+                self.assertTrue(os.path.basename(record["cwd"]).startswith("blind-"), record)
+        rows = {r["unit"]: r for r in self.run_record()["lanes"]}
+        files = {u: set(self.git("diff", "--name-only", rows[u]["fork_commit"], rows[u]["tip"]))
+                 for u in ("U1", "U2")}
+        self.assertEqual(files, {"U1": {"a.py", "tests/test_a.py"},
+                                 "U2": {"b.py", "tests/test_b.py"}})
+        self.assertNotEqual(rows["U1"]["tip"], rows["U2"]["tip"])
+
+    def test_lane_steps_are_logged_by_unit_and_a_sibling_running_slow_tests_is_not_busy(self):
+        out = self.drive_lanes()
+        self.assertIn("demo-1: analyzer: analyze ->", out)
+        self.assertIn("demo-1@U1: red: red ->", out)
+        self.assertIn("demo-1@U2: green: green ->", out)
+        self.assertNotIn("lanes: in flight ->", out)
+        # U1's test runs outlast the lock wait; U2's acts were never refused as busy
+        self.assertNotIn("busy", out)
+        self.assertNotIn("worker-output-rejected", self.event_types())
+        self.assertEqual([self.lane_record(u)["step"] for u in ("U1", "U2")], ["final", "final"])
+        self.assertEqual(model.verify_chain(self.home, self.run_record()), [])
+
+    def test_two_lanes_integrate_and_the_run_reaches_local_verified(self):
+        out = self.drive_lanes()
+        record = self.run_record()
+        self.assertEqual(record["phase"], "local-verified", out)
+        self.assertEqual([(r["unit"], r["status"]) for r in record["lanes"]],
+                         [("U1", "merged"), ("U2", "merged")])
+        self.assertEqual(self.lines(self.notes), ["waiting demo-1: human: merge"])
+        self.assertNotIn("did not move the run", out)
+        for unit in ("U1", "U2"):
+            self.assertIn(f"demo-1@{unit}: tdd-step: integrate ->", out)
+        for name in "ab":
+            with open(os.path.join(record["worktree"], f"{name}.py")) as fh:
+                self.assertIn("return 1", fh.read())
+            self.assertTrue(os.path.exists(os.path.join(record["worktree"], "tests", f"test_{name}.py")))
+        self.assertEqual(model.verify_chain(self.home, record), [])
+
+    def test_a_rate_limit_lowers_the_pool_so_the_lanes_stop_overlapping(self):
+        self.extra_env.update(FAKE_OMP_RATE_LIMITS="1", FAKE_OMP_STATE=self.fake_state)
+        out = self.drive_lanes(omp_mode="rate-limit")
+        # the analyzer's session was refused: no model call, no attempt used, no stuck mark
+        self.assertIn("analyzer rate-limited", out)
+        self.assertIn("demo-1: rate limited; trying again in 0.1s", out)
+        self.assertNotIn("did not move the run: analyzer", out)
+        self.assertEqual(len(self.sessions()), len(self.model_log()) + 1)
+        self.assertNotIn("worker-output-rejected", self.event_types())
+        for unit in ("U1", "U2"):
+            self.assertEqual(self.lane_record(unit)["step"], "final", out)
+        # two lanes would overlap at max_lanes 2; one refusal left room for one at a time
+        sessions = [r for r in self.model_log() if r["unit"]]
+        self.assertEqual(len({r["unit"] for r in sessions}), 2)
+        self.assertFalse(any(self.overlap(a, b) for a in sessions for b in sessions if a is not b),
+                         "lane sessions overlapped after the pool was lowered")
 
 
 if __name__ == "__main__":

@@ -33,6 +33,19 @@ through `t12-queue`, then takes each run's `next` from `t12 board --json`:
   override `--omp-model` for one role, e.g. a stronger reviewer.
 - `human: ...`, `stopped: ...` and a spent budget are reported and
   skipped. The runner never answers an escalation and never merges.
+- Parallel lanes (Phase 9): when an analyzer's `units` fan out, the board has one
+  row per lane (`unit` set) beside the run row (`lanes: in flight`, not a step).
+  A lane row's worker step runs in the lane's own worktree, with `--unit U` on
+  `context`, `tool-schema` and `act`, and `tdd-step: integrate` runs
+  `t12 tdd-step --unit U`. Lane steps run at once in a thread pool bounded by the
+  run row's `max_lanes` and `--lane-cap`; a lane that finishes a step starts its
+  next while a sibling still runs. A lane waiting for its `after` units has no
+  step; integration and every run-level step go one at a time per run.
+- Provider rate limits: a session that omp_rpc ends as `rate-limited` (HTTP 429,
+  529, overloaded) uses no attempt and does not mark the step as stuck. The
+  row is queued again after an exponential, capped backoff, and the pool is one
+  smaller for the rest of the invocation (never below one). A step refused
+  more than MAX_RATE_LIMIT_RETRIES times in a row is given up on.
 
 The runner writes no state. The run records and event logs are the
 only state, so it can be killed at any point and started again
@@ -44,6 +57,7 @@ model, and the core never imports it.
 """
 
 import argparse
+import concurrent.futures
 import fcntl
 import json
 import os
@@ -51,8 +65,11 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import fb_report
 import omp_rpc
@@ -62,6 +79,26 @@ import workspace
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin")
 CONTEXT_MARKER = "--- context (JSON) ---"
 DETERMINISTIC = ("tdd-step", "gate", "check")
+# The board's words for a lane's state (see `t12 board --json`): the run row while its lanes
+# are open, and the lane row that integrates a finished lane.
+LANES_IN_FLIGHT = "lanes: in flight"
+INTEGRATE = "tdd-step: integrate"
+LANE_CAP = 4
+BACKOFF_BASE_S = 30.0
+BACKOFF_MAX_S = 600.0
+# A step the provider refuses this many times in a row is given up on, like one that did not move.
+MAX_RATE_LIMIT_RETRIES = 6
+# Blind worktrees are made and removed under one lock: concurrent `git worktree add` and
+# `prune` in one repository race. The attempt report starts once however many lanes ask.
+WORKTREES = threading.Lock()
+ATTEMPTS = threading.Lock()
+
+
+class StepResult(NamedTuple):
+    """What a step left behind: a line for the log, and `rate_limited` when the provider
+    refused the session, so no attempt was used and the step can run again later."""
+    line: str
+    rate_limited: bool = False
 
 
 def t12(*args, timeout=None):
@@ -89,6 +126,29 @@ def position(row):
     gate passed with another still to run, leaves the phase and `next` alone."""
     return (row["phase"], row["next"], row["candidate"],
             row.get("tdd_step"), row.get("cycle"), row.get("gates_passed"))
+
+
+def key(row):
+    """A row's identity: the run, or one lane of it."""
+    return (row["task_id"], row.get("unit"))
+
+
+def label(row):
+    """How a row is named in the log and in notifications: `task`, or `task@unit`."""
+    return f"{row['task_id']}@{row['unit']}" if row.get("unit") else row["task_id"]
+
+
+def unit_args(row):
+    """The `t12` arguments that aim a command at a lane row's lane; none for a run row."""
+    return ["--unit", row["unit"]] if row.get("unit") else []
+
+
+def steppable(row):
+    """Whether a step can be taken for this row now. A run whose lanes are in flight, and
+    a lane waiting for its `after` units, have no step of their own."""
+    nxt = row["next"]
+    return not (nxt == LANES_IN_FLIGHT or row.get("waiting") or nxt.startswith("waiting: ")
+                or row["busy"] or waiting_reason(row))
 
 
 def waiting_reason(row):
@@ -246,26 +306,26 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
     its patch rides along with the call that says it is done."""
     task_id = row["task_id"]
     ctx = t12("context", "--home", home, "--task-id", task_id,
-              "--role", role, "--phase", row["phase"])
+              "--role", role, "--phase", row["phase"], *unit_args(row))
     if ctx.returncode != 0:
-        return f"context failed: {ctx.stderr.strip()}"
+        return StepResult(f"context failed: {ctx.stderr.strip()}")
     context = context_json(ctx.stdout)
     worktree = context["worktree"]
     kind = role_kind(home, task_id, role, context)
     policy = ROLE_POLICY.get(kind)
     if policy is None:
-        return f"{role} step failed: no omp tool policy for role kind {kind!r}"
+        return StepResult(f"{role} step failed: no omp tool policy for role kind {kind!r}")
     patch_tool = policy.get("patch_tool")
     test_globs = context.get("test_globs") or []
     if patch_tool and not test_globs:
-        return f"{role} step failed: the context names no test_globs to hide"
+        return StepResult(f"{role} step failed: the context names no test_globs to hide")
     schema = t12("tool-schema", "--home", home, "--task-id", task_id, "--role", role,
-                 "--host-tools")
+                 "--host-tools", *unit_args(row))
     if schema.returncode != 0:
-        return f"tool-schema failed: {schema.stderr.strip()}"
+        return StepResult(f"tool-schema failed: {schema.stderr.strip()}")
     host_tools = json.loads(schema.stdout)
     session = f"{role}-{uuid.uuid4().hex[:16]}"
-    base = os.path.join(scratch, f"{task_id}-{session}")
+    base = os.path.join(scratch, f"{task_id}{'@' + row['unit'] if row.get('unit') else ''}-{session}")
     guard_path, transcript = base + ".guard.json", base + ".transcript.jsonl"
     pinned = context.get("skills") or []
     mounts, overlay = [], base + ".skills.yml"
@@ -275,8 +335,8 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
             mounts = mount_skills(pinned, cache, overlay)
         except skills.SkillError as exc:
             profile_json = os.path.join(_run_record(home, task_id)["repo"], ".t12", "project.json")
-            return (f"{role} step refused: {exc}; run python3 adapters/skills.py sync "
-                    f"--profile-json {profile_json} --cache {cache}")
+            return StepResult(f"{role} step refused: {exc}; run python3 adapters/skills.py sync "
+                              f"--profile-json {profile_json} --cache {cache}")
     guard = policy["guard"](context)
     if mounts:
         guard["allow_read"] = mounts
@@ -287,14 +347,16 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
         cwd, blind_base = worktree, None
         if dest:
             try:
-                blind_base = workspace.blind_worktree(worktree, dest, test_globs)
+                with WORKTREES:
+                    blind_base = workspace.blind_worktree(worktree, dest, test_globs)
             except workspace.WorkspaceError as exc:
-                return f"{role} step failed: no blind worktree: {exc}"
+                return StepResult(f"{role} step failed: no blind worktree: {exc}")
             cwd = dest
         env = dict(os.environ, T12_TASK_ID=task_id, T12_ROLE=role, T12_SESSION=session,
                    T12_WORKTREE=cwd, T12_GUARD_POLICY=guard_path)
         if attempt:
-            attempt.start()
+            with ATTEMPTS:
+                attempt.start()
             env.update(attempt.env(role))
         time_left = max(1, row["time_left_s"] or 1)
         model, thinking = omp.model_for(role), omp.thinking_for(role)
@@ -329,7 +391,7 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
                 json.dump({"tool": name, "args": arguments}, fh)
             act = t12("act", "--home", home, "--task-id", task_id, "--role", role,
                       "--session", session, "--input", call_path, "--parsed-by", "host-tool",
-                      "--raw", transcript, *extra)
+                      "--raw", transcript, *extra, *unit_args(row))
             if act.returncode == 0:
                 accepted.append(act.stdout.strip())
                 return True, accepted[-1], True
@@ -342,23 +404,25 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
             timeout_s=time_left, transcript_path=transcript)
     finally:
         if dest:
-            try:
-                workspace.remove(dest)
-            except workspace.WorkspaceError as exc:
-                print(f"warning: blind worktree {dest} not removed: {exc}", file=sys.stderr)
+            with WORKTREES:
+                try:
+                    workspace.remove(dest)
+                except workspace.WorkspaceError as exc:
+                    print(f"warning: blind worktree {dest} not removed: {exc}", file=sys.stderr)
     if outcome.status == "accepted" and accepted:
-        return accepted[-1]
-    return f"{role} {outcome.status}: {outcome.detail}"
+        return StepResult(accepted[-1])
+    return StepResult(f"{role} {outcome.status}: {outcome.detail}", outcome.status == "rate-limited")
 
 
 def step(home, row, scratch, attempt=None, omp=None):
-    """Take the one step `next` names. Returns a line for the log."""
+    """Take the one step `next` names, for the run or, when the row has a `unit`, for that
+    lane. Returns a StepResult: a line for the log, and whether the provider refused it."""
     nxt = row["next"]
-    if nxt in DETERMINISTIC:
-        result = t12(nxt, "--home", home, "--task-id", row["task_id"])
-        return (result.stdout or result.stderr).strip()
-    role, _, _ = nxt.partition(": ")
-    return omp_worker_step(home, row, role, omp, scratch, attempt)
+    head = nxt.partition(": ")[0]
+    if head in DETERMINISTIC:
+        result = t12(head, "--home", home, "--task-id", row["task_id"], *unit_args(row))
+        return StepResult((result.stdout or result.stderr).strip())
+    return omp_worker_step(home, row, head, omp, scratch, attempt)
 
 
 def notify(notify_cmd, message):
@@ -370,16 +434,122 @@ def notify(notify_cmd, message):
             print(f"warning: notify failed: {exc}", file=sys.stderr)
 
 
-def drive(home, queue, max_active, notify_cmd, omp):
-    """Pass after pass until no step moves a run. A run whose step left it
-    where it was is not stepped again in this invocation, so a worker that
-    cannot get past a refusal costs one call per invocation, not a loop."""
-    stuck = {}
-    attempts = {}
-    version = (fb_report.config_version(omp.cmd, os.path.dirname(BIN))
-               if fb_report.enabled() else "")
+class Scheduler:
+    """The runner's loop state for one invocation: which steps did not move a row,
+    when a rate-limited step may run again, and how far the pool has shrunk.
+
+    A row is a run (`unit` None) or one lane of a run. Steps of one run's lanes
+    overlap, at most `limit` at once; everything else runs one at a time per run,
+    and runs are taken in turn. A step that leaves its row where it was is not
+    taken again in this invocation, so a worker that cannot get past a refusal
+    costs one call per invocation, not a loop."""
+
+    def __init__(self, home, scratch, omp, *, lane_cap, backoff_base, backoff_max, sleep, clock):
+        self.home, self.scratch, self.omp = home, scratch, omp
+        self.lane_cap, self.backoff_base, self.backoff_max = lane_cap, backoff_base, backoff_max
+        self.sleep, self.clock = sleep, clock
+        self.stuck = {}
+        self.ready_at = {}
+        self.rate_hits = {}
+        self.dropped = 0
+        self.attempts = {}
+        self.version = (fb_report.config_version(omp.cmd, os.path.dirname(BIN))
+                        if fb_report.enabled() else "")
+
+    def limit(self, rows):
+        """How many steps of this run may be in flight: its `max_lanes` and the cap, less
+        one for each rate limit met so far, never below one."""
+        run_row = next((r for r in rows if r.get("unit") is None), {})
+        return max(1, min(run_row.get("max_lanes") or 1, self.lane_cap) - self.dropped)
+
+    def attempt_for(self, row):
+        if not fb_report.enabled():
+            return None
+        return self.attempts.setdefault(row["task_id"], fb_report.Attempt(
+            _run_record(self.home, row["task_id"]), self.version))
+
+    def stuck_reason(self, task_id):
+        return next((why for (task, _), why in self.stuck.items() if task == task_id), None)
+
+    def fill(self, pool, task_id, inflight, tried, fresh_only=False, idle_wait=False):
+        """Start every step this run can take now, up to its limit, and add each row started
+        to `tried`. `fresh_only` leaves out rows already in `tried`. With `idle_wait` and
+        nothing in flight, wait out a rate-limit backoff rather than return empty-handed."""
+        while True:
+            rows = [r for r in board(self.home) if r["task_id"] == task_id]
+            running = {key(r) for r in inflight.values()}
+            now = self.clock()
+            delayed = []
+            for row in rows:
+                k = key(row)
+                if k in running or k in self.stuck or not steppable(row) or (fresh_only and k in tried):
+                    continue
+                if self.ready_at.get(k, 0) > now:
+                    delayed.append(k)
+                    continue
+                if len(inflight) >= self.limit(rows):
+                    break
+                if inflight and (row.get("unit") is None
+                                 or any(r.get("unit") is None for r in inflight.values())):
+                    continue
+                if row["next"] == INTEGRATE and any(r["next"] == INTEGRATE for r in inflight.values()):
+                    continue
+                tried.add(k)
+                inflight[pool.submit(step, self.home, row, self.scratch,
+                                     self.attempt_for(row), self.omp)] = row
+            if inflight or not (idle_wait and delayed):
+                return
+            self.sleep(max(0.0, min(self.ready_at[k] for k in delayed) - now))
+
+    def settle(self, row, result):
+        """Account for a finished step; True if it moved its row (or will be run again)."""
+        k = key(row)
+        print(f"{label(row)}: {row['next']} -> {result.line}")
+        if result.rate_limited:
+            hits = self.rate_hits[k] = self.rate_hits.get(k, 0) + 1
+            self.dropped += 1
+            if hits > MAX_RATE_LIMIT_RETRIES:
+                self.stuck[k] = (f"{row['next']} was rate limited {hits} times: {result.line}")[:200]
+                return False
+            delay = min(self.backoff_max, self.backoff_base * 2 ** (hits - 1))
+            self.ready_at[k] = self.clock() + delay
+            print(f"{label(row)}: rate limited; trying again in {delay:g}s, "
+                  f"{self.dropped} fewer step(s) at once from now on")
+            return True
+        self.rate_hits.pop(k, None)
+        after = {key(r): r for r in board(self.home)}.get(k)
+        if after is not None and position(after) == position(row):
+            self.stuck[k] = f"{row['next']} did not move the run: {result.line}"
+            return False
+        return True
+
+    def run_task(self, pool, task_id):
+        """One wave of steps for a run: each row it can step is stepped at least once. While
+        a step is in flight, a lane that finishes starts its next one at once; when nothing
+        is in flight only rows not yet stepped in this wave start, so a lane that keeps
+        moving cannot starve one that has not had its turn. True if any step moved a row."""
+        inflight, tried, moved = {}, set(), False
+        self.fill(pool, task_id, inflight, tried, idle_wait=True)
+        while inflight:
+            done, _ = concurrent.futures.wait(inflight, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                moved = self.settle(inflight.pop(future), future.result()) or moved
+            self.fill(pool, task_id, inflight, tried, fresh_only=not inflight)
+        return moved
+
+
+def drive(home, queue, max_active, notify_cmd, omp, *, lane_cap=LANE_CAP,
+          backoff_base=BACKOFF_BASE_S, backoff_max=BACKOFF_MAX_S, sleep=time.sleep,
+          clock=time.monotonic):
+    """Pass after pass until no step moves a run. `sleep` and `clock` are injectable so a
+    test can run the backoff without waiting."""
+    sched = None
     try:
-        with tempfile.TemporaryDirectory(prefix="t12-runner-") as scratch:
+        with tempfile.TemporaryDirectory(prefix="t12-runner-") as scratch, \
+                concurrent.futures.ThreadPoolExecutor(max_workers=lane_cap) as pool:
+            sched = Scheduler(home, scratch, omp, lane_cap=lane_cap,
+                              backoff_base=backoff_base, backoff_max=backoff_max,
+                              sleep=sleep, clock=clock)
             moved = True
             while moved:
                 moved = False
@@ -390,29 +560,18 @@ def drive(home, queue, max_active, notify_cmd, omp):
                     for line in (admitted.stdout + admitted.stderr).splitlines():
                         print(f"queue: {line}")
                         moved = moved or line.startswith("started ")
-                for row in board(home):
-                    if row["busy"] or waiting_reason(row) or row["task_id"] in stuck:
-                        continue
-                    attempt = None
-                    if fb_report.enabled():
-                        attempt = attempts.setdefault(row["task_id"], fb_report.Attempt(
-                            _run_record(home, row["task_id"]), version))
-                    line = step(home, row, scratch, attempt, omp)
-                    print(f"{row['task_id']}: {row['next']} -> {line}")
-                    after = {r["task_id"]: r for r in board(home)}[row["task_id"]]
-                    if position(after) == position(row):
-                        stuck[row["task_id"]] = f"{row['next']} did not move the run: {line}"
-                    else:
-                        moved = True
+                for task_id in dict.fromkeys(r["task_id"] for r in board(home)):
+                    moved = sched.run_task(pool, task_id) or moved
         for row in board(home):
-            reason = waiting_reason(row) or stuck.get(row["task_id"])
+            reason = waiting_reason(row) or sched.stuck.get(key(row))
             if reason:
-                notify(notify_cmd, f"waiting {row['task_id']}: {reason}")
+                notify(notify_cmd, f"waiting {label(row)}: {reason}")
     finally:
-        for task_id, attempt in attempts.items():
-            reason = stuck.get(task_id)
-            events = os.path.join(home, "runs", f"{task_id}.events.jsonl")
-            attempt.finish(events, "failed" if reason else "completed", reason and reason[:200])
+        if sched:
+            for task_id, attempt in sched.attempts.items():
+                reason = sched.stuck_reason(task_id)
+                events = os.path.join(home, "runs", f"{task_id}.events.jsonl")
+                attempt.finish(events, "failed" if reason else "completed", reason and reason[:200])
 
 
 def _run_record(home, task_id):
@@ -440,9 +599,20 @@ def main(argv=None):
                              "(default: <home>/skills)")
     parser.add_argument("--queue", help="directory of task files to admit each pass")
     parser.add_argument("--max", type=int, default=1, help="most runs active at once")
+    parser.add_argument("--lane-cap", type=int, default=LANE_CAP, metavar="N",
+                        help="most lane steps one run may have in flight, whatever its "
+                             f"max_lanes says (default {LANE_CAP})")
+    parser.add_argument("--backoff-base", type=float, default=BACKOFF_BASE_S, metavar="S",
+                        help="seconds to wait before running a rate-limited step again; "
+                             f"doubles with each refusal of the same step (default {BACKOFF_BASE_S:g})")
+    parser.add_argument("--backoff-max", type=float, default=BACKOFF_MAX_S, metavar="S",
+                        help=f"longest such wait (default {BACKOFF_MAX_S:g})")
     parser.add_argument("--notify-cmd",
                         help="command run with each waiting message as its last argument")
     args = parser.parse_args(argv)
+    if args.lane_cap < 1 or args.backoff_base < 0 or args.backoff_max < args.backoff_base:
+        parser.error("--lane-cap must be at least 1 and --backoff-max at least --backoff-base, "
+                     "which cannot be negative")
     try:
         role_models = parse_role_flag(args.role_model, "--role-model")
         role_thinking = parse_role_flag(args.role_thinking, "--role-thinking", THINKING_LEVELS)
@@ -461,7 +631,8 @@ def main(argv=None):
                         role_models, role_thinking)
         print(f"worker: omp profile {omp.profile}; the final answer is a host tool call")
         drive(home, args.queue and os.path.abspath(args.queue), args.max,
-              shlex.split(args.notify_cmd) if args.notify_cmd else None, omp)
+              shlex.split(args.notify_cmd) if args.notify_cmd else None, omp,
+              lane_cap=args.lane_cap, backoff_base=args.backoff_base, backoff_max=args.backoff_max)
     return 0
 
 

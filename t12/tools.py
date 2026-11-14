@@ -17,17 +17,26 @@ INT_LIST = "list of integers"
 FINDINGS = "list of findings"
 FINDING_FIELDS = ("id", "class", "severity", "where", "finding", "owner")
 ITEMS = "list of test items"
+UNIT_ITEMS = "list of test items (unit: only with units)"
+UNITS = "list of units (optional: omit for one lane)"
 ITEM_KINDS = ("behavior", "example", "edge", "error")
 ITEM_FIELDS = {"text": STR, "kind": ITEM_KINDS, "source": STR, "needed": TEXT,
                "criteria": INT_LIST}
+# The analyzer's items may name a unit; red's added items never do.
+ITEM_SHAPES = {ITEMS: (ITEM_FIELDS, ITEM_FIELDS),
+               UNIT_ITEMS: ({**ITEM_FIELDS, "unit": STR}, ITEM_FIELDS)}
+UNIT_FIELDS = {"id": STR, "owns": STR_LIST, "tests": STR_LIST, "after": STR_LIST, "needed": TEXT}
 
 ESCALATE = {"escalate": {"question": STR}}
+# Args a call may leave out.
+OPTIONAL_ARGS = {"test_list_ready": ("units",)}
 
 # Keyed by kind, the part of a role the core knows how to enforce. A
 # project names its own roles, but each maps to one of these kinds.
 TOOLS = {
     "analyzer": {
-        "test_list_ready": {"items": ITEMS, "gaps": STR_LIST, "directives": STR_LIST},
+        "test_list_ready": {"items": UNIT_ITEMS, "gaps": STR_LIST, "directives": STR_LIST,
+                            "units": UNITS},
         **ESCALATE,
     },
     "red": {
@@ -76,29 +85,40 @@ def _check(name, value, kind):
     if kind == INT_LIST:
         ok = isinstance(value, list) and all(_is_int(v) for v in value)
         return None if ok else f"{name} must be a {kind}"
-    if kind == ITEMS:
-        return _check_items(name, value)
+    if kind in ITEM_SHAPES:
+        return _check_items(name, value, kind)
+    if kind == UNITS:
+        return _check_units(name, value)
     ok = isinstance(value, list) and all(isinstance(v, dict) for v in value)
     return None if ok else f"{name} must be a list of objects"
 
 
-def _check_items(name, value):
-    """Every item is an object with exactly the item fields, each of its
-    shape: the enum and the required fields are checked here, whether an
-    item says anything useful is the caller's check."""
+def _check_objects(name, value, kind, fields, required):
+    """Every entry is an object with the allowed fields, each of its shape,
+    and every required one: the enum and the required fields are checked
+    here, whether an entry says anything useful is the caller's check."""
     if not isinstance(value, list):
-        return f"{name} must be a {ITEMS}"
+        return f"{name} must be a {kind}"
     problems = []
-    for i, item in enumerate(value):
+    for i, entry in enumerate(value):
         where = f"{name}[{i}]"
-        if not isinstance(item, dict):
+        if not isinstance(entry, dict):
             problems.append(f"{where} must be an object")
             continue
-        problems += [f"{where} is missing {k!r}" for k in ITEM_FIELDS if k not in item]
-        problems += [f"{where} has unexpected {k!r}" for k in item if k not in ITEM_FIELDS]
-        problems += [p for k, shape in ITEM_FIELDS.items() if k in item
-                     for p in [_check(f"{where}.{k}", item[k], shape)] if p]
+        problems += [f"{where} is missing {k!r}" for k in required if k not in entry]
+        problems += [f"{where} has unexpected {k!r}" for k in entry if k not in fields]
+        problems += [p for k, shape in fields.items() if k in entry
+                     for p in [_check(f"{where}.{k}", entry[k], shape)] if p]
     return "; ".join(problems) or None
+
+
+def _check_items(name, value, kind=ITEMS):
+    fields, required = ITEM_SHAPES[kind]
+    return _check_objects(name, value, kind, fields, required)
+
+
+def _check_units(name, value):
+    return _check_objects(name, value, UNITS, UNIT_FIELDS, UNIT_FIELDS)
 
 
 def parse(text, kind):
@@ -118,7 +138,8 @@ def parse(text, kind):
         raise StateError(f"tool {tool!r} is not allowed for a {kind} role; "
                          f"it may call {sorted(TOOLS[kind])}")
     args = data["args"]
-    problems = [f"missing arg {k!r}" for k in spec if k not in args]
+    optional = OPTIONAL_ARGS.get(tool, ())
+    problems = [f"missing arg {k!r}" for k in spec if k not in args and k not in optional]
     problems += [f"unexpected arg {k!r}" for k in args if k not in spec]
     problems += [p for k, shape in spec.items() if k in args
                  for p in [_check(k, args[k], shape)] if p]
@@ -138,8 +159,10 @@ def schema_for(kind):
 def _describe(shape):
     if isinstance(shape, tuple):
         return list(shape)
-    if shape == ITEMS:
-        return {ITEMS: {k: _describe(v) for k, v in ITEM_FIELDS.items()}}
+    if shape in ITEM_SHAPES:
+        return {shape: {k: _describe(v) for k, v in ITEM_SHAPES[shape][0].items()}}
+    if shape == UNITS:
+        return {UNITS: {k: _describe(v) for k, v in UNIT_FIELDS.items()}}
     return shape
 
 
@@ -157,10 +180,11 @@ def _arg_schema(shape):
         return {"type": "boolean"}
     if shape == INT_LIST:
         return {"type": "array", "items": {"type": "integer"}}
-    if shape == ITEMS:
+    if shape in ITEM_SHAPES or shape == UNITS:
+        fields, required = ITEM_SHAPES[shape] if shape in ITEM_SHAPES else (UNIT_FIELDS, UNIT_FIELDS)
         item = {"type": "object", "additionalProperties": False,
-                "required": list(ITEM_FIELDS),
-                "properties": {k: _arg_schema(v) for k, v in ITEM_FIELDS.items()}}
+                "required": list(required),
+                "properties": {k: _arg_schema(v) for k, v in fields.items()}}
         return {"type": "array", "items": item}
     if shape == FINDINGS:
         finding = {"type": "object", "additionalProperties": False,
@@ -168,6 +192,10 @@ def _arg_schema(shape):
                    "properties": {f: {"type": "string"} for f in FINDING_FIELDS}}
         return {"type": "array", "items": finding}
     return {"type": "array", "items": {"type": "string"}}
+
+
+def _required(tool, spec):
+    return [k for k in spec if k not in OPTIONAL_ARGS.get(tool, ())]
 
 
 def json_schema(kind):
@@ -180,9 +208,10 @@ def json_schema(kind):
         "properties": {
             "tool": {"type": "string", "enum": sorted(TOOLS[kind])},
             "args": {"anyOf": [
-                {"type": "object", "additionalProperties": False, "required": list(spec),
+                {"type": "object", "additionalProperties": False,
+                 "required": _required(name, spec),
                  "properties": {k: _arg_schema(v) for k, v in spec.items()}}
-                for spec in TOOLS[kind].values()
+                for name, spec in TOOLS[kind].items()
             ]},
         },
     }
@@ -197,7 +226,7 @@ def host_tools(kind):
         {"name": name, "label": name,
          "description": f"Finish your {kind} step with `{name}`. Call it once, last.",
          "parameters": {"type": "object", "additionalProperties": False,
-                        "required": list(spec),
+                        "required": _required(name, spec),
                         "properties": {k: _arg_schema(v) for k, v in spec.items()}}}
         for name, spec in TOOLS[kind].items()
     ]

@@ -41,6 +41,12 @@ may not have a stub: it changes no non-test file.
 - `redundant`: item texts the analyzer pruned as redundant (same
   equivalence class as a kept item). `[]` when none.
 - `files`: the repository file listing. Read what you need from disk.
+- `created_tests`: test files you created earlier in this run. You may add
+  tests to these as well as create new ones.
+- `unit`, `writable` (parallel lanes only): your lane's unit and the paths
+  it may write. Tests go under its test paths, a stub under its production
+  paths. When a test path is a single file, add every test of the unit to
+  that file once it exists (it is in `created_tests`).
 - `human_responses`: answers to your earlier `escalate` calls. Binding.
 - `last_error`: `{check, exit_code, tail}` when your previous call was
   rejected. Fix exactly that.

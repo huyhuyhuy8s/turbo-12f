@@ -16,6 +16,9 @@ Serves the 12 factors this way:
   the session as soon as one call is accepted.
 - 9, errors in the context window: a rejected call is answered with
   `isError`, so the model sees why and retries in the same session.
+- provider load: omp retries a refused request itself. When it gives up (or
+  the prompt ends on a 429/529/overloaded error), the session ends as
+  "rate-limited", so the caller can run it again later; nothing was judged.
 
 One reader thread feeds a queue, so the wall clock holds even when omp says
 nothing. A second drains stderr, so a chatty omp never blocks on a full pipe
@@ -26,6 +29,7 @@ import collections
 import json
 import os
 import queue
+import re
 import signal
 import subprocess
 import threading
@@ -38,13 +42,23 @@ STDERR_TAIL_LINES = 50
 STDERR_TAIL_CHARS = 2000
 CANCEL_METHODS = frozenset({"select", "confirm", "input", "editor", "ask"})
 _EOF = object()
+# What a provider says when it refuses for load: HTTP 429 and 529, a rate
+# limit, "overloaded_error", "too many requests".
+RATE_LIMITED = re.compile(r"\b(?:429|529)\b|rate[ _-]?limit|overloaded|too many requests", re.I)
+# Frames that carry assistant messages: one `message`, or a list of `messages`.
+MESSAGE_FRAMES = frozenset({"message_end", "turn_end", "agent_end"})
 
 
 @dataclass
 class Outcome:
     """How a worker session ended.
 
-    status: "accepted" | "rejected" | "turn-cap" | "timeout" | "no-call" | "error".
+    status: "accepted" | "rejected" | "turn-cap" | "timeout" | "no-call" | "error"
+        | "rate-limited". The last means the provider refused for load (omp's
+        own retries ended with `auto_retry_end` success false, or the last
+        assistant message stopped with an error naming 429, 529, a rate limit
+        or an overloaded provider): the session is worth running again later,
+        and no work of the model was judged.
     calls: every host tool call as {"tool", "args", "ok", "message"}.
     system_prompt, tools: what omp reported from `get_state` (None if it did not).
     """
@@ -123,6 +137,8 @@ class _Session:
         self.extension_errors = []
         self.system_prompt = None
         self.tools = None
+        self.retrying = False
+        self.rate_error = None
 
     def record(self, direction, frame):
         self.transcript.write(json.dumps({"dir": direction, "frame": frame}) + "\n")
@@ -206,6 +222,8 @@ class _Session:
         _kill(self.proc)
         self.close_stdin()
         self.drain()
+        if self.retrying or self.rate_error:
+            return self.rate_limited()
         return self.outcome("timeout", f"no outcome within {self.timeout_s}s")
 
     def died(self):
@@ -215,6 +233,8 @@ class _Session:
             _kill(self.proc)
             code = self.proc.wait()
         self.stderr_thread.join(KILL_GRACE_S)
+        if self.rate_error:
+            return self.rate_limited()
         tail = "".join(self.stderr_tail).strip()[-STDERR_TAIL_CHARS:]
         detail = f"omp exited with code {code} before a tool call was accepted"
         return self.outcome("error", f"{detail}: {tail}" if tail else detail)
@@ -231,6 +251,20 @@ class _Session:
                 status, detail, abort = verdict
                 return self.conclude(status, detail, abort=abort)
 
+    def note_assistant_stop(self, frame):
+        """Remember the last assistant message that stopped with a rate-limit or overload
+        error; a later message that did not clears it. omp retries on its own, so the
+        refusal counts only if the prompt ends (or omp gives up) with it still standing."""
+        messages = frame.get("messages") if frame.get("type") == "agent_end" else [frame.get("message")]
+        for message in messages or []:
+            if not isinstance(message, dict) or message.get("role") != "assistant":
+                continue
+            text = str(message.get("errorMessage") or "")
+            if message.get("stopReason") == "error" and RATE_LIMITED.search(text):
+                self.rate_error = text
+            else:
+                self.rate_error = None
+
     def on_frame(self, frame):
         """None to keep going, or (status, detail, send_abort) to end the session."""
         kind = frame.get("type")
@@ -240,9 +274,19 @@ class _Session:
         elif kind == "response":
             return self.on_response(frame)
         elif kind == "turn_end":
+            self.note_assistant_stop(frame)
             self.turns += 1
             if self.turns > self.max_turns:
                 return "turn-cap", f"more than {self.max_turns} turns without an accepted call", True
+        elif kind in MESSAGE_FRAMES:
+            self.note_assistant_stop(frame)
+        elif kind == "auto_retry_start":
+            self.retrying = True
+        elif kind == "auto_retry_end":
+            self.retrying = False
+            if frame.get("success") is False:
+                return "rate-limited", f"omp gave up retrying: {frame.get('finalError') or 'no reason given'}", True
+            self.rate_error = None
         elif kind == "host_tool_call":
             return self.on_host_tool_call(frame)
         elif kind == "prompt_result" and frame.get("id") == self.prompt_id:
@@ -290,11 +334,19 @@ class _Session:
                 return "rejected", message, True
         return None
 
+    def rate_limited(self):
+        return self.outcome("rate-limited", self.rate_error or "omp was still retrying a refused request")
+
     def on_prompt_result(self, frame):
         if frame.get("status") == "error":
             error = frame.get("error")
-            message = error.get("message") if isinstance(error, dict) else error
-            return "error", str(message or "omp reported an error"), False
+            message = str((error.get("message") if isinstance(error, dict) else error)
+                          or "omp reported an error")
+            if RATE_LIMITED.search(message):
+                return "rate-limited", message, False
+            return "error", message, False
+        if self.rate_error and not self.retrying:
+            return "rate-limited", self.rate_error, False
         if self.nudged:
             detail = "no tool call after the follow-up prompt"
             if self.last_rejection:

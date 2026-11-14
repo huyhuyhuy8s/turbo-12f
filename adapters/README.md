@@ -197,11 +197,13 @@ could not run (missing token, no label, unreadable profile).
 python3 adapters/runner.py --home <state-home> --queue <queue dir> --max 2 \
   [--omp-cmd omp] [--omp-profile t12-worker] [--omp-model <id>] \
   [--role-model ROLE=MODEL]... [--role-thinking ROLE=LEVEL]... \
-  [--omp-max-cost <usd>] [--skills-cache <dir>] [--notify-cmd "notify-send t12"]
+  [--omp-max-cost <usd>] [--skills-cache <dir>] [--notify-cmd "notify-send t12"] \
+  [--lane-cap 4] [--backoff-base 30] [--backoff-max 600]
 ```
 
 Each pass admits tasks through `bin/t12-queue`, then takes one step
-per run from `t12 board --json`. A step that leaves a run where it
+per run from `t12 board --json` (a run with parallel lanes: one per
+lane, below). A step that leaves a run where it
 was (a refused `act`, a failed gate, a worker that never calls a tool)
 is not retried in the same invocation. The runner exits when a pass
 moves no run, so run it again from cron or when a task file lands in
@@ -286,6 +288,39 @@ Hitting a turn cap aborts the session and the log line says
 `turn-cap`. Every frame, both directions, goes to
 `<scratch>/<task>-<session>.transcript.jsonl`, and the accepted `act`
 records it as the `worker-raw-N.txt` evidence of the call.
+
+**Parallel lanes (Phase 9).** After an analyzer list with `units`
+fans out, `t12 board --json` has the run row (`unit: null`, `next:
+lanes: in flight`, `max_lanes`) and one row per lane that is active,
+waiting or paused (`unit: "U1"`, `waiting` set while it waits for its
+`after` units). The runner steps lane rows at once in a thread pool:
+at most the run row's `max_lanes`, `--lane-cap` (default 4) and, after
+a rate limit, one fewer for each one met, never below one. A lane that
+finishes a step starts its next while a sibling still runs. Lane rows
+take the same vocabulary as the run's: `red: red`, `green: green`,
+`refactor: refactor`, `human: answer '<q>'`, `waiting: after U1, U2`,
+and `tdd-step: integrate`, which runs `t12 tdd-step --unit U`.
+`context`, `tool-schema` and `act` get `--unit U` for a lane row, and
+the session runs in the lane's own worktree (`context.worktree`); a
+blind worktree is made from that. Integration goes one lane at a time
+and run-level steps (`tdd-step`, `gate`, `check`, analyzer, reviewer)
+one at a time per run; the `lanes: in flight` row is never stepped
+and never counts as stuck. A row is named `task@unit` in the log and
+in `waiting ...` lines. A step that did not move a lane is not retried
+in this invocation, and a lane that keeps moving cannot starve its
+siblings: when nothing is in flight each row gets one turn per pass.
+
+**Rate limits.** When omp gives up retrying a refused request
+(`auto_retry_end` with `success: false`), or a prompt ends on an
+assistant error naming 429, 529, a rate limit or an overloaded
+provider, `adapters/omp_rpc.py` ends the session as `rate-limited`.
+The runner treats that as "retry later": it uses no attempt, does not
+mark the row stuck, requeues it after `--backoff-base` seconds
+(default 30, doubling with each refusal of the same row up to
+`--backoff-max`, default 600) and runs the rest of the invocation with
+one fewer concurrent step. A row refused more than 6 times in a row
+is given up on like a step that did not move. Other omp errors are
+not rate limits and are reported as before.
 
 Operator step, once per machine: the `t12-worker` profile starts with
 no login. Run `omp --profile t12-worker`, then `/login`, and leave.

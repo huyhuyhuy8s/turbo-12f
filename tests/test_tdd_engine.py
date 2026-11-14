@@ -2,6 +2,7 @@
 runner runs the command on a detached checkout of the commit, as the
 verification sandbox does, minus the sandbox."""
 
+import copy
 import os
 import subprocess
 import tempfile
@@ -592,6 +593,170 @@ class VerifyCheckTest(unittest.TestCase):
             fh.write("tampered")
         with self.assertRaises(EvidenceError):
             evidence.verify_check(self.home, run)
+
+
+class LaneRunner(FakeRunner):
+    """The fake runner for a lane: commands run on the lane's worktree."""
+
+    lane = None
+
+    def run_on_commit(self, run, commit, argv, name):
+        return super().run_on_commit(dict(run, worktree=self.lane["worktree"]), commit, argv, name)
+
+
+class LaneEngineCase(EngineCase):
+    """The engine on one lane of a parallel run: the lane record and worktree,
+    never the run's own."""
+
+    def setUp(self):
+        super().setUp()
+        self.run_["phase"] = "tdd"
+        self.run_["task_id"] = "demo-1"
+        self.tdd["step"] = "lanes"
+        home = os.path.join(self.tmp.name, "state")
+        os.makedirs(os.path.join(home, "worktrees"))
+        spec = {"id": "U1", "owns": ["app.py"], "tests": ["tests/test_add.py"], "after": [],
+                "needed": ""}
+        self.lane = model.new_lane(home, self.run_, spec, "active")
+        model.new_item(self.lane, self.item())
+        tdd.start_lane(home, self.run_, self.lane)
+        self.runner = LaneRunner(self.tmp.name)
+        self.runner.run = self.run_
+        self.runner.lane = self.lane
+        self.wt = self.lane["worktree"]
+
+    def lane_call(self, handler, args, **kw):
+        return self.call(handler, args, lane=self.lane, **kw)
+
+    def lane_refused(self, handler, args, check, **kw):
+        with self.assertRaises(StateError):
+            self.lane_call(handler, args, **kw)
+        self.assertEqual(self.lane["last_error"]["check"], check)
+
+    def lane_red(self, rel="tests/test_add.py", text=ADD_TEST, **kw):
+        with open(os.path.join(self.wt, rel), "w") as fh:
+            fh.write(text)
+        return self.lane_call(tdd.red, self.red_args("U1-T1", test_file=rel), **kw)
+
+    def lane_patch(self, files):
+        for rel, text in files.items():
+            with open(os.path.join(self.wt, rel), "w") as fh:
+                fh.write(text)
+        sh(self.wt, "git", "add", "-N", ".")
+        patch = sh(self.wt, "git", "diff")
+        sh(self.wt, "git", "reset", "-q", "--hard")
+        sh(self.wt, "git", "clean", "-fdq")
+        return patch
+
+
+class LaneEngineTest(LaneEngineCase):
+    def test_a_lane_cycle_changes_only_the_lane(self):
+        before = copy.deepcopy(self.run_)
+        self.lane_red()
+        self.lane_call(tdd.green, {"summary": "add"},
+                       patch=self.lane_patch({"app.py": "def add(a, b):\n    return a + b\n"}))
+        self.lane_call(tdd.refactor, {"summary": "nothing", "changed": False}, patch="")
+        self.assertEqual(self.run_, before)
+        self.assertEqual(gitio.head(self.repo), before["tdd"]["last_good_commit"])
+        self.assertEqual(gitio.head(self.wt), self.lane["last_good_commit"])
+        self.assertEqual(self.lane["items"][0]["status"], "done")
+        self.assertEqual((self.lane["cycle"], self.lane["step"]), (1, "red"))
+
+    def test_a_lane_names_its_evidence_and_counts_its_own_operations(self):
+        self.lane_red()
+        self.assertEqual(self.lane["red"]["output"]["name"], "U1/tdd-001-red.txt")
+        self.assertEqual((self.lane["ops_used"], self.run_["budgets"]["ops_used"]), (1, 0))
+
+    def test_red_outside_the_units_tests_is_lane_scope(self):
+        self.lane["tests"] = ["tests/test_other.py"]
+        self.lane["last_good_commit"] = gitio.head(self.wt)
+        self.write_lane("tests/test_add.py", ADD_TEST)
+        self.lane_refused(tdd.red, self.red_args("U1-T1"), "lane-scope")
+
+    def write_lane(self, rel, text):
+        with open(os.path.join(self.wt, rel), "w") as fh:
+            fh.write(text)
+
+    def test_a_green_patch_outside_the_units_owns_is_lane_scope(self):
+        self.lane_red()
+        self.lane["owns"] = ["other.py"]
+        patch = self.lane_patch({"app.py": "def add(a, b):\n    return a + b\n"})
+        self.lane_refused(tdd.green, {"summary": "x"}, "lane-scope", patch=patch)
+        self.assertTrue(gitio.is_clean(self.wt))
+        self.assertEqual(self.lane["attempts"]["green"], 1)
+
+    def test_a_refactor_patch_outside_the_units_owns_is_lane_scope(self):
+        self.lane_red()
+        self.lane_call(tdd.green, {"summary": "add"},
+                       patch=self.lane_patch({"app.py": "def add(a, b):\n    return a + b\n"}))
+        self.assertEqual(self.lane["step"], "refactor")
+        self.lane["owns"] = ["other.py"]
+        patch = self.lane_patch({"app.py": "def add(a, b):\n    return b + a\n"})
+        self.lane_refused(tdd.refactor, {"summary": "x", "changed": True}, "lane-scope",
+                          patch=patch)
+
+    def test_no_cheat_left_finishes_the_lane(self):
+        self.lane_red()
+        self.lane_call(tdd.green, {"summary": "add"},
+                       patch=self.lane_patch({"app.py": "def add(a, b):\n    return a + b\n"}))
+        self.lane_call(tdd.refactor, {"summary": "nothing", "changed": False}, patch="")
+        self.lane_call(tdd.no_cheat_left, {"reason": "done"})
+        self.assertEqual((self.lane["step"], self.lane["status"]), ("final", "done"))
+        self.assertEqual(self.tdd["step"], "lanes")
+
+    def test_a_lane_that_is_not_active_takes_no_call(self):
+        self.lane["status"] = "paused"
+        with self.assertRaises(StateError):
+            self.lane_red()
+        self.lane["status"] = "active"
+        self.run_["phase"] = "paused"
+        with self.assertRaises(StateError):
+            self.lane_red()
+
+    def test_the_analyzer_does_not_run_in_a_lane(self):
+        with self.assertRaises(StateError):
+            self.lane_call(tdd.analyze, {"items": [self.item()], "gaps": [], "directives": []})
+
+    def test_events_are_saved_through_the_lane_runner(self):
+        self.lane_red()
+        self.assertEqual(self.runner.types(), ["tdd-red"])
+
+    def test_contexts_are_the_lanes(self):
+        context = tdd.red_context(self.run_, self.lane)
+        self.assertEqual([i["id"] for i in context["items"]], ["U1-T1"])
+        self.assertEqual((context["unit"], context["writable"]), ("U1", ["app.py", "tests/test_add.py"]))
+        self.lane_red()
+        context = tdd.green_context(self.run_, self.lane)
+        self.assertEqual((context["current_item"]["id"], context["writable"]), ("U1-T1", ["app.py"]))
+        self.assertNotIn("unit", tdd.green_context(self.run_))
+
+
+class LaneAttemptLimitTest(LaneEngineCase):
+    attempt_limit = 1
+
+    def test_the_limit_pauses_the_lane_and_leaves_the_run_running(self):
+        args = self.red_args("U1-T1")
+        self.lane_refused(tdd.red, args, "red-test-file")
+        message = self.lane_call(tdd.red, args)
+        self.assertTrue(message.startswith("paused"))
+        self.assertEqual(self.lane["status"], "paused")
+        self.assertEqual(self.lane["escalations"][0]["kind"], "attempt-limit")
+        self.assertEqual(self.run_["phase"], "tdd")
+        self.assertEqual(self.run_["escalations"], [])
+        self.assertEqual(self.runner.types()[-1], "human-contact")
+
+
+class StartLaneTest(LaneEngineCase):
+    def test_a_started_lane_forks_from_the_integration_tip(self):
+        self.assertEqual(self.lane["fork_commit"], self.tdd["last_good_commit"])
+        self.assertEqual(gitio.current_branch(self.wt), "t12/demo-1/U1")
+        self.assertEqual(gitio.head(self.wt), self.tdd["last_good_commit"])
+
+    def test_starting_again_replaces_what_a_crashed_step_left(self):
+        with open(os.path.join(self.wt, "stray.txt"), "w") as fh:
+            fh.write("x")
+        tdd.start_lane("home", self.run_, self.lane)
+        self.assertFalse(os.path.exists(os.path.join(self.wt, "stray.txt")))
 
 
 if __name__ == "__main__":

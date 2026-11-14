@@ -30,6 +30,8 @@ an issue, so the profile is the floor:
   worker's worktree.
 - budgets (time_limit_s, op_limit, repair_cap, cycle_limit,
   attempt_limit): the task wins.
+- max_lanes: how many tdd lanes may run at once (default 3, the task
+  wins); 1 takes the serial path whatever units the analyzer declares.
 - protected_paths, security_review_paths, roles, intake, skills: profile
   only. `skills` pins third-party skills per role (repo, commit, hash);
   the core checks their shape and picks a role's applicable pins from
@@ -124,6 +126,7 @@ TASK_KEYS = {
     "repair_cap": (int, _task_wins),
     "cycle_limit": (int, _task_wins),
     "attempt_limit": (int, _task_wins),
+    "max_lanes": (int, _task_wins),
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
 PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills")
@@ -379,7 +382,7 @@ def _check_value(where, key, value):
         _check_pattern(where, key, value, groups=1)
     elif key in ("red_stub_max_lines", "refactor_skip_max_lines") and value < 0:
         raise StateError(f"{where}: {key} must be >= 0")
-    elif key in ("cycle_limit", "attempt_limit") and value <= 0:
+    elif key in ("cycle_limit", "attempt_limit", "max_lanes") and value <= 0:
         raise StateError(f"{where}: {key} must be > 0")
 
 

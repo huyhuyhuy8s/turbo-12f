@@ -132,6 +132,48 @@ class Items(unittest.TestCase):
         self.assertIn("items[1].text", message)
 
 
+UNIT = {"id": "U1", "owns": ["src/a.py"], "tests": ["tests/test_a.py"], "after": [],
+        "needed": ""}
+
+
+class Units(unittest.TestCase):
+    def parse(self, **extra):
+        return tools.parse(call("test_list_ready", items=[dict(ITEM, unit="U1")], gaps=[],
+                                directives=[], **extra), "analyzer")
+
+    def problems(self, **extra):
+        with self.assertRaises(StateError) as ctx:
+            self.parse(**extra)
+        return str(ctx.exception)
+
+    def test_units_are_optional_and_so_is_an_items_unit(self):
+        tools.parse(call("test_list_ready", items=[ITEM], gaps=[], directives=[]), "analyzer")
+        _, args = self.parse(units=[UNIT, dict(UNIT, id="U2", needed="own module")])
+        self.assertEqual([u["id"] for u in args["units"]], ["U1", "U2"])
+        self.assertEqual(args["items"][0]["unit"], "U1")
+
+    def test_a_unit_has_exactly_its_fields(self):
+        for field in tools.UNIT_FIELDS:
+            unit = {k: v for k, v in UNIT.items() if k != field}
+            self.assertIn(f"units[0] is missing {field!r}", self.problems(units=[unit]), field)
+        self.assertIn("units[0] has unexpected 'glob'", self.problems(units=[dict(UNIT, glob="*")]))
+
+    def test_unit_field_shapes_are_checked(self):
+        for bad in ({"id": ""}, {"owns": "a.py"}, {"tests": [1]}, {"after": None}, {"needed": 3}):
+            self.assertIn("units[0]", self.problems(units=[dict(UNIT, **bad)]), bad)
+        self.assertIn("must be a list of units", self.problems(units={"id": "U1"}))
+
+    def test_red_may_not_name_a_unit_in_its_added_items(self):
+        message = ""
+        try:
+            tools.parse(call("red_test_ready", item_id="T1", test_file="t.py", test_name="n",
+                             last_assertion_line=1, defeats="d",
+                             add_items=[dict(ITEM, unit="U1")]), "red")
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("add_items[0] has unexpected 'unit'", message)
+
+
 class Schema(unittest.TestCase):
     def test_every_tool_and_arg_of_a_kind_is_in_its_schema(self):
         for kind, specs in tools.TOOLS.items():
@@ -139,7 +181,11 @@ class Schema(unittest.TestCase):
             self.assertEqual(schema["type"], "object")
             self.assertEqual(schema["properties"]["tool"]["enum"], sorted(specs))
             args = [sorted(a["required"]) for a in schema["properties"]["args"]["anyOf"]]
-            self.assertEqual(sorted(args), sorted(sorted(spec) for spec in specs.values()))
+            required = [sorted(k for k in spec if k not in tools.OPTIONAL_ARGS.get(name, ()))
+                        for name, spec in specs.items()]
+            self.assertEqual(sorted(args), sorted(required))
+            every = [sorted(a["properties"]) for a in schema["properties"]["args"]["anyOf"]]
+            self.assertEqual(sorted(every), sorted(sorted(spec) for spec in specs.values()))
 
     def test_an_enum_arg_is_closed_to_its_values(self):
         review = tools.json_schema("review")["properties"]["args"]["anyOf"]
@@ -154,6 +200,7 @@ class Schema(unittest.TestCase):
         self.assertEqual(items["type"], "array")
         item = items["items"]
         self.assertEqual(item["required"], list(tools.ITEM_FIELDS))
+        self.assertEqual(sorted(item["properties"]), sorted([*tools.ITEM_FIELDS, "unit"]))
         self.assertFalse(item["additionalProperties"])
         self.assertEqual(item["properties"]["kind"]["enum"], list(tools.ITEM_KINDS))
         self.assertEqual(item["properties"]["criteria"],
@@ -161,7 +208,9 @@ class Schema(unittest.TestCase):
         [red] = [a for a in tools.json_schema("red")["properties"]["args"]["anyOf"]
                  if "last_assertion_line" in a["properties"]]
         self.assertEqual(red["properties"]["last_assertion_line"], {"type": "integer"})
-        self.assertEqual(red["properties"]["add_items"]["items"], item)
+        red_item = {**item, "properties": {k: v for k, v in item["properties"].items()
+                                           if k != "unit"}}
+        self.assertEqual(red["properties"]["add_items"]["items"], red_item)
         [refactor] = [a for a in tools.json_schema("refactor")["properties"]["args"]["anyOf"]
                       if "changed" in a["properties"]]
         self.assertEqual(refactor["properties"]["changed"], {"type": "boolean"})
@@ -172,12 +221,16 @@ class Schema(unittest.TestCase):
             hosts = tools.host_tools(kind)
             self.assertEqual([t["name"] for t in hosts], list(specs))
             for host in hosts:
+                optional = tools.OPTIONAL_ARGS.get(host["name"], ())
                 self.assertEqual(sorted(host["parameters"]["required"]),
+                                 sorted(k for k in specs[host["name"]] if k not in optional))
+                self.assertEqual(sorted(host["parameters"]["properties"]),
                                  sorted(specs[host["name"]]))
         json.dumps([tools.schema_for(k) for k in tools.KINDS])
         [analyzer] = [t for t in tools.schema_for("analyzer") if t["name"] == "test_list_ready"]
-        self.assertEqual(analyzer["args"]["items"][tools.ITEMS]["kind"],
+        self.assertEqual(analyzer["args"]["items"][tools.UNIT_ITEMS]["kind"],
                          list(tools.ITEM_KINDS))
+        self.assertEqual(analyzer["args"]["units"][tools.UNITS]["owns"], "list of strings")
 
 
 if __name__ == "__main__":

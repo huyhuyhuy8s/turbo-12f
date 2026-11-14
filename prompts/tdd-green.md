@@ -29,6 +29,8 @@ anything; the guard refuses it.
 | `findings` | Only in repair mode: the output of a failed gate, sanitized the same way. This is the behaviour that is broken; fix it. |
 | `human_responses` | Answers a human gave to earlier escalations. Binding. |
 | `last_error` | Present only on a retry: what the check reported. Fix exactly that. |
+| `unit`, `writable` | Only when the work is split into lanes: your unit and the paths you may change. A patch touching any other path is refused. |
+| `integration` | Only on the integration green, `true`: two merged units each pass alone and fail together. `writable` then lists the files of every unit in the merge; fix the failure shown in `failure` wherever in them it belongs. |
 
 There are no acceptance criteria, no test paths, no test names and no test
 list in your context. Do not look for them.
