@@ -1,0 +1,21 @@
+title: "[Idea]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What goes wrong or takes too long today. A run, a `t12 retro` finding or a measured number helps.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change, and which of the 12 factors or which `CONTEXT.md` boundary it touches.
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: How the core would enforce it
+      description: A check (a gate, a probe, a refusal, a stricter tool field) is preferred to more prompt text.

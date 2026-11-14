@@ -18,7 +18,7 @@ from . import tdd as tdd_mod
 from . import profile as profile_mod
 from .errors import StateError, T12Error
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

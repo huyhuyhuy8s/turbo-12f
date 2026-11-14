@@ -1,0 +1,51 @@
+name: Bug report
+description: The factory did something its docs say it does not, or refused something it should accept.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If a worker got past the guard, a command escaped the sandbox, or the core accepted a step its evidence does not support, report it privately instead, as SECURITY.md describes.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and the output or refusal you got.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Name the doc section that says so, if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The task file, the relevant part of `.t12/project.json`, and the steps. A disposable repo is best.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Run evidence
+      description: Output of `bin/t12 verify` and `bin/t12 status`, and the events around the failure from `runs/<task>.events.jsonl`. Remove anything private first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `bin/t12 --version`, and the commit if you run from a checkout.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and kernel, sandbox adapter (landlock, docker or none), Python version, and the omp version if workers were involved.
+    validations:
+      required: true
