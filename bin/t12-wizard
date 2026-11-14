@@ -63,6 +63,8 @@ def cmd_setup(args, retry):
         values[key] = v
     if values["rules_branch"] not in ("main", "local"):
         sys.exit("--rules-branch must be main or local")
+    if args.test_command:
+        values["test_command"] = args.test_command
     work = os.path.abspath(values["work_dir"])
     values["work_dir"] = work
     ws_path = os.path.join(work, WORKSPACE)
@@ -97,9 +99,12 @@ def cmd_setup(args, retry):
         profile = os.path.join(product, ".t12", "project.json")
         os.makedirs(os.path.dirname(profile), exist_ok=True)
         with open(profile, "w") as f:
-            json.dump({"name": os.path.basename(product), "gates": [],
+            starter = {"name": os.path.basename(product), "gates": [],
                        "intake": {"adapter": "github-issues", "repo": slug(values["product_repo"]),
-                                  "label": LABEL}}, f, indent=2)
+                                  "label": LABEL}}
+            if args.test_command:
+                starter["test_command"] = shlex.split(args.test_command)
+            json.dump(starter, f, indent=2)
             f.write("\n")
         run("commit starter profile", ["git", "add", ".t12/project.json"], cwd=product, retry=retry)
         staged = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=product).returncode != 0
@@ -115,6 +120,9 @@ def cmd_setup(args, retry):
         json.dump(values, f, indent=2)
         f.write("\n")
     print(f"workspace ready: {ws_path}")
+    if values["rules_branch"] == "local" and not args.test_command:
+        print(f"note: the starter profile sets no test_command, and every run needs one: add it "
+              f"to .t12/project.json on {TRUNK} in {product} (or rerun setup with --test-command)")
 
 
 def load_workspace():
@@ -202,7 +210,11 @@ def cmd_run(args):
         return 0
     interval = float(os.environ.get("T12_WIZARD_PROGRESS_SECS", "60"))
     cmd = [sys.executable, os.path.join(work, "factory", "adapters", "runner.py"),
-           "--home", state, "--queue", queue, "--model-cmd", ws["model_cmd"]]
+           "--home", state, "--queue", queue]
+    for key, flag in (("omp_cmd", "--omp-cmd"), ("omp_profile", "--omp-profile"),
+                      ("omp_model", "--omp-model")):
+        if ws.get(key):
+            cmd += [flag, ws[key]]
     with tempfile.TemporaryFile("w+") as err:
         proc = subprocess.Popen(cmd, stderr=err, text=True)
         steps = {}
@@ -264,7 +276,10 @@ def cmd_deliver(args):
     run_rec = load_run(work, args.issue)
     if run_rec["phase"] != "local-verified":
         sys.exit(f"{task} is in phase '{run_rec['phase']}', not local-verified; nothing was pushed")
-    wt, adapter = run_rec["worktree"], run_rec["delivery_adapter"]
+    wt, adapter = run_rec["worktree"], run_rec.get("delivery_adapter")
+    if not adapter:
+        sys.exit(f"{task} has no delivery adapter: set `delivery` in the profile on the trunk branch, "
+                 "then prepare the task again; nothing was pushed")
     token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True).stdout.strip()
     env = {**os.environ, "GITHUB_TOKEN": token or os.environ.get("GITHUB_TOKEN", "")}
     report = os.path.join(state, "reports", f"{task}-delivery.json")
@@ -273,7 +288,8 @@ def cmd_deliver(args):
     steps = (
         ("push branch", ["git", "push", "origin", run_rec["branch"]]),
         ("open pull request", [sys.executable, os.path.join(work, "factory", "adapters", adapter + ".py"),
-                               "create-pr", "--home", state, "--task-id", task, "--out", report]),
+                               "create-mr" if adapter == "gitlab" else "create-pr",
+                               "--home", state, "--task-id", task, "--out", report]),
         ("record delivery", [t12, "deliver", "--home", state, "--task-id", task,
                              "--adapter", adapter, "--report", report]),
     )
@@ -323,6 +339,8 @@ def main():
     s = sub.add_parser("setup")
     for key, flag, _ in FIELDS:
         s.add_argument(flag, dest=key)
+    s.add_argument("--test-command", help="the product's test command, for the starter profile "
+                                          "(local rules branch only)")
     s.add_argument("--factory-repo", default=DEFAULT_FACTORY)
     s.add_argument("--yes", action="store_true")
     sub.add_parser("status")

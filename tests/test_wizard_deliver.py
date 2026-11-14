@@ -83,8 +83,7 @@ class DeliverTest(unittest.TestCase):
         with open(os.path.join(self.work, "t12-workspace.json"), "w") as f:
             json.dump({"product_repo": "https://github.com/acme/shop.git",
                        "work_dir": self.work, "commit_name": "Ada",
-                       "commit_email": "ada@example.com", "rules_branch": "main",
-                       "model_cmd": "fake-model"}, f)
+                       "commit_email": "ada@example.com", "rules_branch": "main"}, f)
         self.run_record("local-verified")
 
     def install(self, path, name, body):

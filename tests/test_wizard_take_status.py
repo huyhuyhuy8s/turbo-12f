@@ -146,7 +146,7 @@ class TakeStatusTest(unittest.TestCase):
         self.board([
             {"task_id": "gh-1", "phase": "local-verified", "next": "human: merge"},
             {"task_id": "gh-2", "phase": "paused", "next": "human: answer 'Which colour?'"},
-            {"task_id": "gh-3", "phase": "red", "next": "builder: stage"},
+            {"task_id": "gh-3", "phase": "tdd", "next": "red: red"},
             {"task_id": "gh-4", "phase": "stopped", "next": "stopped: budget spent"},
         ])
         r, out = self.run_wizard(["status"])

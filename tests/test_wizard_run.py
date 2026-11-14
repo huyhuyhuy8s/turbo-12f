@@ -3,9 +3,11 @@ in a temporary workspace; nothing touches the network, a socket, or the
 real home directory.
 
 Contract the tests pin down (the implementation must follow it):
-- the workspace file t12-workspace.json carries `model_cmd`;
-- `run` calls <work>/factory/adapters/runner.py with --home, --queue and
-  --model-cmd taken from the workspace (the user passes none);
+- the workspace file t12-workspace.json may carry `omp_cmd`, `omp_profile`
+  and `omp_model`;
+- `run` calls <work>/factory/adapters/runner.py with --home and --queue, and
+  --omp-model (and the other omp flags) only for the keys the workspace
+  carries (the user passes none);
 - while the runner is alive, `run` reads `<work>/factory/bin/t12 board
   --home <state> --json` and prints a progress line each interval; the
   interval in seconds comes from env T12_WIZARD_PROGRESS_SECS (default 60).
@@ -30,7 +32,7 @@ with open(os.path.join(os.environ["FAKE_STATE"], "log.jsonl"), "a") as f:
     f.write(json.dumps({{"tool": "runner", "args": sys.argv[1:]}}) + "\n")
 time.sleep(float(os.environ.get("FAKE_RUNNER_SLEEP", "0")))
 if os.environ.get("FAKE_RUNNER_FAIL"):
-    sys.stderr.write("gh-7: builder step failed: boom\n")
+    sys.stderr.write("gh-7: red step failed: boom\n")
     sys.exit(2)
 '''
 
@@ -43,7 +45,7 @@ if sys.argv[1:2] == ["board"]:
 sys.exit(1)
 '''
 
-ROW = {"task_id": "gh-7", "phase": "red", "next": "builder: stage", "busy": True}
+ROW = {"task_id": "gh-7", "phase": "tdd", "next": "red: red", "busy": True}
 
 
 class RunTest(unittest.TestCase):
@@ -64,7 +66,7 @@ class RunTest(unittest.TestCase):
             json.dump({"product_repo": "https://example.invalid/acme/shop.git",
                        "work_dir": self.work, "commit_name": "Ada",
                        "commit_email": "ada@example.com", "rules_branch": "main",
-                       "model_cmd": "fake-model --flag"}, f)
+                       "omp_model": "provider/model"}, f)
         self.board([])
 
     @staticmethod
@@ -108,7 +110,9 @@ class RunTest(unittest.TestCase):
         a = calls[0]
         self.assertEqual(os.path.realpath(a[a.index("--home") + 1]), os.path.join(self.work, "state"))
         self.assertEqual(os.path.realpath(a[a.index("--queue") + 1]), self.queue)
-        self.assertEqual(a[a.index("--model-cmd") + 1], "fake-model --flag")
+        self.assertEqual(a[a.index("--omp-model") + 1], "provider/model")
+        self.assertNotIn("--omp-cmd", a)
+        self.assertNotIn("--model-cmd", a)
 
     def test_run_prints_progress_while_a_step_runs(self):
         self.queue_task()
@@ -116,7 +120,7 @@ class RunTest(unittest.TestCase):
         r, out = self.run_wizard(["run"], FAKE_RUNNER_SLEEP="3.5",
                                  T12_WIZARD_PROGRESS_SECS="1")
         self.assertEqual(r.returncode, 0, out)
-        lines = [ln for ln in out.splitlines() if "gh-7" in ln and "builder" in ln]
+        lines = [ln for ln in out.splitlines() if "gh-7" in ln and "red" in ln]
         self.assertGreaterEqual(len(lines), 2, out)
         for ln in lines:
             self.assertRegex(ln, r"\d+\s*(s\b|sec|second|m\b|min)", ln)

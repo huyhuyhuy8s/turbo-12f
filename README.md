@@ -1,26 +1,132 @@
 # turbo-12f
 
-A local-only rebuild of the best of Turbo, strictly on the
-12-Factor Agents manifesto (Dex Horthy, HumanLayer) and the
-super-board reviewer workflow. It is an evidence-and-policy layer
-around AI coding work: it does not make the agent smarter, it makes
-agent work bounded, reproducible, inspectable, and hard to mark
-"successful" without matching evidence.
+> A local software factory that turns a task file into a reviewed,
+> test-driven candidate commit, and keeps the evidence for every step.
 
-This is **not** the GitHub `huyle-gradion/turbo` repo. It lives only
-on this machine, has no GitHub/Asana integration yet, and never calls
-a model itself — the model is invoked by the operator with the owned
-prompts in `prompts/`, and this CLI is the deterministic shell around
-it. See `DESIGN.md` for the full architecture and the factor-by-factor
-map, and `CONTEXT.md` for truth boundaries.
+turbo-12f is an evidence-and-policy layer around AI coding work, built
+strictly on [12-Factor Agents](https://github.com/humanlayer/12-factor-agents)
+(Dex Horthy, HumanLayer) and the super-board reviewer workflow. It
+rebuilds the best of Turbo to run locally. Its home is
+[huyle-gradion/turbo-12f](https://github.com/huyle-gradion/turbo-12f),
+not the `huyle-gradion/turbo` repo; contact huy.leminh@gradion.com.
 
-Python standard library only. No network, no credentials, no model
-calls in the core or the tests.
+The core is a deterministic CLI (`bin/t12`). It never calls a model:
+workers are omp sessions started by `adapters/runner.py` (or by an
+operator by hand) with the owned prompts in `prompts/`. Each worker
+ends its step with a tool call, and the core checks it, runs the tests
+itself, records the result as hashed evidence, and decides the next
+step. Forges and trackers are reached only through the adapters in
+`adapters/`.
 
-To have your coding agent run the factory on your repo for you, give
-it `docs/operator-agent.md`.
+> [!NOTE]
+> The core and the tests use only the Python standard library, with
+> no network, credentials or model calls.
+
+## Features
+
+- **Test-driven by construction.** An analyzer turns the acceptance
+  criteria into a test list. Red writes one failing test at a time,
+  and the core checks that it fails at the stated assertion. Green
+  and refactor work in a blind worktree with no test files, and never
+  run tests themselves.
+- **Evidence, not declarations.** Every test run, gate and review is
+  stored with its argv, exit code, output, SHA-256 and commit, in a
+  hash-chained event log that `t12 verify` audits.
+- **Bounded autonomy.** Time, operation, cycle, attempt and repair
+  budgets per task. A spent budget or a question the worker cannot
+  answer pauses the run for a human.
+- **Sandboxed verification.** Tests and gates run in a fresh checkout
+  under Landlock (Linux) or Docker, with credentials stripped and no
+  network.
+- **Parallel lanes.** The analyzer can split the work into units that
+  own separate files; each runs as its own lane, and the core merges
+  them one at a time and reruns every test on the merge.
+- **One reviewer for quality and security**, on a model you choose,
+  bound to the candidate commit.
+- **Delivery adapters** for GitHub, GitLab, Bitbucket and Asana, plus
+  intake from GitHub issues, GitLab issues and Asana tasks. With a
+  `delivery` key in the profile the runner pushes a verified run and
+  opens the change request itself. The adapter never merges.
+- **A guided setup.** `bin/t12-wizard` sets up a workspace with a
+  factory clone and a product clone, takes issues, runs the factory and
+  delivers.
+
+## How it works
+
+```mermaid
+flowchart LR
+    P[prepare] --> A[analyzer]
+    A --> R[red]
+    R --> G[green]
+    G --> F[refactor]
+    F -->|next item| R
+    F --> T[final]
+    T --> Ga[gates]
+    Ga -->|failure| G
+    Ga --> Rv[review]
+    Rv -->|changes requested| A
+    Rv --> C[check]
+    C --> L[local-verified]
+```
+
+A refactor step is skipped after a small green. When the analyzer
+splits the list into units, each unit runs the red, green and refactor
+loop in its own lane, and `t12 tdd-step --unit` merges the lanes before
+`final`.
+
+> [!IMPORTANT]
+> `local-verified` means the configured evidence chain was observed
+> and is internally consistent. It is not acceptance and not
+> permission to merge: a human merges.
+
+## Prerequisites
+
+- Python 3 and git (the container image and the tests use Python 3.12)
+- omp (oh-my-pi) to run workers through the runner, with a logged-in
+  `t12-worker` profile
+- Linux with Landlock for the verification sandbox, or Docker
 
 ## Quick start
+
+Point the factory at a product repo. The state home holds runs and
+evidence, outside the repo:
+
+```sh
+bin/t12 init --repo /path/to/product --home /path/to/state-home
+bin/t12 prepare --home /path/to/state-home --task examples/task.json
+```
+
+The product repo describes its test, lint and gate commands in
+`.t12/project.json`; a task file adds the acceptance criteria (see
+`examples/task.json`). Then let the runner drive every step with omp
+workers:
+
+```sh
+omp --profile t12-worker        # once per machine: /login, then leave
+python3 adapters/runner.py --home /path/to/state-home \
+  --role-model reviewer=anthropic/claude-opus-5-5 --role-thinking reviewer=high
+bin/t12 board --home /path/to/state-home
+```
+
+The runner stops when every run is `local-verified` or waiting for a
+human. If the profile has a `delivery` key it also pushes each verified
+run and opens the change request (set `GITHUB_TOKEN`, `GITLAB_TOKEN` or
+`BITBUCKET_TOKEN`). Answer a paused run with `t12 resume --answer`,
+then deliver by hand when the profile names no forge:
+
+```sh
+python3 adapters/github.py create-pr --home /path/to/state-home \
+  --task-id demo-1 --out delivery.json
+bin/t12 deliver --home /path/to/state-home --task-id demo-1 \
+  --adapter github --report delivery.json
+```
+
+> [!TIP]
+> To have your coding agent run the factory on your repo for you, give
+> it [`docs/operator-agent.md`](docs/operator-agent.md).
+
+<details>
+<summary>Driving the steps by hand</summary>
 
 ```sh
 # 1. Point it at a product repo (state lives outside the repo)
@@ -29,434 +135,42 @@ bin/t12 init --repo /path/to/product --home /path/to/state-home
 # 2. Admit a task (examples/task.json)
 bin/t12 prepare --home /path/to/state-home --task examples/task.json
 
-# 3. Ask the test-writer for a failing test, then record it
+# 3. TDD lane. Ask each role for its step with `t12 status` / `t12 context`,
+#    and hand its tool call to `t12 act`; a green or refactor call carries
+#    the patch the runner exported from the blind worktree.
 bin/t12 context --home /path/to/state-home --task-id demo-1 \
-  --role test-writer --phase red
-bin/t12 red --home /path/to/state-home --task-id demo-1 \
-  --test-path tests/test_demo.py \
-  --command "python3 -m pytest tests/test_demo.py -q" \
-  --marker "FAILED"
+  --role analyzer --phase analyze
+bin/t12 act --home /path/to/state-home --task-id demo-1 \
+  --role analyzer --session <analyzer-session> --input test-list.json
+#    ...then per item: red (red_test_ready), green (green_ready --patch FILE),
+#    refactor (refactor_done --patch FILE). When the next step is `tdd-step`:
+bin/t12 tdd-step --home /path/to/state-home --task-id demo-1
 
-# 4. Ask the builder to implement, then pin the candidate
-#    (see "Caging the builder" to run it away from .git and the state home)
-bin/t12 context --home /path/to/state-home --task-id demo-1 \
-  --role builder --phase implement
-bin/t12 stage --home /path/to/state-home --task-id demo-1
+# 4. Run the gates in order (the existing suite, e2e)
+bin/t12 gate --home /path/to/state-home --task-id demo-1
 
-# 5. Run the gates in order, replay the red test, review, certify
-bin/t12 gate --home /path/to/state-home --task-id demo-1 --name unit
-bin/t12 replay --home /path/to/state-home --task-id demo-1
+# 5. One review (quality + security), certify, write the manifest
 bin/t12 review --home /path/to/state-home --task-id demo-1 --role reviewer \
   --session <reviewer-session> --verdict approve --report review.md
-bin/t12 green --home /path/to/state-home --task-id demo-1
+bin/t12 check --home /path/to/state-home --task-id demo-1
 bin/t12 manifest --home /path/to/state-home --task-id demo-1
+
+# Or let the runner drive every step with omp workers (see adapters/README.md)
+python3 adapters/runner.py --home /path/to/state-home --queue queue
 ```
 
-Each role step carries its own session id (`--session` on red,
-stage, gate, review); one session serves exactly one role per run,
-so the test-writer cannot stage and the builder cannot review. A
-task lists the reviews green requires in `required_reviews`
-(default `["reviewer"]`; add `"security"` when it matters).
+</details>
 
-Roles are names; each maps to one of four kinds, which fix the tools
-it may call: `test-writer` (`red_test_ready`), `builder`
-(`implementation_ready`), `qa` (`qa_report`) and `review` (`review`).
-Every kind may call `escalate`. The built-in roles are test-writer,
-builder, qa, and reviewer and security (both `review`). A project
-adds its own roles in its profile (see below); `prepare` freezes the
-run's roles, and `act`, `review` and `context` refuse a role the run
-does not have.
+## Documentation
 
-## Delivery
-
-The core never touches the network. Adapters do the remote work and
-write a report; `t12 deliver` records it:
-
-```bash
-export GITHUB_TOKEN=...   # or GITLAB_TOKEN, BITBUCKET_TOKEN, ASANA_TOKEN
-python3 adapters/github.py create-pr --home /path/to/state-home \
-  --task-id demo-1 --out delivery.json
-bin/t12 deliver --home /path/to/state-home --task-id demo-1 \
-  --adapter github --report delivery.json
-```
-
-Outcomes: `confirmed` (remote read back and matching), `rejected`
-(remote said no), `denied` (mutation refused for permission),
-`uncertain` (state unknown). An uncertain outcome blocks further
-delivery for that adapter until a read-back report is recorded
-with `--resolves` — never retry the action blind. The adapter
-never merges; a human merges the PR. See `adapters/README.md`.
-
-Any forge works the same way. `adapters/github.py create-pr`,
-`adapters/gitlab.py create-mr` (merge request, `GITLAB_URL` for
-self-hosted) and `adapters/bitbucket.py create-pr` (Bitbucket Cloud)
-share one contract: find or create the change request for the
-branch, read it back, and compare its head to the reviewed
-candidate. Record the report with `--adapter github|gitlab|bitbucket`.
-The target comes from the task's `github_repo`, `gitlab_project` or
-`bitbucket_repo` field, a flag, or the origin remote.
-
-`local-verified` means the configured evidence chain was observed and
-is internally consistent. It is not acceptance and not permission to
-merge — a human merges.
-
-## Commands
-
-| Command | What it does |
+| Document | What it covers |
 |---|---|
-| `init` | Bind a repo + state home, create the directory layout |
-| `prepare` | Admit a task: validate repo/base/branch/gates, create worktree + run record (`--supersede` archives a stopped run and starts fresh) |
-| `context` | Print the role's prompt and skills + minimal context (Factor 2/3/9); the JSON's `instructions` lists the source, path and SHA-256 of each file used |
-| `red` | Run the test command, expect failure + marker, commit the test, record red evidence |
-| `stage` | Pin the candidate commit; verify ancestry, clean tree, unchanged test blob |
-| `gate` | Run one gate in order; failure counts against the repair cap (`--role` names a qa-kind role, default `qa`) |
-| `replay` | Re-run the exact red command on the candidate; expect success |
-| `review` | Record a review by any review role of the run: `--role R --session S --verdict approve\|changes-requested --report FILE` |
-| `green` | Re-hash and re-validate all evidence; requires replay + approving reviews; certify `local-verified` |
-| `manifest` | Write the manifest (recorded as an event with its SHA-256) |
-| `verify` | Audit the run: event chain, evidence hashes, exit codes, HEAD, manifest |
-| `probe` | Run the safety probes; exit 0 only if every probe passes |
-| `deliver` | Record an adapter's report as evidence: `--adapter github\|gitlab\|bitbucket\|asana --report FILE [--resolves]` (requires `local-verified`, pinned to the reviewed head) |
-| `board` | One row per run: phase, candidate, budget left, whether a command is running on it, and who acts next (`--json` for scripts) |
-| `report` | Budget report across runs: usage vs budget, cap hits, calibration summary (`--json` for scripts) |
-| `retro` | Lessons that recur across runs (gate failures and suite time per gate, rejected worker outputs, review finding classes, repeated escalations), each with a proposed check; changes nothing (`--min N`, `--json`) |
-| `calibrate` | Recommend defaults from completed runs; `--apply` writes `limits.json` |
-| `status` | Show phase, budgets, gates, candidate |
-| `pause` / `resume` | Pause with a reason; resume re-validates from disk (`--answer TEXT` is required while an escalation is open, and records the human's reply) |
-| `stop` | Stop a run explicitly with a reason (terminal; use `--supersede` to start over) |
-| `escalate` | Record a human question as a tool call and pause (Factor 7) |
-| `act` | Take a worker's JSON output: `--role R --session S --input FILE`. Validates it against `t12/tools.py`, stores it as evidence, and runs the step it maps to (Factor 4) |
-
-## Task file
-
-```json
-{
-  "id": "demo-1",
-  "title": "Add a demo behaviour",
-  "acceptance_criteria": ["one checkable line per criterion"],
-  "base": "main",
-  "time_limit_s": 3600,
-  "op_limit": 100,
-  "repair_cap": 3,
-  "gates": [
-    {"name": "unit", "command": ["python3", "-m", "pytest", "tests/", "-q"]}
-  ]
-}
-```
-
-Gate commands are argv arrays, never shell strings. The task file is
-hashed at admission; `green` refuses if the recorded config changed.
-Set `"require_probes": true` to hard-gate red/gate/replay on passing
-safety probes (see `bin/t12 probe`).
-
-Verification commands run sandboxed. By default the adapter is
-auto-detected (Landlock on Linux, `sandbox-exec` on macOS, none
-otherwise). A task may request `"sandbox_adapter": "docker"` (or the
-operator sets `T12_SANDBOX_ADAPTER=docker`): verification then runs
-as `docker run --rm --network none` with the worktree and
-verify-home mounted and only the verification env passed in. The
-image comes from `"sandbox_image"` (default `python:3.12-slim`, or
-`T12_SANDBOX_IMAGE`) and must already be present locally —
-`prepare` refuses when the Docker daemon does not answer or the
-image is missing, so there are no implicit pulls mid-run.
-
-Red, gates, and replay run in a fresh checkout of the commit under
-test, so untracked and ignored files in the worktree are invisible to
-them. A task that needs gitignored dependency folders (`.venv`,
-`node_modules`) lists them in `"verify_deps": [".venv"]`: relative
-paths that must stay untracked. Each is linked into the checkout and
-is read-only under Landlock and Docker (not under adapter `none`),
-and the observation records which deps applied.
-
-Budgets (`time_limit_s`, `op_limit`, `repair_cap`) are optional in
-the task file. When omitted, `prepare` uses `limits.json` in the
-state home if `t12 calibrate --apply` has written one, else the
-built-ins (3600s / 100 ops / 3 repairs). The run records which
-source applied (`budget_source`).
-
-## Project profile
-
-A project keeps what its tasks share in `.t12/project.json`, so a task
-file only says what is unique to it:
-
-```json
-{
-  "version": 1,
-  "name": "my-product",
-  "gates": [{"name": "unit", "command": ["python3", "-m", "pytest", "-q"]}],
-  "required_reviews": ["reviewer"],
-  "sandbox_adapter": "docker",
-  "sandbox_image": "my-product-verify:1",
-  "verify_deps": [".venv"],
-  "protected_paths": ["guards", "e2e"],
-  "security_review_paths": ["src/auth"],
-  "roles": {
-    "builder": {"skills": ["plain-ui-copy"]},
-    "ux-copy": {"kind": "review", "prompt": "ux-copy.md"}
-  },
-  "intake": {"adapter": "github-issues", "repo": "owner/my-product", "label": "factory"}
-}
-```
-
-`prepare` reads the profile from the trunk branch the state home names
-(`t12 init --trunk`, default `main`; a tag of the same name does not
-count, and a state home cannot switch trunks), never from the task's
-`base` or
-the worktree, and stores the merged task in the run. A task cannot
-pick an older commit or another run's branch to get weaker rules, and
-a candidate that edits the profile changes nothing for its own run.
-Unknown keys are refused. A leftover `.t12/policy.json` on trunk stops
-`prepare` until its `security_review_paths` move into the profile.
-
-A task may tighten the profile but never loosen it, because task files
-may come from an issue tracker:
-
-| Key | When both the profile and the task set it |
-|---|---|
-| `gates` | The profile's gates run first, then the task's |
-| `required_reviews` | Both lists apply |
-| `require_probes` | On if either turns it on |
-| `sandbox_adapter`, `sandbox_image` | Refused unless equal |
-| `verify_deps` | The task may only narrow the profile's list; a profile without one allows none |
-| budgets | The task wins |
-| `protected_paths`, `security_review_paths`, `roles`, `intake` | Profile only; a task may not set them |
-
-`stage` refuses a candidate that changes a protected path, measured
-from both the task's base and the point where the candidate leaves
-trunk, so a base carrying another run's unreviewed edit cannot hide
-it. A move out of a protected path counts as a change to it. A
-`verify_deps` entry may not overlap a protected path or sit in the
-folder of a protected file, and a dep reached through a symlink the
-candidate commits is refused at the gate. A base with no history in
-common with trunk is refused at `prepare`. Deps still come
-from the builder's worktree, so a builder can put code in `.venv` or
-`node_modules` that a gate runs; the profile does not close that.
-
-`roles` maps a role name to `{"kind", "prompt", "skills"}`. The
-built-in roles are always present; a project may add roles and give
-any role a prompt or skills, but may not change a built-in's kind.
-`required_reviews` must name review roles. With the profile above,
-green waits for an approving `ux-copy` review as well as the
-reviewer's.
-
-`intake` says where tasks come from; only an intake adapter reads it
-(see "Taking tasks from an issue tracker"). `prepare` validates it.
-
-`context --role R` reads R's instructions in layers. The prompt is
-`.t12/prompts/<prompt>` on the trunk commit when the role names one,
-else the factory's `prompts/<role>.md` for a built-in role, or the
-prompt of the first built-in role of its kind for a project role
-(`prompts/reviewer.md` for `ux-copy`). Each skill is
-`.t12/skills/<name>/SKILL.md` on the trunk commit, else the factory's
-`skills/<name>/SKILL.md`; a skill found in neither is refused at
-`prepare` and `context`. A worktree edit to `.t12/` changes none of
-this for the running task.
-
-## Taking tasks from an issue tracker
-
-A task file need not be hand-written. An intake adapter turns issues
-with a label into task files in a queue directory:
-
-```bash
-export GITHUB_TOKEN=...
-python3 adapters/github-issues.py intake --repo-config path/to/.t12/project.json \
-  --out-dir queue --home /path/to/state-home
-bin/t12-queue --home /path/to/state-home --queue queue --max 3
-```
-
-The issue needs an "Acceptance criteria" heading with a `- ` list; an
-issue without one is skipped with the reason printed. The task file
-holds only `id` (`gh-<number>`), `title`, `acceptance_criteria`,
-optional `touches` and `depends_on`, and
-`source: {"adapter", "ref", "url"}`. Gates, reviews, sandbox and
-everything else the profile controls never come from an issue, and
-re-running intake changes nothing that is unchanged or already has a
-run. An issue whose body contains an HTML comment is skipped, because
-the forge hides comment text from the maintainer who applies the
-label and intake cannot match every forge's rules for what is hidden.
-When an issue
-loses its label or closes, the next intake run deletes its queued
-task file, unless the task already has a run. GitLab works the same
-through `adapters/gitlab-issues.py`. The formats and failure rules
-are in `adapters/README.md`; the core never touches the network or
-holds a token.
-
-Two limits remain. The issue author can edit the body after the
-label is applied, and the next intake run picks up the edit: the
-label approves the author, not one version of the text. And if
-writing a task file fails partway through a run, the queue can hold
-some of that run's tasks and not others; run intake again once the
-cause is fixed.
-
-`prepare` records `source` in the run record. The GitHub delivery
-adapter then puts the source link in the pull request body, with
-`Closes #N` when the issue is in the same repo, so merging closes it.
-The title and criteria appear in the body inside a code block with
-issue references broken, so an issue author cannot close other
-issues or hide part of the body.
-
-## Running several tasks at once
-
-Separate runs share one state home and proceed in parallel. Each
-command that changes a run holds that run's lock, so a second command
-on the same run fails with `busy` instead of corrupting its log.
-`t12 board` shows every run and who acts next.
-
-Two optional task fields keep parallel runs from colliding at merge:
-
-- `"touches": ["src/auth", "tests/auth"]` lists the paths the task
-  may change. `stage` refuses a candidate that changes anything else
-  since the base commit, including the test the test-writer added.
-  A task without `touches` may change anything.
-- `"depends_on": ["task-a"]` names tasks that must be merged first.
-
-`bin/t12-queue --home <state> --queue <dir> --max N` makes one pass
-over a directory of task files in file-name order. It prepares each
-task whose dependencies are local-verified and merged into their
-base, whose `touches` overlap no unmerged run, and that fits under N
-active runs. Every other task stays queued with its reason. A task
-without `touches` overlaps everything, so it runs alone. Start one
-orchestrator per `started` line and run the pass again whenever a
-run finishes or a merge lands; a task that already has a run is never
-prepared twice.
-
-The queue counts a run as merged when its candidate commit is in the
-base branch's history, as after a merge commit or a fast-forward. A
-squash or rebase merge creates new commits, so the queue never sees
-that run as merged: tasks that depend on it, or overlap it, wait. Use
-merge commits for factory branches.
-
-Runs prepared before `touches` existed carry no `base_commit`, so
-`stage` skips the `touches` and profile checks for them. Finish or
-supersede them before relying on either. Runs prepared after `touches`
-but before project profiles are refused at `stage`, and runs prepared
-before named roles are refused at every role step; supersede them.
-
-## Improving the factory
-
-`t12 retro` reads every run's event log and structured reviews and
-lists what keeps recurring: a gate that fails in most runs, a worker
-output rejected for the same reason, a review finding class, a
-question escalated again and again. Each comes with a proposed check.
-Prefer a check (a gate, a probe, a refusal in `stage`, a stricter
-field in `tools.py`) over more prompt text: a worker can ignore a
-prompt, not a check. Like `calibrate`, `retro` only proposes. Turn a
-proposal into a task file and run it through the factory; a human
-merges.
-
-## Letting the factory work on itself
-
-turbo-12f is a repo like any other, so a `retro` proposal can become
-a task aimed at turbo-12f. Two rules keep that safe:
-
-- **The candidate never checks itself.** Run the factory from an
-  installed copy of `main` (or the `turbo-12f` image through
-  `bin/t12-container`), never from a worktree. `t12` refuses to run
-  when its own code sits inside the state home it is given.
-- **Profile changes need a security review.** A product repo may list
-  paths in `.t12/project.json` as `"security_review_paths"`. `stage`
-  reads the profile from the trunk commit, not the candidate, and
-  adds `security` to `required_reviews` when the candidate changes a
-  listed path or anything under `.t12/`. turbo-12f lists its state
-  machine, profile, sandbox, evidence and storage code, and its prompts.
-
-The factory still stops at `local-verified`. A human merges.
-
-## Running in a container
-
-`bin/t12-container` takes the same arguments as `bin/t12` and runs
-the whole factory inside `docker run`:
-
-```sh
-docker build -t turbo-12f container/
-bin/t12-container init --repo /path/to/product --home /path/to/state-home
-bin/t12-container prepare --home /path/to/state-home --task examples/task.json
-```
-
-The container runs as your uid and gid with no network, a read-only
-root filesystem, and no capabilities. It can see only these paths:
-
-- this checkout, read-only
-- the current directory
-- every path argument (a file argument mounts its parent directory)
-- the product repo recorded in the state home
-
-Each path is mounted at its host location, so a state home works
-from the host and from the container in either order. Your
-`git config user.name` and `user.email` are passed in as
-`GIT_AUTHOR_*` and `GIT_COMMITTER_*`. Nothing else from your
-environment goes in.
-
-The image comes from `T12_IMAGE` (default `turbo-12f`, built from
-`container/Dockerfile` with `python3`, `git`, and `pytest`). It must
-contain every tool your gate commands call, so add yours to the
-Dockerfile or point `T12_IMAGE` at your own image. The image must
-already be present locally. The launcher does not pull or build it. Verification inside the container uses Landlock, as it does on
-the host. The `docker` sandbox adapter is not available inside the
-container, and a task that requests it is refused at `prepare`.
-Reaching Docker from inside would mean mounting the Docker socket,
-which gives the container root on the host.
-
-## Caging the builder
-
-`bin/t12-cage` runs the builder's command in a Landlock cage, so a
-builder cannot tamper with what the factory later trusts:
-
-```sh
-bin/t12-cage --home /path/to/state-home --task-id demo-1 -- <builder command...>
-bin/t12-cage commit --home /path/to/state-home --task-id demo-1 \
-  --message "feat: implement demo"
-bin/t12 stage --home /path/to/state-home --task-id demo-1
-```
-
-Inside the cage the command starts in the run's worktree and can
-write only the worktree and a private temp dir (`TMPDIR`, removed on
-exit). It can read the system directories and the shared `.git`, so
-`git status`, `git diff`, and `git log` work. It cannot write the
-shared `.git` (hooks, config, `refs/replace`, `info/attributes`) or
-the state home, and it cannot open TCP connections. UDP stays open,
-so the cage does not stop data from leaving. Git inside the cage
-reads no global config, and the `XDG_*_HOME` directories point into
-the private temp dir, because your own are not readable there.
-
-The command runs in its own PID namespace. No process it started
-outlives `t12-cage`, including one that detached with a double fork
-and `setsid`: the kernel kills them all when `t12-cage` returns, when
-`SIGINT`, `SIGTERM`, or `SIGHUP` stops it, and when it is killed with
-`SIGKILL`. After a `SIGKILL` they die a moment later, and the private
-temp dir stays behind. The command cannot signal or limit a process
-outside the namespace. Tools that read `/proc`, such as `ps`, still
-list the host's processes there, under pids that mean nothing inside
-the cage.
-
-The cage needs Linux with Landlock ABI 5 or later (kernel 6.10) and
-unprivileged user namespaces, which a PID namespace requires. Some
-hosts turn those off (`kernel.unprivileged_userns_clone=0`,
-`user.max_user_namespaces=0`, Ubuntu's
-`kernel.apparmor_restrict_unprivileged_userns=1`, Docker's default
-seccomp profile). When either is missing, `t12-cage` exits non-zero
-and does not run the command. The user namespace maps only your own
-uid and gid, so files owned by anyone else show as `nobody`. Inside
-another Landlock cage that makes `/proc` read-only, as in this repo's
-own gates, `t12-cage` cannot write that map. It says so on stderr and
-the command then sees uid 65534 for itself and for every file. File
-access is the same either way.
-
-| Option | Effect |
-|---|---|
-| `--read PATH` | Also let the command read PATH (repeatable). An agent CLI installed under your home directory needs this. |
-| `--write DIR` | Also let the command write DIR (repeatable). Refused when DIR overlaps the shared `.git` or the state home. |
-| `--network` | Allow TCP, for a builder that calls a model. UDP is open either way. |
-
-A linked worktree keeps its index and refs in the shared `.git`, so
-a caged builder cannot commit. Run `t12-cage commit` yourself,
-outside the cage, after `t12-cage` ends. It commits every change in
-the worktree on the run's branch. It refuses when the worktree's
-`.git` pointer file is not the one `prepare` wrote, or when the
-worktree contains a nested git repository. It passes git the git dir
-`prepare` created and runs no hooks. When it refuses, stop the run:
-`t12` commands do not make these checks themselves. CONTEXT.md lists
-what the cage leaves open.
+| [`docs/reference.md`](docs/reference.md) | Every command, the task file and project profile keys, the TDD lane rules, parallel lanes, intake, delivery, containers and the worker cage |
+| [`docs/operator-agent.md`](docs/operator-agent.md) | Running the factory on your repo, step by step |
+| [`adapters/README.md`](adapters/README.md) | The runner, omp workers, pinned skills, and the delivery and intake adapters |
+| [`DESIGN.md`](DESIGN.md) | Architecture, the factor-by-factor map, and the reasons behind each phase |
+| [`CONTEXT.md`](CONTEXT.md) | Vocabulary and truth boundaries: what the factory does not claim |
+| [`docs/generic-factory.md`](docs/generic-factory.md) | Project profiles, roles and skills across many projects |
 
 ## Tests
 

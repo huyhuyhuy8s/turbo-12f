@@ -251,6 +251,21 @@ class WizardTest(unittest.TestCase):
         with open(self.ws) as f:
             self.assertEqual(json.load(f)["commit_name"], "Bob Other")
 
+    # The tdd lane needs a test_command in the profile; intake cannot supply one.
+    def test_the_starter_profile_carries_the_test_command_or_says_it_is_missing(self):
+        r = self.setup_ok()
+        self.assertIn("test_command", self.out(r))
+        profile = os.path.join(self.work, "product", ".t12", "project.json")
+        with open(profile) as f:
+            self.assertNotIn("test_command", json.load(f))
+        shutil.rmtree(self.work)
+        os.makedirs(self.work)
+        r = self.run_wizard(["setup"] + self.flags() + ["--test-command", "python3 -m unittest -q"])
+        self.assertEqual(r.returncode, 0, self.out(r))
+        self.assertNotIn("note:", self.out(r))
+        with open(profile) as f:
+            self.assertEqual(json.load(f)["test_command"], ["python3", "-m", "unittest", "-q"])
+
     # --- criterion 5 ---
     def test_other_command_without_workspace_says_setup_first(self):
         r = self.run_wizard(["status"], stdin=None)

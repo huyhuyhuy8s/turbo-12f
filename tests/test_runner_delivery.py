@@ -5,7 +5,8 @@ adapters/) into a temp dir and overwrites the github, gitlab and
 bitbucket adapters there with fakes that take the real adapters'
 subcommands and write a report. A fake `git` first on PATH records
 `git push` and never contacts a remote; every other git call goes to
-the real git. tests/fake_model.py is the model, as in test_runner.py.
+the real git. tests/fake_omp.py stands in for omp and tests/fake_model.py
+(its FAKE_OMP_DELEGATE) plays the roles, as in test_runner.py.
 """
 
 import json
@@ -21,6 +22,8 @@ from t12.errors import StateError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FAKE_MODEL = os.path.join(ROOT, "tests", "fake_model.py")
+FAKE_OMP = os.path.join(ROOT, "tests", "fake_omp.py")
+TEST_COMMAND = ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"]
 TOKENS = {"github": "GITHUB_TOKEN", "gitlab": "GITLAB_TOKEN", "bitbucket": "BITBUCKET_TOKEN"}
 
 FAKE_ADAPTER = '''#!/usr/bin/env python3
@@ -105,7 +108,9 @@ class RunnerDeliveryCase(unittest.TestCase):
         self.factory, self.fakebin = join("factory"), join("fakebin")
         self.model_log, self.notes = join("model.log"), join("notes.log")
         self.push_log, self.adapter_log = join("push.log"), join("adapter.log")
-        for name in ("t12", "bin", "adapters"):
+        self.fake_state = join("fake-state")
+        os.makedirs(self.fake_state)
+        for name in ("t12", "bin", "adapters", "prompts", "skills"):
             shutil.copytree(os.path.join(ROOT, name), join("factory", name),
                             ignore=shutil.ignore_patterns("__pycache__"))
         for name in TOKENS:
@@ -152,18 +157,21 @@ class RunnerDeliveryCase(unittest.TestCase):
             json.dump({
                 "id": task_id, "title": "greet by name", "base": "main",
                 "acceptance_criteria": ["greet('Ana') returns 'Hello, Ana!'"],
-                "time_limit_s": 600, "op_limit": 50, "repair_cap": 2,
-                "gates": [{"name": "unit", "command": [
-                    "python3", "-m", "unittest", "discover", "-s", "tests", "-q"]}],
+                "test_command": TEST_COMMAND, "test_globs": ["tests/**"],
+                "refactor_skip_max_lines": 0,
+                "time_limit_s": 600, "op_limit": 80, "repair_cap": 2,
+                "gates": [{"name": "unit", "command": TEST_COMMAND}],
             }, fh)
         return subprocess.run([self.t12_bin, "prepare", "--home", self.home, "--task", path],
                               capture_output=True, text=True)
 
     def drive(self, tokens=("gitlab",), **env):
-        base = {k: v for k, v in os.environ.items() if k not in TOKENS.values()}
+        base = {k: v for k, v in os.environ.items()
+                if k not in TOKENS.values() and not k.startswith("FACTORYBENCH_")}
         base.update(PATH=self.fakebin + os.pathsep + os.environ["PATH"],
                     REAL_GIT=shutil.which("git"), FAKE_LOG=self.model_log,
                     FAKE_PUSH_LOG=self.push_log, FAKE_ADAPTER_LOG=self.adapter_log,
+                    FAKE_STATE=self.fake_state, FAKE_OMP_DELEGATE=f"{sys.executable} {FAKE_MODEL}",
                     PYTHONDONTWRITEBYTECODE="1")
         base.update({TOKENS[t]: "not-a-real-token" for t in tokens})
         base.update(env)
@@ -171,7 +179,7 @@ class RunnerDeliveryCase(unittest.TestCase):
                   f".write(sys.argv[2] + \"\\n\")' {self.notes}")
         result = subprocess.run(
             [sys.executable, os.path.join(self.factory, "adapters", "runner.py"),
-             "--home", self.home, "--model-cmd", f"{sys.executable} {FAKE_MODEL}",
+             "--home", self.home, "--omp-cmd", f"{sys.executable} {FAKE_OMP}",
              "--notify-cmd", notify],
             capture_output=True, text=True, timeout=300, env=base)
         return result.stdout + result.stderr

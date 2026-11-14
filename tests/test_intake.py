@@ -252,7 +252,7 @@ required_reviews: []
 sandbox_adapter: none
 verify_deps: [.venv]
 protected_paths: []
-roles: {"builder": {"kind": "review"}}
+roles: {"green": {"kind": "review"}}
 time_limit_s: 1
 intake: {"adapter": "evil"}
 ```json
@@ -535,7 +535,7 @@ class IntakeToRun(IntakeCase):
         self.repo = os.path.join(self.tmp.name, "product")
         self.home = os.path.join(self.tmp.name, "state")
         os.makedirs(os.path.join(self.repo, ".t12"))
-        profile = {"version": 1,
+        profile = {"version": 1, "test_command": ["python3", "-m", "unittest", "-q"],
                    "gates": [{"name": "unit", "command": ["python3", "-m", "unittest", "-q"]}],
                    "intake": {"adapter": "github-issues", "repo": "o/r", "label": "factory"}}
         with open(os.path.join(self.repo, ".t12", "project.json"), "w") as fh:

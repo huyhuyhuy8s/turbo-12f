@@ -1,10 +1,10 @@
 """Limits (Phase 5): budget reporting and calibration from real runs.
 
 Defaults are guesses until measured. This module collects what runs
-actually used (wall time, operations, repairs) from the run records,
-summarizes the distribution over completed runs, and recommends
-defaults from the 90th percentile — with floors, so a handful of
-toy runs cannot calibrate the factory down to nothing, and a
+actually used (wall time, operations, repairs, tdd cycles, attempts)
+from the run records, summarizes the distribution over completed runs,
+and recommends defaults from the 90th percentile — with floors, so a
+handful of toy runs cannot calibrate the factory down to nothing, and a
 minimum sample, so one run cannot set the defaults. A task's own
 budgets always win over calibrated defaults; calibrated defaults
 win over the built-ins.
@@ -18,12 +18,16 @@ import time
 from . import store
 from .errors import StateError
 
-BUILTIN_DEFAULTS = {"time_limit_s": 3600, "op_limit": 100, "repair_cap": 3}
-FLOORS = {"time_limit_s": 600, "op_limit": 20, "repair_cap": 2}
-STEPS = {"time_limit_s": 60, "op_limit": 5, "repair_cap": 1}
+BUILTIN_DEFAULTS = {"time_limit_s": 3600, "op_limit": 300, "repair_cap": 3,
+                    "cycle_limit": 50, "attempt_limit": 3}
+FLOORS = {"time_limit_s": 600, "op_limit": 20, "repair_cap": 2,
+          "cycle_limit": 5, "attempt_limit": 2}
+STEPS = {"time_limit_s": 60, "op_limit": 5, "repair_cap": 1,
+         "cycle_limit": 1, "attempt_limit": 1}
 MIN_SAMPLE = 3
-KEYS = ("time_limit_s", "op_limit", "repair_cap")
-MEASURED = {"time_limit_s": "wall_used_s", "op_limit": "ops_used", "repair_cap": "repairs_used"}
+KEYS = ("time_limit_s", "op_limit", "repair_cap", "cycle_limit", "attempt_limit")
+MEASURED = {"time_limit_s": "wall_used_s", "op_limit": "ops_used", "repair_cap": "repairs_used",
+            "cycle_limit": "cycles", "attempt_limit": "tdd_attempts"}
 
 
 def percentile(values, pct):
@@ -66,7 +70,7 @@ def load_limits(home):
     if not isinstance(data, dict):
         raise StateError(f"limits file {path} is not an object")
     limits = dict(BUILTIN_DEFAULTS)
-    for key in KEYS:
+    for key in KEYS + ("max_lanes",):
         if key in data:
             try:
                 value = int(data[key])
@@ -78,25 +82,34 @@ def load_limits(home):
     return limits
 
 
-def save_limits(home, recommendation):
-    data = {
-        "time_limit_s": recommendation["recommended"]["time_limit_s"],
-        "op_limit": recommendation["recommended"]["op_limit"],
-        "repair_cap": recommendation["recommended"]["repair_cap"],
-        "calibrated_from": {
-            "runs": recommendation["sample"],
-            "at": time.time(),
-            "stats": recommendation["stats"],
-        },
+def save_limits(home, recommendation, max_lanes=None):
+    data = {key: recommendation["recommended"][key] for key in KEYS}
+    if max_lanes is not None:
+        data["max_lanes"] = max_lanes["max_lanes"]
+        data["lanes_calibrated_from"] = {key: max_lanes[key]
+                                         for key in ("attempts", "failures", "rate")}
+    data["calibrated_from"] = {
+        "runs": recommendation["sample"],
+        "at": time.time(),
+        "stats": recommendation["stats"],
     }
     store.save_json(limits_path(home), data)
     return data
 
 
+def _hit_repair_cap(record):
+    """A run paused on the repair cap asked a human for help: how many
+    repairs it needed is unknown, so it cannot calibrate anything. One a
+    human then stopped is the same run."""
+    escalations = record.get("escalations") or []
+    return (record.get("phase") in ("paused", "stopped") and bool(escalations)
+            and escalations[-1].get("kind") == "repair-cap")
+
+
 def collect(home):
     """Read every run record in the state home and split it into
     what can calibrate defaults and what cannot. Completed runs
-    (local-verified with measurements) calibrate; runs stopped by
+    (local-verified with measurements) calibrate; runs that paused on
     the repair cap are censored — their true need is unknown — and
     are reported as such, not folded into the numbers."""
     runs_dir = os.path.join(home, "runs")
@@ -108,23 +121,28 @@ def collect(home):
             except (OSError, ValueError):
                 unreadable.append(os.path.basename(path))
                 continue
+            tdd = record.get("tdd") or {}
             runs.append({
                 "task_id": record.get("task_id", "?"),
+                "repo": record.get("repo"),
                 "phase": record.get("phase"),
                 "stop_reason": record.get("stop_reason"),
+                "repair_cap_hit": _hit_repair_cap(record),
                 "superseded": ".superseded-" in os.path.basename(path),
                 "measurements": record.get("measurements"),
                 "budgets": record.get("budgets", {}),
                 "budget_source": record.get("budget_source"),
+                "integrations": tdd.get("integrations", 0),
+                "integration_failures": list(tdd.get("integration_failures") or []),
             })
     completed = [r for r in runs
                  if r["phase"] == "local-verified" and r["measurements"]
                  and not r["superseded"]]
-    censored = [r for r in runs
-                if r["stop_reason"] == "repair-cap" and not r["superseded"]]
+    censored = [r for r in runs if r["repair_cap_hit"] and not r["superseded"]]
     return {
         "runs": runs,
         "unreadable": unreadable,
+        "integration": integration_by_project(runs),
         "completed": completed,
         "censored": censored,
         "cap_hits": {
@@ -140,10 +158,49 @@ def collect(home):
     }
 
 
+def integration_by_project(runs):
+    """Merge attempts and failures of the runs' lanes, per project (the run's
+    repo): {repo: {attempts, failures, rate, routes}}. `rate` is failures per
+    attempt; `routes` counts failures by the route they took through
+    integrate. Runs that never merged a lane are left out."""
+    projects = {}
+    for run in runs:
+        if not run["integrations"]:
+            continue
+        entry = projects.setdefault(run["repo"], {"attempts": 0, "failures": 0, "routes": {}})
+        entry["attempts"] += run["integrations"]
+        entry["failures"] += len(run["integration_failures"])
+        for failure in run["integration_failures"]:
+            entry["routes"][failure["route"]] = entry["routes"].get(failure["route"], 0) + 1
+    for entry in projects.values():
+        entry["rate"] = entry["failures"] / entry["attempts"]
+    return projects
+
+
+# A project whose merges fail more often gets fewer lanes: at most 20% of merge
+# attempts failing keeps the default, at most 50% two lanes, above that one
+# (the analyzer's units are then ignored and the run is serial).
+LANE_STEPS = ((0.2, 3), (0.5, 2))
+
+
+def recommend_lanes(data):
+    """The calibrated `max_lanes` for this state home from the merge attempts
+    its runs made, or None before MIN_SAMPLE of them (one project's runs are
+    all a home holds)."""
+    attempts = sum(p["attempts"] for p in data["integration"].values())
+    failures = sum(p["failures"] for p in data["integration"].values())
+    if attempts < MIN_SAMPLE:
+        return None
+    rate = failures / attempts
+    max_lanes = next((lanes for ceiling, lanes in LANE_STEPS if rate <= ceiling), 1)
+    return {"max_lanes": max_lanes, "attempts": attempts, "failures": failures, "rate": rate}
+
+
 def recommend(completed):
     """Recommended defaults from completed runs, or None when the
     sample is too small to say anything. The recommendation is the
-    p90 rounded up to a sane step, never below the floor."""
+    p90 rounded up to a sane step, never below the floor. A key no
+    completed run measured keeps its built-in default."""
     if len(completed) < MIN_SAMPLE:
         return None
     stats = {}
@@ -154,8 +211,18 @@ def recommend(completed):
                   if isinstance(r["measurements"].get(measured_key), (int, float))]
         summary = summarize(values)
         stats[key] = summary
-        recommended[key] = max(FLOORS[key], round_up(summary["p90"], STEPS[key]))
+        if summary is None:
+            recommended[key] = BUILTIN_DEFAULTS[key]
+        else:
+            recommended[key] = max(FLOORS[key], round_up(summary["p90"], STEPS[key]))
     return {"sample": len(completed), "stats": stats, "recommended": recommended}
+
+
+def _stat_text(label, summary, fmt="{}"):
+    if summary is None:
+        return f"{label} n/a"
+    return (f"{label} p50 {fmt.format(summary['p50'])} p90 {fmt.format(summary['p90'])} "
+            f"max {fmt.format(summary['max'])}")
 
 
 def report_text(home, data, recommendation):
@@ -179,7 +246,8 @@ def report_text(home, data, recommendation):
                 f"  {entry['task_id']}: {entry['phase']} "
                 f"wall {wall:.1f}s/{budgets.get('time_limit_s')}s "
                 f"ops {m.get('ops_used')}/{budgets.get('op_limit')} "
-                f"repairs {m.get('repairs_used')}/{budgets.get('repair_cap')}"
+                f"repairs {m.get('repairs_used')}/{budgets.get('repair_cap')} "
+                f"cycles {m.get('cycles', 0)}/{budgets.get('cycle_limit')}"
                 + (" (superseded)" if entry["superseded"] else "")
             )
         else:
@@ -193,9 +261,17 @@ def report_text(home, data, recommendation):
     )
     if data["censored"]:
         lines.append(
-            f"censored from calibration (stopped by repair cap): "
+            f"censored from calibration (paused on the repair cap): "
             f"{', '.join(r['task_id'] for r in data['censored'])}"
         )
+    for repo, entry in data["integration"].items():
+        routes = ", ".join(f"{route} {n}" for route, n in sorted(entry["routes"].items()))
+        lines.append(f"integration failures: {repo}: {entry['failures']} of {entry['attempts']} "
+                     f"merges ({entry['rate']:.0%})" + (f"; routes: {routes}" if routes else ""))
+    lanes = recommend_lanes(data)
+    if lanes is not None:
+        lines.append(f"recommended max_lanes={lanes['max_lanes']} (merge failure rate "
+                     f"{lanes['rate']:.0%} over {lanes['attempts']} merges)")
     if recommendation is None:
         lines.append(
             f"calibration: not enough data "
@@ -206,18 +282,13 @@ def report_text(home, data, recommendation):
         stats = recommendation["stats"]
         lines.append(
             f"calibration: from {recommendation['sample']} completed runs — "
-            f"wall p50 {stats['time_limit_s']['p50']:.1f}s "
-            f"p90 {stats['time_limit_s']['p90']:.1f}s "
-            f"max {stats['time_limit_s']['max']:.1f}s; "
-            f"ops p50 {stats['op_limit']['p50']} "
-            f"p90 {stats['op_limit']['p90']} "
-            f"max {stats['op_limit']['max']}; "
-            f"repairs p50 {stats['repair_cap']['p50']} "
-            f"p90 {stats['repair_cap']['p90']} "
-            f"max {stats['repair_cap']['max']}"
+            + _stat_text("wall", stats["time_limit_s"], "{:.1f}s") + "; "
+            + _stat_text("ops", stats["op_limit"]) + "; "
+            + _stat_text("repairs", stats["repair_cap"]) + "; "
+            + _stat_text("cycles", stats["cycle_limit"]) + "; "
+            + _stat_text("attempts", stats["attempt_limit"])
         )
         lines.append(
-            f"recommended defaults: time_limit_s={rec['time_limit_s']} "
-            f"op_limit={rec['op_limit']} repair_cap={rec['repair_cap']}"
+            "recommended defaults: " + " ".join(f"{key}={rec[key]}" for key in KEYS)
         )
     return "\n".join(lines) + "\n"

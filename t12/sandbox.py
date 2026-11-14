@@ -4,7 +4,7 @@ What the core enforces, deterministically:
 - Forbidden bypass flags are rejected before any command launches.
 - Credentials and git-redirecting variables are stripped from every
   subprocess environment.
-- Verification commands (red / gate / replay / probe) run with an
+- Verification commands (tdd red/green/refactor/final runs, gates, probes) run with an
   empty verify-home and, where the OS supports it, under a Landlock
   sandbox: worktree + verify-home writable, system dirs read-only,
   all TCP denied, and no unix socket or signal reaching a process
@@ -241,12 +241,36 @@ def docker_run_argv(image, worktree, verify_home, env, argv, read_only=()):
     return docker_argv
 
 
+def toolchain_dirs():
+    """Host toolchain directories outside the system dirs (a mise, nvm or
+    asdf install of node or python) that verification commands may read
+    and execute. From T12_TOOLCHAIN_DIRS, a path list. Each entry must be
+    an absolute, existing directory; `/` and the user's home itself are
+    refused, since they would expose credential stores to the command."""
+    raw = os.environ.get("T12_TOOLCHAIN_DIRS", "")
+    dirs = []
+    home = os.path.realpath(os.path.expanduser("~"))
+    for entry in filter(None, raw.split(os.pathsep)):
+        if not os.path.isabs(entry):
+            raise StateError(f"T12_TOOLCHAIN_DIRS entry {entry!r} is not an absolute path")
+        real = os.path.realpath(entry)
+        if not os.path.isdir(real):
+            raise StateError(f"T12_TOOLCHAIN_DIRS entry {entry!r} is not a directory")
+        if real in ("/", home):
+            raise StateError(f"T12_TOOLCHAIN_DIRS entry {entry!r} would expose the whole "
+                             "filesystem or home; name the toolchain's own install dir")
+        dirs.append(real)
+    return dirs
+
+
 def landlock_preexec(worktree, verify_home, read_only=()):
     """Build a preexec function that cages a verification command:
     the builder's cage with worktree and verify-home writable and all
-    TCP denied. Raises OSError in the child if the cage cannot be
-    built, which the parent reports as a launch failure (fail closed)."""
-    return builder_cage_preexec((worktree, verify_home), read_only, network=False)
+    TCP denied, plus the host toolchain dirs read-only. Raises OSError
+    in the child if the cage cannot be built, which the parent reports
+    as a launch failure (fail closed)."""
+    return builder_cage_preexec((worktree, verify_home),
+                                (*read_only, *toolchain_dirs()), network=False)
 
 
 def builder_cage_preexec(writable, read_only=(), network=False):
