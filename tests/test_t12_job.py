@@ -269,6 +269,19 @@ class UnknownJobTest(unittest.TestCase):
             self.assertEqual((result.returncode, os.path.exists(os.path.join(home, "jobs", "nope"))), (2, False))
 
 
+class AdapterNameTest(unittest.TestCase):
+    def test_an_adapter_given_as_an_absolute_path_is_not_run_and_exits_2_with_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = os.path.join(tmp, "ran")
+            with open(os.path.join(tmp, "evil.py"), "w") as fh:
+                fh.write(FAKE_ADAPTER + "open(%r, 'w').close()\n" % marker)
+            home = make_home(tmp, [{"name": "fake", "adapter": os.path.join(tmp, "evil")}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "fake", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(marker), os.path.exists(path)), (2, False, False))
+
+
 class CommandEnvironmentTest(unittest.TestCase):
     def test_a_command_job_does_not_see_the_factorys_forbidden_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
