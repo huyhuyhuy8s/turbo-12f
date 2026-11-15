@@ -87,5 +87,19 @@ class ParseRaises(unittest.TestCase):
         self.assertEqual([{"ok": False, "refused_by": "baml", "message": "boom"}], lines)
 
 
+class CoreRefusal(unittest.TestCase):
+    def test_review_with_empty_verification_is_refused_by_core_and_act_is_not_called(self):
+        reply = '{"tool": "review", "verdict": "merge-ready"}'
+        parsed = SimpleNamespace(tool="review", verdict="merge-ready",
+                                 findings=[], verification="")
+        act = mock.Mock()
+        lines = []
+        run.submit(reply, "review", lambda text: parsed, act, record=lines.append)
+        message = "invalid 'review' call: verification must be a non-empty string"
+        self.assertEqual(
+            ([], [{"ok": False, "refused_by": "core", "message": message}]),
+            (act.call_args_list, lines))
+
+
 if __name__ == "__main__":
     unittest.main()
