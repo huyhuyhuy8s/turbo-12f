@@ -316,6 +316,26 @@ class JobFindingsTest(unittest.TestCase):
         outside_fences = re.sub(r"```.*?```", "", bodies[0], flags=re.S)
         self.assertIsNone(re.search(r"closes\s+(GH-|#)?12", outside_fences, re.I))
 
+    def test_label_option_in_equals_form_is_refused_with_exit_2_before_any_fetch(self):
+        adapter = load_adapter()
+        calls = []
+
+        def fake(method, url, token, payload=None):
+            calls.append((method, url))
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke")]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = adapter.main(["file", "--home", home, "--findings", findings_path,
+                                     "--repo", "o/r", "--label=factory"], fetch=fake)
+        self.assertEqual((code, calls), (2, []))
+
 
 if __name__ == "__main__":
     unittest.main()
