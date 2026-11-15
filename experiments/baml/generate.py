@@ -3,6 +3,8 @@ from t12 import tools
 
 BAML_TYPES = {tools.STR_LIST: "string[]"}
 
+ALIASES = {"enums": {}}
+
 
 def classes():
     return {

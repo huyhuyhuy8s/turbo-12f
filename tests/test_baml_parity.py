@@ -68,6 +68,11 @@ class EnumRendering(unittest.TestCase):
                    for ln in lines]
         self.assertEqual(sorted(tools.ITEM_KINDS), sorted(aliases, key=str))
 
+    def test_aliases_enums_maps_each_member_name_to_its_value(self):
+        rendered = generate.render()
+        members = re.findall(r'^\s+(\w+)\s+@alias\("([^"]*)"\)\s*$', rendered, re.M)
+        self.assertEqual(dict(members), generate.ALIASES["enums"])
+
 
 if __name__ == "__main__":
     unittest.main()
