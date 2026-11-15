@@ -12,6 +12,7 @@ def main(argv=None, run=None):
     job = json.loads(option("--job"))
     commit = option("--commit")
     last = os.path.join(option("--home"), "jobs", job["name"], "cubic-last.json")
+    recorded = None
     if os.path.exists(last):
         with open(last) as handle:
             recorded = json.load(handle).get("commit")
@@ -23,7 +24,7 @@ def main(argv=None, run=None):
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
     repo = tempfile.mkdtemp()
     run(["git", "worktree", "add", "--detach", repo, commit], option("--repo"), env)
-    run(["git", "branch", "t12-job/cubic-base", config.get("since")], repo, env)
+    run(["git", "branch", "t12-job/cubic-base", recorded or config.get("since")], repo, env)
     _code, stdout, _stderr = run(
         [config.get("cubic", "cubic"), "review", "--base", "t12-job/cubic-base", "--json"],
         repo,
@@ -40,6 +41,9 @@ def main(argv=None, run=None):
         })
     with open(option("--out"), "w") as handle:
         json.dump({"findings": findings}, handle)
+    os.makedirs(os.path.dirname(last), exist_ok=True)
+    with open(last, "w") as handle:
+        json.dump({"commit": commit}, handle)
     return 0
 
 
