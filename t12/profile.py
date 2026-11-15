@@ -132,7 +132,7 @@ TASK_KEYS = {
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
 PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery")
-OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery")
+OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery", "jobs")
 DELIVERY_ADAPTERS = ("github", "gitlab", "bitbucket")
 
 
@@ -360,6 +360,8 @@ def parse(text):
         data["skills"] = _skills(data["skills"], data["roles"])
     if "delivery" in data:
         data["delivery"] = _delivery(data["delivery"])
+    if "jobs" in data:
+        data["jobs"] = []
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:
