@@ -473,6 +473,12 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for role in profile["roles"]:
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
     for gate in task.get("gates", []):
+        try:
+            sandbox.check_command(gate.get("command") or [])
+        except T12Error as exc:
+            raise StateError(
+                f"gate {gate.get('name')!r} rejected at admission: {exc}"
+            ) from exc
         extra = sorted(set(gate) - {"name", "command", "when"})
         if extra:
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
@@ -482,12 +488,6 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(f"gate {gate.get('name')!r}: when accepts only the key files")
         if when is not None and not when["files"]:
             raise StateError(f"gate {gate.get('name')!r}: when.files must be a non-empty list of globs")
-        try:
-            sandbox.check_command(gate.get("command") or [])
-        except T12Error as exc:
-            raise StateError(
-                f"gate {gate.get('name')!r} rejected at admission: {exc}"
-            ) from exc
     for key in ("test_command", "lint_command"):
         if task.get(key):
             try:
