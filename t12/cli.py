@@ -473,10 +473,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for role in profile["roles"]:
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
     for gate in task.get("gates", []):
-        command = gate.get("command")
-        if (not isinstance(command, list) or not command
-                or not all(isinstance(part, str) for part in command)):
-            raise StateError(f"gate {gate.get('name')!r}: must have a non-empty argv command")
+        model.check_gate_command(gate)
         try:
             sandbox.check_command(gate.get("command") or [])
         except T12Error as exc:
