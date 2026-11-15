@@ -25,6 +25,12 @@ def _detail(detail):
     return re.sub(r'(#|GH-)(\d+)', r'\1 \2', detail, flags=re.IGNORECASE)
 
 
+def _entry(finding):
+    title = finding["title"]
+    bullet = "" if "<!--" in title else "- "
+    return f"{bullet}{_detail(title)}\n{_detail(finding.get('detail', ''))}"
+
+
 def main(argv=None, fetch=None):
     if any(arg == "--label" or arg.startswith("--label=") for arg in argv):
         print("job-findings: --label is not supported", file=sys.stderr)
@@ -52,10 +58,7 @@ def main(argv=None, fetch=None):
         return 0
     payload = {
         "title": f"{len(findings)} findings",
-        "body": "\n".join(f"{_detail(finding['title'])}\n{_detail(finding.get('detail', ''))}"
-                          if "<!--" in finding["title"] else
-                          f"- {_detail(finding['title'])}\n{_detail(finding.get('detail', ''))}"
-                          for finding in findings),
+        "body": "\n".join(_entry(finding) for finding in findings),
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
                      token, payload)
