@@ -340,5 +340,16 @@ class TrunkCheckoutTest(unittest.TestCase):
             self.assertEqual((result.returncode, record["findings"], record["commit"]), (0, [], tip))
 
 
+class CommandRecordTest(unittest.TestCase):
+    def test_a_failing_command_job_records_its_name_and_kind_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "import sys; sys.exit(3)"]}])
+            subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                           capture_output=True, text=True)
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                record = json.load(fh)
+            self.assertEqual((record.get("job"), record.get("kind")), ("check", "command"))
+
+
 if __name__ == "__main__":
     unittest.main()
