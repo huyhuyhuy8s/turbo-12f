@@ -36,6 +36,9 @@ if not isinstance(config, dict):
 if not isinstance(config.get("repo"), str):
     print("config.json in %s has no repo" % args.home, file=sys.stderr)
     raise SystemExit(2)
+if not isinstance(config.get("trunk", "main"), str):
+    print("config.json in %s has a trunk that is not a string" % args.home, file=sys.stderr)
+    raise SystemExit(2)
 rev = subprocess.run(
     ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
     capture_output=True, text=True,
