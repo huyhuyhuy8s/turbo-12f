@@ -5,6 +5,17 @@ import sys
 import tempfile
 
 
+def _finding(issue):
+    key = f"{issue['file']}\n{issue['title']}"
+    location = issue["file"] if issue.get("line") is None else f"{issue['file']}:{issue['line']}"
+    return {
+        "fingerprint": "cubic:" + hashlib.sha256(key.encode()).hexdigest()[:16],
+        "title": f"[{issue['priority']}] {issue['title']}",
+        "detail": f"{location}\n\n{issue['description'][:4000]}",
+        "url": None,
+    }
+
+
 def main(argv=None, run=None):
     def option(flag):
         return argv[argv.index(flag) + 1]
@@ -30,17 +41,7 @@ def main(argv=None, run=None):
         repo,
         env,
     )
-    findings = []
-    for issue in json.loads(stdout)["issues"]:
-        key = f"{issue['file']}\n{issue['title']}"
-        findings.append({
-            "fingerprint": "cubic:" + hashlib.sha256(key.encode()).hexdigest()[:16],
-            "title": f"[{issue['priority']}] {issue['title']}",
-            "detail": (
-                issue["file"] if issue.get("line") is None else f"{issue['file']}:{issue['line']}"
-            ) + f"\n\n{issue['description'][:4000]}",
-            "url": None,
-        })
+    findings = [_finding(issue) for issue in json.loads(stdout)["issues"]]
     with open(option("--out"), "w") as handle:
         json.dump({"findings": findings}, handle)
     os.makedirs(os.path.dirname(last), exist_ok=True)
