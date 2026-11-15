@@ -98,6 +98,15 @@ class CommandJobTest(unittest.TestCase):
             self.assertEqual((result.returncode, len(details), "timed out" in "".join(details)),
                              (1, 1, True))
 
+    def test_a_command_that_cannot_be_started_exits_1_with_one_check_command_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["/nonexistent/t12-no-such-command"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
+            fingerprints = [f.get("fingerprint") for f in written or []]
+            self.assertEqual((result.returncode, fingerprints), (1, ["check:command"]))
+
 
 FAKE_ADAPTER = """import argparse, json
 p = argparse.ArgumentParser()
