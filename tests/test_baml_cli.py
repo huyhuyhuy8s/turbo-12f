@@ -199,6 +199,28 @@ class SubmitDefaultAct(unittest.TestCase):
                     written = json.load(fh)
             self.assertEqual({"tool": "escalate", "args": {"question": "q"}}, written)
 
+    def test_default_act_passes_unit_and_run_id_to_t12_act(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            seen = []
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--unit", "U1", "--run-id", "R1",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    run=lambda argv: seen.append(argv) or 0)
+            expected = [os.path.join(ROOT, "bin", "t12"), "act", "--home", home,
+                        "--task-id", "T", "--role", "R", "--session", "S",
+                        "--input", reply + ".call.json", "--raw", reply,
+                        "--parsed-by", "extracted", "--unit", "U1", "--run-id", "R1"]
+            self.assertEqual([expected], seen)
+
 
 if __name__ == "__main__":
     unittest.main()
