@@ -598,3 +598,20 @@ class CommandTimeoutHugeTest(unittest.TestCase):
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
+class CommandCheckoutFailureTest(unittest.TestCase):
+    def test_a_trunk_checkout_that_git_cannot_make_never_exits_1_without_a_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["true"]}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, ".gitattributes"), "w") as fh:
+                fh.write("* filter=broken\n")
+            for args in (["config", "filter.broken.clean", "cat"], ["config", "filter.broken.smudge", "false"],
+                         ["config", "filter.broken.required", "true"], ["add", ".gitattributes"],
+                         ["commit", "-qm", "add broken filter"]):
+                git(repo, *args)
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertFalse(result.returncode == 1 and not os.path.exists(path), result.stderr[-300:])
