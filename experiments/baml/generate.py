@@ -12,7 +12,8 @@ ALIASES = {
     "enums": {
         member_name(value): value
         for value in [*tools.TOOLS["review"]["review"]["verdict"], *tools.ITEM_KINDS]
-    }
+    },
+    "fields": {},
 }
 
 

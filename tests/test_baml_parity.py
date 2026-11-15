@@ -95,6 +95,9 @@ class OptionalAndEdgeRendering(unittest.TestCase):
         lines = [ln.strip() for ln in (block.group(1) if block else "").splitlines()]
         self.assertIn('class_ string @alias("class")', lines)
 
+    def test_aliases_map_the_keyword_safe_field_name_back_to_class(self):
+        self.assertEqual({"class_": "class"}, generate.ALIASES["fields"])
+
 
 if __name__ == "__main__":
     unittest.main()
