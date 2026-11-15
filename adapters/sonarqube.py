@@ -25,6 +25,9 @@ def main(argv=None, fetch=None):
         if status != 200:
             print(f"sonarqube: request returned status {status}", file=sys.stderr)
             return 1
+        if not isinstance(body, dict) or not isinstance(body.get("issues"), list):
+            print("sonarqube: response has no issues list", file=sys.stderr)
+            return 1
         issues.extend(body["issues"])
         if page * 100 >= body.get("paging", {}).get("total", 0) or page >= 10:
             break
