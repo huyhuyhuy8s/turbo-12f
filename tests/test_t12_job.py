@@ -422,5 +422,16 @@ class MissingTrunkTest(unittest.TestCase):
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
 
+class MissingConfigTest(unittest.TestCase):
+    def test_a_home_without_a_config_file_exits_2_not_1_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            os.remove(os.path.join(home, "config.json"))
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
 if __name__ == "__main__":
     unittest.main()
