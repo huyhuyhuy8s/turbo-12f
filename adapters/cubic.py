@@ -32,7 +32,7 @@ def main(argv=None, run=None):
     )
     findings = []
     for issue in json.loads(stdout)["issues"]:
-        key = f"{issue['file']}\n{issue['title']}\n{issue['line']}"
+        key = f"{issue['file']}\n{issue['title']}"
         findings.append({
             "fingerprint": "cubic:" + hashlib.sha256(key.encode()).hexdigest()[:16],
             "title": f"[{issue['priority']}] {issue['title']}",
