@@ -114,6 +114,13 @@ class AnswerFunctions(unittest.TestCase):
         expected = sorted(pascal(name) for name in tools.TOOLS["red"])
         self.assertEqual(expected, found)
 
+    def test_review_answer_returns_union_of_exactly_the_review_tool_classes(self):
+        head = re.search(r"function\s+ReviewAnswer\s*\([^)]*\)\s*->\s*([^{]*?)\s*\{",
+                         generate.render())
+        found = sorted(part.strip() for part in head.group(1).split("|")) if head else []
+        expected = sorted(pascal(name) for name in tools.TOOLS["review"])
+        self.assertEqual(expected, found)
+
 
 if __name__ == "__main__":
     unittest.main()
