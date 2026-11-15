@@ -80,6 +80,14 @@ def submit(reply, kind, parse, act, record=None):
 
 
 def main(argv):
+    try:
+        import baml_py  # noqa: F401
+    except ImportError:
+        print(
+            "baml-py is not importable; run: pip install baml-py pydantic typing_extensions"
+            " and then: baml-cli generate --from experiments/baml/baml_src",
+            file=sys.stderr,
+        )
     return 2
 
 
