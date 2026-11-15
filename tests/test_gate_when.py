@@ -106,6 +106,13 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
         self.assertEqual((refused.returncode, "docs-lint" in refused.stderr), (1, True), refused.stderr)
 
+    def test_prepare_refuses_a_gate_with_a_key_other_than_name_command_and_when_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[self.passing_gate(name="docs-lint", order=1)]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((refused.returncode, "docs-lint" in refused.stderr), (1, True), refused.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
