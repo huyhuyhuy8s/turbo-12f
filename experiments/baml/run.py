@@ -126,9 +126,9 @@ def main(argv, parse=None, act=None, run=None):
                 with open(argv[-1], "a") as evidence:
                     evidence.write(json.dumps(line) + "\n")
 
-        _, message = submit("", "review", parse, forward, record)
+        ok, message = submit("", "review", parse, forward, record)
         print(message)
-        return 0
+        return 0 if ok else 1
     try:
         import baml_py  # noqa: F401
     except ImportError:
