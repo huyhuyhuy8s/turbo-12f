@@ -487,6 +487,8 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
                              "a gate takes only name, command and when")
         when = gate.get("when")
+        if when is not None and not isinstance(when, dict):
+            raise StateError(f"gate {gate.get('name')!r}: when must be an object")
         if when is not None and set(when) != {"files"}:
             raise StateError(f"gate {gate.get('name')!r}: when accepts only the key files")
         if when is not None and (not isinstance(when["files"], list) or not when["files"]
