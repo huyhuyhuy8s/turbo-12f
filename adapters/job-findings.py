@@ -39,7 +39,7 @@ def main(argv=None, fetch=None):
                 if not is_open(fetch, repo, store.get(finding["fingerprint"]), token)]
     payload = {
         "title": f"{len(findings)} findings",
-        "body": "\n".join(f"- {finding['title']}" for finding in findings),
+        "body": "\n".join(f"- {finding['title']}\n{finding.get('detail', '')}" for finding in findings),
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
                      token, payload)
