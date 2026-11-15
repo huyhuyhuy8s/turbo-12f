@@ -249,5 +249,18 @@ class ClientBlock(unittest.TestCase):
         self.assertEqual(["AnalyzerAnswer", "RedAnswer", "ReviewAnswer"], found)
 
 
+class VerdictFollowsRegistry(unittest.TestCase):
+    def test_review_verdict_stays_the_verdict_enum_when_a_verdict_is_added(self):
+        review = tools.TOOLS["review"]["review"]
+        extended = {**review, "verdict": (*review["verdict"], "deferred")}
+        found = None
+        with mock.patch.dict(tools.TOOLS["review"], {"review": extended}):
+            try:
+                found = generate.classes()["Review"]["verdict"]
+            except TypeError as error:
+                found = f"TypeError: {error}"
+        self.assertEqual("Verdict", found)
+
+
 if __name__ == "__main__":
     unittest.main()
