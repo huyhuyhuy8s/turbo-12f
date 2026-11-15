@@ -50,6 +50,12 @@ class ToolClassNames(unittest.TestCase):
                  "reason": classes["NoCheatLeft"]["reason"]}
         self.assertEqual({"gaps": "string[]", "reason": "string"}, found)
 
+    def test_integer_and_boolean_args_map_to_baml_int_and_bool(self):
+        classes = generate.classes()
+        found = {"last_assertion_line": classes["RedTestReady"]["last_assertion_line"],
+                 "changed": classes["RefactorDone"]["changed"]}
+        self.assertEqual({"last_assertion_line": "int", "changed": "bool"}, found)
+
 
 class EnumRendering(unittest.TestCase):
     def test_verdict_enum_has_one_aliased_member_per_review_verdict(self):
