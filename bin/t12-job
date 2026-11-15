@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -125,6 +126,9 @@ def run_command(job, repo, commit):
     timeout = job.get("timeout_s")
     if timeout is not None and not is_valid_timeout(timeout):
         print("job %r: timeout_s must be a number" % job["name"], file=sys.stderr)
+        raise SystemExit(2)
+    if prof.get("sandbox_adapter") == "docker" and not shutil.which("docker"):
+        print("job %r: sandbox adapter docker requested but docker is not on PATH" % job["name"], file=sys.stderr)
         raise SystemExit(2)
     failures = []
     checkout = tempfile.TemporaryDirectory()
