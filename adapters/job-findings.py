@@ -6,12 +6,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
 
 
+def _response_body(response):
+    return response[1] if isinstance(response, tuple) else response
+
+
 def is_open(fetch, repo, number, token):
     if number is None:
         return False
     response = fetch("GET", f"https://api.github.com/repos/{repo}/issues/{number}", token)
-    issue = response[1] if isinstance(response, tuple) else response
-    return (issue or {}).get("state") == "open"
+    return (_response_body(response) or {}).get("state") == "open"
 
 
 def main(argv=None, fetch=None):
@@ -39,9 +42,8 @@ def main(argv=None, fetch=None):
         "body": "\n".join(f"- {finding['title']}" for finding in findings),
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
-                     os.environ.get("GITHUB_TOKEN"), payload)
-    issue = response[1] if isinstance(response, tuple) else response
-    number = (issue or {}).get("number")
+                     token, payload)
+    number = (_response_body(response) or {}).get("number")
     store.update({finding["fingerprint"]: number for finding in findings})
     with open(store_path, "w") as handle:
         json.dump(store, handle)
