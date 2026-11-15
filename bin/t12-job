@@ -123,14 +123,18 @@ def run_command(job, repo, commit):
     checkout = tempfile.TemporaryDirectory()
     archive = subprocess.run(["git", "-C", repo, "archive", commit], check=True, capture_output=True).stdout
     subprocess.run(["tar", "-x", "-C", checkout.name], input=archive, check=True)
+    verify_env = sandbox.verification_env(home, "job-" + job["name"])
+    cage = {}
+    if sandbox.landlock_available():
+        cage["preexec_fn"] = sandbox.landlock_preexec(checkout.name, verify_env["HOME"])
     try:
         result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                                 errors="replace", timeout=job.get("timeout_s"),
-                                env={**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")},
-                                     **sandbox.verification_env(home, "job-" + job["name"])})
+                                env={**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")}, **verify_env},
+                                **cage)
     except subprocess.TimeoutExpired:
         failures.append(command_failure(job["name"], "command timed out after %ss" % job["timeout_s"]))
-    except OSError as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         failures.append(command_failure(job["name"], "command could not be run: %s" % exc))
     else:
         if result.returncode != 0:
