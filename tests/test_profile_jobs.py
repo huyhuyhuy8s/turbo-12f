@@ -158,6 +158,15 @@ class ProfileJobsTest(unittest.TestCase):
             caught = exc
         self.assertIsInstance(caught, StateError)
 
+    def test_string_command_with_an_unterminated_quote_is_refused_naming_the_job(self):
+        jobs = [{"name": "broken", "command": "python3 'x.py"}]
+        caught = None
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except Exception as exc:  # noqa: BLE001
+            caught = exc
+        self.assertIsInstance(caught, StateError)
+
 
 if __name__ == "__main__":
     unittest.main()
