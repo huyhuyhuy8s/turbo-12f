@@ -318,6 +318,14 @@ def _delivery(value):
     return {"adapter": value["adapter"]}
 
 
+def _jobs(value):
+    for job in value:
+        if "command" in job and "adapter" in job:
+            raise StateError(f"{PATH}: job {job.get('name')!r} has both command and adapter; "
+                             "a job is one or the other")
+    return value
+
+
 def review_roles(roles):
     return sorted(name for name, spec in roles.items() if spec["kind"] == "review")
 
@@ -360,6 +368,8 @@ def parse(text):
         data["skills"] = _skills(data["skills"], data["roles"])
     if "delivery" in data:
         data["delivery"] = _delivery(data["delivery"])
+    if "jobs" in data:
+        data["jobs"] = _jobs(data["jobs"])
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:
