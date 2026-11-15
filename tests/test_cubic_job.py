@@ -122,6 +122,26 @@ class CubicJobTest(unittest.TestCase):
             load_cubic().main(argv, run=fake)
         self.assertNotEqual(review_cwds, ["/repo"])
 
+    def test_second_run_on_a_new_commit_branches_from_the_commit_of_the_first_run(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append(argv)
+            if argv[0] == "git":
+                return 0, "", ""
+            return 0, json.dumps({"issues": []}), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            for commit in ("first", "second"):
+                argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", commit,
+                        "--home", tmp, "--out", out]
+                load_cubic().main(argv, run=fake)
+        branches = [c for c in calls if c[:3] == ["git", "branch", "t12-job/cubic-base"]]
+        self.assertEqual(branches, [["git", "branch", "t12-job/cubic-base", "abc"],
+                                    ["git", "branch", "t12-job/cubic-base", "first"]])
+
 
 if __name__ == "__main__":
     unittest.main()
