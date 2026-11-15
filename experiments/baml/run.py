@@ -111,8 +111,8 @@ def submit(reply, kind, parse, act, record=None):
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
         def forward(call):
-            act(call)
-            return True, "ok"
+            result = act(call)
+            return result if isinstance(result, tuple) else (True, "ok")
 
         def record(outcome):
             if argv:
