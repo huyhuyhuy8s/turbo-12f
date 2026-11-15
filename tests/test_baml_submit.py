@@ -101,5 +101,20 @@ class CoreRefusal(unittest.TestCase):
             (act.call_args_list, lines))
 
 
+class TwoCalls(unittest.TestCase):
+    def test_reply_with_two_groups_is_refused_by_script_and_act_is_not_called(self):
+        call = '{"tool": "test_list_ready", "items": [], "gaps": ["g"], "directives": ["d"]}'
+        reply = call + " " + call
+        parsed = SimpleNamespace(tool="test_list_ready", items=[], gaps=["g"],
+                                 directives=["d"], units=None)
+        act = mock.Mock()
+        lines = []
+        run.submit(reply, "analyzer", lambda text: parsed, act, record=lines.append)
+        message = "worker output must hold exactly one call; found 2"
+        self.assertEqual(
+            ([], [{"ok": False, "refused_by": "script", "message": message}]),
+            (act.call_args_list, lines))
+
+
 if __name__ == "__main__":
     unittest.main()
