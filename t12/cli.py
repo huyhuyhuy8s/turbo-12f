@@ -489,7 +489,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         when = gate.get("when")
         if when is not None and set(when) != {"files"}:
             raise StateError(f"gate {gate.get('name')!r}: when accepts only the key files")
-        if when is not None and not when["files"]:
+        if when is not None and (not isinstance(when["files"], list) or not when["files"]):
             raise StateError(f"gate {gate.get('name')!r}: when.files must be a non-empty list of globs")
     for key in ("test_command", "lint_command"):
         if task.get(key):
