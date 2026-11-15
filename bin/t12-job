@@ -87,6 +87,11 @@ def run_adapter(job, repo, commit, home, job_dir):
             os.remove(out_path)
 
 
+def command_failure(detail):
+    """Build the finding reported when a job's command fails."""
+    return {"fingerprint": "check:command", "title": "command failed", "detail": detail, "url": None}
+
+
 findings = []
 kind = None
 if "adapter" in job:
@@ -102,12 +107,12 @@ if "command" in job:
                                 errors="replace", timeout=job.get("timeout_s"),
                                 env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TMPDIR")})
     except subprocess.TimeoutExpired:
-        findings.append({"fingerprint": "check:command", "title": "command failed", "detail": "command timed out after %ss" % job["timeout_s"], "url": None})
+        findings.append(command_failure("command timed out after %ss" % job["timeout_s"]))
     except OSError as exc:
-        findings.append({"fingerprint": "check:command", "title": "command failed", "detail": "command could not be run: %s" % exc, "url": None})
+        findings.append(command_failure("command could not be run: %s" % exc))
     else:
         if result.returncode != 0:
-            findings.append({"fingerprint": "check:command", "title": "command failed", "detail": result.stdout + result.stderr, "url": None})
+            findings.append(command_failure(result.stdout + result.stderr))
     finally:
         checkout.cleanup()
 seq = 1
