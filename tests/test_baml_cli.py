@@ -257,6 +257,20 @@ class SubmitWithoutBamlPy(unittest.TestCase):
             shown = out.getvalue()
             self.assertEqual((2, True, True, True), (code, "baml-py" in shown, "pip install" in shown, "baml-cli generate" in shown))
 
+    def test_missing_baml_py_writes_no_evidence_file_and_no_call_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            with open(reply, "w") as fh:
+                fh.write('{"tool": "escalate", "question": "q"}')
+            with unittest.mock.patch.dict(sys.modules, {"baml_py": None}), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply,
+                     "--home", tmp, "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence])
+            self.assertEqual([False, False], [os.path.exists(evidence), os.path.exists(reply + ".call.json")])
+
 
 if __name__ == "__main__":
     unittest.main()
