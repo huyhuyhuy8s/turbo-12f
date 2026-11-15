@@ -375,5 +375,15 @@ class CommandRecordTest(unittest.TestCase):
             self.assertEqual((isinstance(finding.get("title"), str), finding.get("url", "missing")), (True, None))
 
 
+class AdapterValueTypeTest(unittest.TestCase):
+    def test_an_adapter_value_that_is_not_a_string_exits_2_with_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "fake", "adapter": 5}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "fake", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
 if __name__ == "__main__":
     unittest.main()
