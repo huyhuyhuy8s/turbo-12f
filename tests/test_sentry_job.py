@@ -194,6 +194,53 @@ class SentryJobTest(unittest.TestCase):
             "?project=42&query=is:unresolved&statsPeriod=14d&limit=100",
             "GET", "Bearer tok-123")], ["sentry:101"]))
 
+    def test_default_fetch_returns_link_headers_so_the_next_page_is_requested(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"org": "acme", "project_id": 42, "min_events": 3}}
+        first, second = issue("101", "5"), issue("201", "7")
+        next_url = "https://sentry.io/api/0/organizations/acme/issues/?cursor=0:100:0"
+        link_more = (f'<{next_url}>; rel="next"; results="true"; cursor="0:100:0"')
+        link_done = (f'<{next_url}>; rel="next"; results="false"; cursor="0:200:0"')
+        pages = [([first], {"Link": link_more}), ([second], {"Link": link_done})]
+        requests = []
+
+        class Response:
+            status = 200
+
+            def __init__(self, body, headers):
+                self.body, self.headers = body, headers
+
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return json.dumps(self.body).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(req, *args, **kwargs):
+            requests.append(req.full_url)
+            body, headers = pages[min(len(requests), len(pages)) - 1]
+            return Response(body, headers)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok-123"}), \
+                    mock.patch("urllib.request.urlopen", fake_urlopen):
+                load_sentry().main(argv)
+            written = None
+            if os.path.exists(out):
+                with open(out) as handle:
+                    written = [f["fingerprint"] for f in json.load(handle)["findings"]]
+        self.assertEqual((len(requests), requests[1:], written),
+                         (2, [next_url], ["sentry:101", "sentry:201"]))
+
 
 
 if __name__ == "__main__":
