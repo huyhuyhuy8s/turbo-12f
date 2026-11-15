@@ -196,6 +196,19 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         expected = {repr(v): (1, True, False) for v in (True, 5, "pytest", [1])}
         self.assertEqual(outcomes, expected)
 
+    def test_board_counts_a_skipped_gate_as_cleared_so_the_runner_sees_progress(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[
+                self.passing_gate(name="src-unit", when={"files": ["src/**"]}),
+                self.passing_gate(name="lint")]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        self.t12("prepare", "--home", self.home, "--task", self.task_path)
+        self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        board = json.loads(self.t12("board", "--home", self.home, "--json").stdout)
+        row = [r for r in board if r["task_id"] == "demo-1"][0]
+        self.assertEqual((row["phase"], row["gates_passed"]), ("gates", 1))
+
 
 if __name__ == "__main__":
     unittest.main()
