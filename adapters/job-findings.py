@@ -51,7 +51,7 @@ def main(argv=None, fetch=None):
         return 0
     payload = {
         "title": f"{len(findings)} findings",
-        "body": "\n".join(f"- {finding['title']}\n{_detail(finding.get('detail', ''))}"
+        "body": "\n".join(f"- {_detail(finding['title'])}\n{_detail(finding.get('detail', ''))}"
                           for finding in findings),
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
