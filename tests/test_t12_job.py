@@ -571,3 +571,20 @@ class CommandCageTest(unittest.TestCase):
             with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
                 details = [f["detail"] for f in json.load(fh)["findings"]]
             self.assertEqual((result.returncode, len(details), "CAGE-ESCAPE-4711" in "".join(details)), (1, 1, False))
+
+
+class CommandCheckoutAttributesTest(unittest.TestCase):
+    def test_a_command_job_sees_a_tracked_file_that_gitattributes_marks_export_ignore(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["test", "-f", "ok"]}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, "ok"), "w") as fh:
+                fh.write("ok")
+            with open(os.path.join(repo, ".gitattributes"), "w") as fh:
+                fh.write("ok export-ignore\n")
+            for args in (["add", "ok", ".gitattributes"], ["commit", "-qm", "add ok"]):
+                git(repo, *args)
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
+            self.assertEqual((result.returncode, written), (0, []))
