@@ -11,7 +11,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from t12 import profile, sandbox  # noqa: E402
+from t12 import profile, runner, sandbox  # noqa: E402
 from t12.errors import StateError  # noqa: E402
 
 parser = argparse.ArgumentParser(prog="t12-job", description=__doc__)
@@ -52,7 +52,8 @@ shown = subprocess.run(
     capture_output=True, text=True,
 )
 try:
-    jobs = profile.parse(shown.stdout if shown.returncode == 0 else None).get("jobs", [])
+    prof = profile.parse(shown.stdout if shown.returncode == 0 else None)
+    jobs = prof.get("jobs", [])
 except StateError as exc:
     print(exc, file=sys.stderr)
     raise SystemExit(2)
@@ -133,13 +134,18 @@ def run_command(job, repo, commit):
         raise SystemExit(2)
     verify_env = sandbox.verification_env(home, "job-" + job["name"])
     cage = {}
-    if sandbox.landlock_available():
+    argv = job["command"]
+    run_env = {**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")}, **verify_env}
+    if prof.get("sandbox_adapter") == "docker":
+        argv = sandbox.docker_run_argv(prof.get("sandbox_image") or sandbox.DEFAULT_DOCKER_IMAGE,
+                                       checkout.name, verify_env["HOME"], runner.container_env(verify_env), argv)
+        run_env = runner.sanitized_env()
+    elif sandbox.landlock_available():
         cage["preexec_fn"] = sandbox.landlock_preexec(checkout.name, verify_env["HOME"])
     try:
-        result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        result = subprocess.run(argv, cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                                 errors="replace", timeout=None if timeout is None else min(timeout, 10**6),
-                                env={**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")}, **verify_env},
-                                **cage)
+                                env=run_env, **cage)
     except subprocess.TimeoutExpired:
         failures.append(command_failure(job["name"], "command timed out after %ss" % job["timeout_s"]))
     except (OSError, subprocess.SubprocessError) as exc:
