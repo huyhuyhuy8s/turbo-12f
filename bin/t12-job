@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -92,8 +93,11 @@ if "adapter" in job:
     kind = "adapter"
     findings = run_adapter(job, config["repo"], commit, home, job_dir)
 if "command" in job:
+    checkout = tempfile.TemporaryDirectory()
+    archive = subprocess.run(["git", "-C", config["repo"], "archive", commit], check=True, capture_output=True).stdout
+    subprocess.run(["tar", "-x", "-C", checkout.name], input=archive, check=True)
     try:
-        result = subprocess.run(job["command"], cwd=config["repo"], capture_output=True, text=True,
+        result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True,
                                 errors="replace", timeout=job.get("timeout_s"),
                                 env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TMPDIR")})
     except subprocess.TimeoutExpired:
@@ -103,6 +107,8 @@ if "command" in job:
     else:
         if result.returncode != 0:
             findings.append({"fingerprint": "check:command", "detail": result.stdout + result.stderr})
+    finally:
+        checkout.cleanup()
 seq = 1
 while os.path.exists(os.path.join(job_dir, "findings-%d.json" % seq)):
     seq += 1
