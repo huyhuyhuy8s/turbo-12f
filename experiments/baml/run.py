@@ -34,7 +34,21 @@ def _refuse(record, refused_by, message):
     return False, message
 
 
+def _groups(reply):
+    depth = found = 0
+    for ch in reply:
+        if ch == "{":
+            found += depth == 0
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+    return found
+
+
 def submit(reply, kind, parse, act, record=None):
+    found = _groups(reply)
+    if found > 1:
+        return _refuse(record, "script", f"worker output must hold exactly one call; found {found}")
     try:
         call = plain(parse(reply))
     except Exception as exc:
