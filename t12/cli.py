@@ -492,6 +492,12 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         if when is not None and (not isinstance(when["files"], list) or not when["files"]
                                  or not all(isinstance(g, str) and g for g in when["files"])):
             raise StateError(f"gate {gate.get('name')!r}: when.files must be a non-empty list of globs")
+        for g in (when or {}).get("files", []):
+            try:
+                globs.regex(g)
+            except Exception as exc:
+                raise StateError(f"gate {gate.get('name')!r}: when.files glob {g!r} "
+                                 f"cannot compile: {exc}") from exc
     for key in ("test_command", "lint_command"):
         if task.get(key):
             try:
