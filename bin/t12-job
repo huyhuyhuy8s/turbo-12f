@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 
 parser = argparse.ArgumentParser(prog="t12-job", description=__doc__)
@@ -26,7 +27,10 @@ shown = subprocess.run(
     capture_output=True, text=True,
 )
 jobs = json.loads(shown.stdout).get("jobs", []) if shown.returncode == 0 else []
-job = next((j for j in jobs if j.get("name") == args.name), {})
+job = next((j for j in jobs if j.get("name") == args.name), None)
+if job is None:
+    print("unknown job %r; available jobs: %s" % (args.name, ", ".join(j.get("name", "") for j in jobs)), file=sys.stderr)
+    raise SystemExit(2)
 findings = []
 kind = None
 if "adapter" in job:
