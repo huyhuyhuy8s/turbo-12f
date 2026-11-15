@@ -183,8 +183,7 @@ def main(argv, parse=None, act=None, run=None):
     except ImportError:
         print(
             "baml-py is not importable; run: pip install baml-py pydantic typing_extensions"
-            " and then: baml-cli generate --from experiments/baml/baml_src",
-            file=sys.stderr,
+            " and then: baml-cli generate --from experiments/baml/baml_src"
         )
     return 2
 
