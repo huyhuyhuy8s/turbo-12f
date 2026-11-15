@@ -56,6 +56,16 @@ class CommandJobTest(unittest.TestCase):
                 commit = json.load(fh).get("commit")
             self.assertEqual(commit, tip)
 
+    def test_a_second_run_writes_findings_2_and_keeps_findings_1(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            run = [sys.executable, JOB, "--home", home, "--name", "check"]
+            subprocess.run(run, capture_output=True, text=True)
+            second = subprocess.run(run, capture_output=True, text=True)
+            jobs_dir = os.path.join(home, "jobs", "check")
+            self.assertEqual((second.returncode, sorted(os.listdir(jobs_dir))),
+                             (0, ["findings-1.json", "findings-2.json"]))
+
 
 if __name__ == "__main__":
     unittest.main()
