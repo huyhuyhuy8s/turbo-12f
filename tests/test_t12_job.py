@@ -536,3 +536,19 @@ class CommandFingerprintNameTest(unittest.TestCase):
             written = findings_of(os.path.join(home, "jobs", "lint", "findings-1.json"))
             fingerprints = [f.get("fingerprint") for f in written or []]
             self.assertEqual((result.returncode, fingerprints), (1, ["lint:command"]))
+
+
+class CommandHomeTest(unittest.TestCase):
+    def test_a_command_job_cannot_read_credential_files_from_the_operators_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real_home = os.path.join(tmp, "operator")
+            os.makedirs(os.path.join(real_home, ".config", "gh"))
+            with open(os.path.join(real_home, ".config", "gh", "hosts.yml"), "w") as fh:
+                fh.write("oauth_token: ghp_SECRET123\n")
+            script = ("import os, sys; print(open(os.path.expanduser('~/.config/gh/hosts.yml')).read()); sys.exit(1)")
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", script]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True, env={**os.environ, "HOME": real_home})
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                details = [f["detail"] for f in json.load(fh)["findings"]]
+            self.assertEqual((result.returncode, len(details), "ghp_SECRET123" in "".join(details)), (1, 1, False))
