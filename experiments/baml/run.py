@@ -55,6 +55,24 @@ def _groups(reply):
     return found
 
 
+def _unexpected(raw, call):
+    if isinstance(raw, dict) and isinstance(call, dict):
+        for key, value in raw.items():
+            if value is None:
+                continue
+            if key not in call:
+                return key
+            found = _unexpected(value, call[key])
+            if found is not None:
+                return found
+    elif isinstance(raw, list) and isinstance(call, list):
+        for r, c in zip(raw, call):
+            found = _unexpected(r, c)
+            if found is not None:
+                return found
+    return None
+
+
 def submit(reply, kind, parse, act, record=None):
     found = _groups(reply)
     if found > 1:
@@ -68,9 +86,9 @@ def submit(reply, kind, parse, act, record=None):
     except ValueError:
         raw = {}
     args = raw.get("args") if "args" not in call and isinstance(raw.get("args"), dict) else raw
-    for key, value in args.items():
-        if key != "tool" and value is not None and key not in call:
-            return _refuse(record, "script", f"unexpected arg '{key}'")
+    key = _unexpected({k: v for k, v in args.items() if k != "tool"}, call)
+    if key is not None:
+        return _refuse(record, "script", f"unexpected arg '{key}'")
     tool = call.pop("tool")
     try:
         tools.parse(json.dumps({"tool": tool, "args": call}), kind)
