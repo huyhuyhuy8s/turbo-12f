@@ -36,6 +36,8 @@ os.makedirs(job_dir, exist_ok=True)
 def run_adapter(job, repo, commit, home, job_dir):
     """Run the job's adapter and return its findings; exit 2 if it fails or misbehaves."""
     adapter_name = job["adapter"]
+    if os.path.basename(adapter_name) != adapter_name:
+        raise SystemExit(2)
     adapter = os.path.join(home, "adapters", adapter_name + ".py")
     if not os.path.exists(adapter):
         adapter = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "adapters", adapter_name + ".py")
