@@ -385,5 +385,16 @@ class AdapterValueTypeTest(unittest.TestCase):
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
 
+class CommandStdinTest(unittest.TestCase):
+    def test_a_command_job_reads_end_of_input_from_stdin_not_the_runners_stdin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = ["python3", "-c", "import sys; sys.exit(1 if sys.stdin.read() else 0)"]
+            home = make_home(tmp, [{"name": "check", "command": command}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    input="runner stdin", capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, findings_of(path)), (0, []))
+
+
 if __name__ == "__main__":
     unittest.main()
