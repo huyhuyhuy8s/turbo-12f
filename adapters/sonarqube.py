@@ -19,6 +19,7 @@ def main(argv=None, fetch=None):
     if not token:
         print("sonarqube: SONAR_TOKEN is not set", file=sys.stderr)
         return 1
+    fetch = fetch or (lambda method, url, token: (0, None, None))
     issues = []
     page = 1
     while True:

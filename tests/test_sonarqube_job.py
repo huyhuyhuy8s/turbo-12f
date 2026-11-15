@@ -238,5 +238,29 @@ class SonarqubeJobTest(unittest.TestCase):
                     code = f"raised {type(error).__name__}"
         self.assertEqual((code, calls), (1, []))
 
+    def test_without_a_fetch_argument_main_falls_back_to_common_request(self):
+        import sys
+        sys.path.insert(0, os.path.join(ROOT, "adapters"))
+        import common
+        job = {"name": "sonar", "adapter": "sonarqube",
+               "config": {"base_url": "https://sq.example", "project_key": "web"}}
+        calls = []
+
+        def fake_request(method, url, token, *args, **kwargs):
+            calls.append((method, url, token))
+            return 200, {"issues": [issue("AX1")], "paging": {"total": 1}}, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "acme/web", "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SONAR_TOKEN": "tok"}), \
+                    mock.patch.object(common, "request", fake_request):
+                load_sonarqube().main(argv)
+            written = os.path.exists(out)
+        first_url = ("https://sq.example/api/issues/search?componentKeys=web"
+                     "&issueStatuses=OPEN,CONFIRMED&impactSeverities=HIGH,BLOCKER&ps=100&p=1")
+        self.assertEqual((calls, written), ([("GET", first_url, "tok")], True))
+
 if __name__ == "__main__":
     unittest.main()
