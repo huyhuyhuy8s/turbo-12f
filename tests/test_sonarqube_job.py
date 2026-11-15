@@ -262,5 +262,17 @@ class SonarqubeJobTest(unittest.TestCase):
                      "&issueStatuses=OPEN,CONFIRMED&impactSeverities=HIGH,BLOCKER&ps=100&p=1")
         self.assertEqual((calls, written), ([("GET", first_url, "tok")], True))
 
+    def test_running_the_module_as_a_program_exits_one_naming_missing_base_url(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.json")
+            proc = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "adapters", "sonarqube.py"),
+                 "job", "--job", "{}", "--out", out],
+                capture_output=True, text=True, env={**os.environ, "SONAR_TOKEN": "tok"})
+            observed = (proc.returncode, "base_url" in proc.stderr, os.path.exists(out))
+            self.assertEqual(observed, (1, True, False))
+
 if __name__ == "__main__":
     unittest.main()
