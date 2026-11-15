@@ -243,6 +243,32 @@ class JobFindingsTest(unittest.TestCase):
                               "--repo", "o/r"], fetch=fake)
         self.assertEqual([c for c in calls if c[0] == "POST"], [])
 
+    def test_transport_failure_on_create_exits_1_and_leaves_the_store_unchanged(self):
+        adapter = load_adapter()
+
+        def fake(method, url, token, payload=None):
+            return None, None, "transport: timed out"
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            store_path = os.path.join(home, "jobs", "nightly", "fingerprints.json")
+            with open(store_path, "w") as fh:
+                json.dump({}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke")]}, fh)
+            try:
+                with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    code = adapter.main(["file", "--home", home, "--findings", findings_path,
+                                         "--repo", "o/r"], fetch=fake)
+            except Exception as exc:
+                code = repr(exc)
+            with open(store_path) as fh:
+                stored = json.load(fh)
+        self.assertEqual((code, stored), (1, {}))
+
 
 if __name__ == "__main__":
     unittest.main()
