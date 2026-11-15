@@ -1,5 +1,6 @@
 """`submit` turns a BAML-format reply into one `t12 act` call."""
 
+import enum
 import importlib.util
 import json
 import os
@@ -29,6 +30,26 @@ class ParseAnalyzerReply(unittest.TestCase):
         run.submit(reply, "analyzer", lambda text: parsed, act)
         expected = {"tool": "test_list_ready",
                     "args": {"items": [], "gaps": ["g"], "directives": ["d"]}}
+        self.assertEqual([mock.call(expected)], act.call_args_list)
+
+
+class ParseReviewReply(unittest.TestCase):
+    def test_review_reply_renames_class_field_and_enum_member_to_their_aliases(self):
+        class Verdict(enum.Enum):
+            MergeReady = "MergeReady"
+
+        reply = '{"tool": "review", "verdict": "merge-ready"}'
+        finding = SimpleNamespace(id="F1", class_="bug", severity="low",
+                                  where="a.py", finding="f", owner="green")
+        parsed = SimpleNamespace(tool="review", verdict=Verdict.MergeReady,
+                                 findings=[finding], verification="ran tests")
+        act = mock.Mock()
+        run.submit(reply, "review", lambda text: parsed, act)
+        expected = {"tool": "review", "args": {
+            "verdict": "merge-ready",
+            "findings": [{"id": "F1", "class": "bug", "severity": "low",
+                          "where": "a.py", "finding": "f", "owner": "green"}],
+            "verification": "ran tests"}}
         self.assertEqual([mock.call(expected)], act.call_args_list)
 
 

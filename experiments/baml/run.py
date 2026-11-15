@@ -1,4 +1,9 @@
+import enum
+
+
 def plain(value):
+    if isinstance(value, enum.Enum):
+        return value.value
     if isinstance(value, list):
         return [plain(v) for v in value]
     if isinstance(value, dict):
