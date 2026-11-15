@@ -63,6 +63,14 @@ def submit(reply, kind, parse, act, record=None):
         call = plain(parse(reply))
     except Exception as exc:
         return _refuse(record, "baml", str(exc))
+    try:
+        raw = json.loads(reply[reply.index("{") : reply.rindex("}") + 1])
+    except ValueError:
+        raw = {}
+    args = raw.get("args") if "args" not in call and isinstance(raw.get("args"), dict) else raw
+    for key, value in args.items():
+        if key != "tool" and value is not None and key not in call:
+            return _refuse(record, "script", f"unexpected arg '{key}'")
     tool = call.pop("tool")
     try:
         tools.parse(json.dumps({"tool": tool, "args": call}), kind)
