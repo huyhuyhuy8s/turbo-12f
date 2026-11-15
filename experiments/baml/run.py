@@ -167,7 +167,8 @@ def main(argv, parse=None, act=None, run=None):
             return result if isinstance(result, tuple) else (True, "ok")
 
         def record(outcome):
-            if argv:
+            path = _option(argv, "--evidence")
+            if path is not None:
                 line = {
                     "arm": "B",
                     "kind": "review",
@@ -175,7 +176,7 @@ def main(argv, parse=None, act=None, run=None):
                     "refused_by": outcome.get("refused_by"),
                     "error": outcome.get("message"),
                 }
-                with open(argv[-1], "a") as evidence:
+                with open(path, "a") as evidence:
                     evidence.write(json.dumps(line) + "\n")
 
         reply = Path(raw).read_text() if raw is not None else ""
