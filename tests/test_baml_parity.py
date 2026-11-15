@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -134,6 +135,14 @@ class Drift(unittest.TestCase):
         path = os.path.join(ROOT, "experiments", "baml", "baml_src", "tools.baml")
         committed = open(path).read() if os.path.exists(path) else ""
         self.assertEqual(committed, generate.render())
+
+    def test_render_differs_from_committed_when_review_gains_an_arg(self):
+        path = os.path.join(ROOT, "experiments", "baml", "baml_src", "tools.baml")
+        committed = open(path).read()
+        extra = {**tools.TOOLS["review"]["review"], "extra_arg": tools.STR}
+        with mock.patch.dict(tools.TOOLS["review"], {"review": extra}):
+            patched = generate.render()
+        self.assertNotEqual(committed, patched)
 
 
 if __name__ == "__main__":
