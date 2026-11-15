@@ -345,7 +345,10 @@ def _jobs(value):
                              "cannot set config")
         if "command" in job:
             try:
-                sandbox.check_command(job["command"])
+                command = job["command"]
+                if isinstance(command, str):
+                    command = command.split()
+                sandbox.check_command(command)
             except RunnerError as exc:
                 raise StateError(f"{where}: {exc}") from exc
     names = [job.get("name") for job in value]
