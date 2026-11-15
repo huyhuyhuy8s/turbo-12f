@@ -63,6 +63,7 @@ def main(argv=None, fetch=None):
         return 1
     number = (_response_body(response) or {}).get("number")
     store.update({finding["fingerprint"]: number for finding in findings})
+    os.makedirs(job_dir, exist_ok=True)
     with open(store_path, "w") as handle:
         json.dump(store, handle)
     return 0
