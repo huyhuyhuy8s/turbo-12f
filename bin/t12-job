@@ -93,6 +93,7 @@ if "adapter" in job:
     kind = "adapter"
     findings = run_adapter(job, config["repo"], commit, home, job_dir)
 if "command" in job:
+    kind = "command"
     checkout = tempfile.TemporaryDirectory()
     archive = subprocess.run(["git", "-C", config["repo"], "archive", commit], check=True, capture_output=True).stdout
     subprocess.run(["tar", "-x", "-C", checkout.name], input=archive, check=True)
