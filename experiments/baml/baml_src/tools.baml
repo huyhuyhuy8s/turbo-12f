@@ -14,7 +14,7 @@ enum ItemKind {
 
 class TestListReady {
   tool string
-  items list of test items (unit: only with units)
+  items UnitTestItem[]
   gaps string[]
   directives string[]
   units Unit[]?
@@ -32,7 +32,7 @@ class RedTestReady {
   test_name string
   last_assertion_line int
   defeats string
-  add_items list of test items
+  add_items TestItem[]
 }
 
 class NoCheatLeft {
