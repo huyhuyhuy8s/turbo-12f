@@ -108,7 +108,7 @@ def submit(reply, kind, parse, act, record=None):
     return act({"tool": tool, "args": call})
 
 
-def main(argv):
+def main(argv, parse=None, act=None, run=None):
     try:
         import baml_py  # noqa: F401
     except ImportError:
