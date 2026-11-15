@@ -324,6 +324,8 @@ JOB_KEYS = {"name", "command", "adapter", "timeout_s", "config", "label"}
 
 
 def _jobs(value):
+    if not isinstance(value, list):
+        raise StateError(f"{PATH}: jobs must be a list")
     for job in value:
         name = job.get("name")
         if not isinstance(name, str) or not JOB_NAME_RE.match(name):
