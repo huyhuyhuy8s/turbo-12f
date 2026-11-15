@@ -323,6 +323,9 @@ def _jobs(value):
         if "command" in job and "adapter" in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} has both command and adapter; "
                              "a job is one or the other")
+        if "command" not in job and "adapter" not in job:
+            raise StateError(f"{PATH}: job {job.get('name')!r} has neither command nor adapter; "
+                             "a job is one or the other")
     return value
 
 
