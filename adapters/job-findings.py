@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common  # noqa: E402
@@ -39,7 +40,8 @@ def main(argv=None, fetch=None):
                 if not is_open(fetch, repo, store.get(finding["fingerprint"]), token)]
     payload = {
         "title": f"{len(findings)} findings",
-        "body": "\n".join(f"- {finding['title']}\n{finding.get('detail', '')}" for finding in findings),
+        "body": "\n".join(f"- {finding['title']}\n{re.sub(r'#(\d+)', r'# \1', finding.get('detail', ''))}"
+                          for finding in findings),
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
                      token, payload)
