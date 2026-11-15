@@ -33,6 +33,18 @@ if job is None:
 os.makedirs(job_dir, exist_ok=True)
 
 
+def check_finding(f):
+    """Raise ValueError (or AttributeError for a non-dict) if an adapter finding is malformed."""
+    if not isinstance(f.get("fingerprint"), str) or not f["fingerprint"]:
+        raise ValueError("finding without fingerprint")
+    if "title" in f and not isinstance(f["title"], str):
+        raise ValueError("finding title is not a string")
+    if "detail" in f and not isinstance(f["detail"], str):
+        raise ValueError("finding detail is not a string")
+    if f.get("url") is not None and not isinstance(f["url"], str):
+        raise ValueError("finding url is not a string or null")
+
+
 def run_adapter(job, repo, commit, home, job_dir):
     """Run the job's adapter and return its findings; exit 2 if it fails or misbehaves."""
     adapter_name = job["adapter"]
@@ -56,14 +68,7 @@ def run_adapter(job, repo, commit, home, job_dir):
         if not isinstance(adapter_findings, list):
             raise ValueError("findings is not a list")
         for f in adapter_findings:
-            if not isinstance(f.get("fingerprint"), str) or not f["fingerprint"]:
-                raise ValueError("finding without fingerprint")
-            if "title" in f and not isinstance(f["title"], str):
-                raise ValueError("finding title is not a string")
-            if "detail" in f and not isinstance(f["detail"], str):
-                raise ValueError("finding detail is not a string")
-            if f.get("url") is not None and not isinstance(f["url"], str):
-                raise ValueError("finding url is not a string or null")
+            check_finding(f)
         return adapter_findings
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
         raise SystemExit(2)
