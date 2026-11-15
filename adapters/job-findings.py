@@ -21,7 +21,7 @@ def is_open(fetch, repo, number, token):
 
 
 def _detail(detail):
-    if "<!--" in detail:
+    if "<" in detail:
         return common.untrusted_block(detail).rstrip("\n")
     detail = re.sub(r'(github\.com/[^\s/]+/[^\s/]+/(?:issues|pull)/)(\d+)', r'\1 \2', detail, flags=re.IGNORECASE)
     return re.sub(r'(#|GH-)(\d+)', r'\1 \2', detail, flags=re.IGNORECASE)
@@ -29,7 +29,7 @@ def _detail(detail):
 
 def _entry(finding):
     title = finding["title"]
-    bullet = "" if "<!--" in title else "- "
+    bullet = "" if "<" in title else "- "
     return f"{bullet}{_detail(title)}\n{_detail(finding.get('detail', ''))}"
 
 
