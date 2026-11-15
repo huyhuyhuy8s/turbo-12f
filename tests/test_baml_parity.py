@@ -210,5 +210,12 @@ class ToolLiteralRendering(unittest.TestCase):
         self.assertEqual('"review"', fields.get("tool"))
 
 
+class OptionalArgsFollowRegistry(unittest.TestCase):
+    def test_units_is_a_required_unit_list_when_optional_args_is_empty(self):
+        with mock.patch.object(tools, "OPTIONAL_ARGS", {}):
+            found = generate.classes()["TestListReady"]["units"]
+        self.assertEqual("Unit[]", found)
+
+
 if __name__ == "__main__":
     unittest.main()
