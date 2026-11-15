@@ -93,6 +93,17 @@ def review_answer():
     return answer_function("ReviewAnswer", "review")
 
 
+def client():
+    return (
+        "client<llm> Worker {\n"
+        "  provider openai\n"
+        "  options {\n"
+        '    model "gpt-4o"\n'
+        "  }\n"
+        "}\n"
+    )
+
+
 def render():
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
     item_fields = {
@@ -107,7 +118,7 @@ def render():
     finding = class_block("Finding", {f: tools.STR for f in tools.FINDING_FIELDS})
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
             + "\n" + unit_item + "\n" + unit + "\n" + finding + "\n" + analyzer_answer()
-            + "\n" + red_answer() + "\n" + review_answer())
+            + "\n" + red_answer() + "\n" + review_answer() + "\n" + client())
 
 
 if __name__ == "__main__":

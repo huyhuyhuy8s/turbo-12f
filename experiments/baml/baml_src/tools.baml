@@ -109,3 +109,10 @@ function ReviewAnswer(input: string) -> Review | Escalate {
     {{ ctx.output_format }}
   "#
 }
+
+client<llm> Worker {
+  provider openai
+  options {
+    model "gpt-4o"
+  }
+}
