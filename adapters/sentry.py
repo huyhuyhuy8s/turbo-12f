@@ -23,7 +23,10 @@ def main(argv=None, fetch=None):
     url = (f"https://sentry.io/api/0/organizations/{config['org']}/issues/"
            f"?project={config['project_id']}&query=is:unresolved"
            f"&statsPeriod={config.get('period', '14d')}&limit=100")
-    token = os.environ["SENTRY_TOKEN"]
+    token = os.environ.get("SENTRY_TOKEN")
+    if not token:
+        print("sentry: SENTRY_TOKEN is required", file=sys.stderr)
+        return 1
     issues = []
     while url:
         status, body, headers, _error = fetch(url, token)
