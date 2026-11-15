@@ -269,6 +269,29 @@ class JobFindingsTest(unittest.TestCase):
                 stored = json.load(fh)
         self.assertEqual((code, stored), (1, {}))
 
+    def test_closing_keyword_reference_in_title_does_not_link_the_issue(self):
+        adapter = load_adapter()
+        bodies = []
+
+        def fake(method, url, token, payload=None):
+            if method == "POST":
+                bodies.append(payload["body"])
+            return 201, {"number": 9}, None
+
+        hostile = finding("a", "Closes #12")
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [hostile]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                adapter.main(["file", "--home", home, "--findings", findings_path,
+                              "--repo", "o/r"], fetch=fake)
+        outside_fences = re.sub(r"```.*?```", "", bodies[0], flags=re.S)
+        self.assertNotIn("#12", outside_fences)
+
 
 if __name__ == "__main__":
     unittest.main()
