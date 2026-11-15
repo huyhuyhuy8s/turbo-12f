@@ -359,6 +359,26 @@ class CubicJobTest(unittest.TestCase):
         removals = [a for a, _ in calls if a[:3] == ["git", "worktree", "remove"]]
         self.assertEqual(removals, [["git", "worktree", "remove", "--force", checkout]])
 
+    def test_cubic_output_that_is_not_json_fails_the_run_and_records_no_commit(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+
+        def fake(argv, cwd, env):
+            if argv[0] == "git":
+                return 0, "", ""
+            return 0, "not json at all", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            try:
+                code = load_cubic().main(argv, run=fake)
+            except Exception as error:
+                code = repr(error)
+            recorded = os.path.exists(os.path.join(tmp, "jobs", "cubic", "cubic-last.json"))
+        failed = isinstance(code, int) and code != 0
+        self.assertEqual((failed, recorded), (True, False))
+
 
 if __name__ == "__main__":
     unittest.main()
