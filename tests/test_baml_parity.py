@@ -33,6 +33,15 @@ class ToolClassNames(unittest.TestCase):
                          if "tool" not in classes.get(pascal(name), {}))
         self.assertEqual([], missing)
 
+    def test_every_tool_class_has_exactly_its_args_as_fields(self):
+        classes = generate.classes()
+        expected = {pascal(name): sorted(args)
+                    for kind in tools.TOOLS.values()
+                    for name, args in kind.items()}
+        found = {cls: sorted(set(classes.get(cls, {})) - {"tool"})
+                 for cls in expected}
+        self.assertEqual(expected, found)
+
 
 if __name__ == "__main__":
     unittest.main()
