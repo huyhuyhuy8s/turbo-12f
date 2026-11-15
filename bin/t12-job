@@ -86,7 +86,6 @@ with open(findings_path, "w", encoding="utf-8") as fh:
     if kind:
         record.update({"job": args.name, "kind": kind, "at": int(time.time())})
     json.dump(record, fh)
-if kind:
-    print(findings_path)
+print(findings_path)
 if findings:
     raise SystemExit(1)
