@@ -328,25 +328,26 @@ def _jobs(value):
             raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
     from . import sandbox
     for job in value:
+        where = f"{PATH}: job {job.get('name')!r}"
         if "schedule" in job:
-            raise StateError(f"{PATH}: job {job.get('name')!r} has unknown keys ['schedule']")
+            raise StateError(f"{where} has unknown keys ['schedule']")
         if "command" in job and "adapter" in job:
-            raise StateError(f"{PATH}: job {job.get('name')!r} has both command and adapter; "
+            raise StateError(f"{where} has both command and adapter; "
                              "a job is one or the other")
         if "command" not in job and "adapter" not in job:
-            raise StateError(f"{PATH}: job {job.get('name')!r} has neither command nor adapter; "
+            raise StateError(f"{where} has neither command nor adapter; "
                              "a job is one or the other")
         if "adapter" in job and "timeout_s" in job:
-            raise StateError(f"{PATH}: job {job.get('name')!r} is an adapter job and "
+            raise StateError(f"{where} is an adapter job and "
                              "cannot set timeout_s")
         if "command" in job and "config" in job:
-            raise StateError(f"{PATH}: job {job.get('name')!r} is a command job and "
+            raise StateError(f"{where} is a command job and "
                              "cannot set config")
         if "command" in job:
             try:
                 sandbox.check_command(job["command"])
             except RunnerError as exc:
-                raise StateError(f"{PATH}: job {job.get('name')!r}: {exc}") from exc
+                raise StateError(f"{where}: {exc}") from exc
     names = [job.get("name") for job in value]
     for name in names:
         if names.count(name) > 1:
