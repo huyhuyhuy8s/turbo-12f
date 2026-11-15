@@ -82,5 +82,32 @@ class SubmitAccepted(unittest.TestCase):
                 lines)
 
 
+class SubmitBamlFailure(unittest.TestCase):
+    def test_parse_failure_returns_1_prints_the_error_and_skips_act(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("not a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            calls = []
+
+            def parse(text):
+                raise ValueError("boom")
+
+            def act(call):
+                calls.append(call)
+                return True, "ok"
+
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=parse, act=act)
+            self.assertEqual((1, "boom", []), (code, out.getvalue().strip(), calls))
+
+
 if __name__ == "__main__":
     unittest.main()
