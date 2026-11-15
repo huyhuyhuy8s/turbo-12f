@@ -52,7 +52,7 @@ class RefactorDone {
 }
 
 class Review {
-  tool "review"
+  tool string
   verdict Verdict
   findings Finding[]
   verification string

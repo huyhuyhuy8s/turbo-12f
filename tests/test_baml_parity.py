@@ -203,5 +203,12 @@ class Drift(unittest.TestCase):
         self.assertEqual((0, generate.render()), (proc.returncode, written), proc.stderr)
 
 
+class ToolLiteralRendering(unittest.TestCase):
+    def test_render_emits_the_review_tool_literal_inside_class_review(self):
+        block = re.search(r"class Review\s*\{(.*?)\}", generate.render(), re.S)
+        fields = dict(re.findall(r"^\s*(\w+)\s+(.*?)\s*$", block.group(1) if block else "", re.M))
+        self.assertEqual('"review"', fields.get("tool"))
+
+
 if __name__ == "__main__":
     unittest.main()
