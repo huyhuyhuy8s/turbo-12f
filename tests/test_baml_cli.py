@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from types import SimpleNamespace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -238,6 +239,23 @@ class SubmitDefaultAct(unittest.TestCase):
                     run=lambda argv: seen.append(argv) or 0)
             flags = [[a for a in argv if a in ("--unit", "--run-id")] for argv in seen]
             self.assertEqual([[]], flags)
+
+
+class SubmitWithoutBamlPy(unittest.TestCase):
+    def test_missing_baml_py_returns_2_and_prints_the_package_and_both_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("a call")
+            out = io.StringIO()
+            with unittest.mock.patch.dict(sys.modules, {"baml_py": None}), \
+                    contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                code = run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply,
+                     "--home", tmp, "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")])
+            shown = out.getvalue()
+            self.assertEqual((2, True, True, True), (code, "baml-py" in shown, "pip install" in shown, "baml-cli generate" in shown))
 
 
 if __name__ == "__main__":
