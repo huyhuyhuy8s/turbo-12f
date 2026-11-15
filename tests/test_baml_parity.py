@@ -109,6 +109,13 @@ class OptionalAndEdgeRendering(unittest.TestCase):
         field = re.search(r"^\s*unit\s+(.*?)\s*$", block.group(1) if block else "", re.M)
         self.assertEqual("string?", field.group(1) if field else None)
 
+    def test_unit_test_item_extends_test_item_and_unit_class_is_defined(self):
+        def field_names(name):
+            block = re.search(r"class %s\s*\{(.*?)\}" % name, generate.render(), re.S)
+            return re.findall(r"^\s*(\w+)\s", block.group(1) if block else "", re.M)
+        expected = ([*field_names("TestItem"), "unit"], list(tools.UNIT_FIELDS))
+        self.assertEqual(expected, (field_names("UnitTestItem"), field_names("Unit")))
+
     def test_test_item_exists_without_a_unit_field(self):
         block = re.search(r"class TestItem\s*\{(.*?)\}", generate.render(), re.S)
         names = re.findall(r"^\s*(\w+)\s", block.group(1) if block else "", re.M)
