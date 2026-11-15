@@ -129,5 +129,12 @@ class AnswerFunctions(unittest.TestCase):
         self.assertEqual(["AnalyzerAnswer", "RedAnswer", "ReviewAnswer"], found)
 
 
+class Drift(unittest.TestCase):
+    def test_render_equals_the_committed_tools_baml(self):
+        path = os.path.join(ROOT, "experiments", "baml", "baml_src", "tools.baml")
+        committed = open(path).read() if os.path.exists(path) else ""
+        self.assertEqual(committed, generate.render())
+
+
 if __name__ == "__main__":
     unittest.main()
