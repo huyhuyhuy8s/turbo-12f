@@ -86,6 +86,18 @@ class CommandJobTest(unittest.TestCase):
             details = [f.get("detail", "") for f in written or []]
             self.assertIn("boom", "".join(details))
 
+    def test_a_command_exceeding_timeout_s_exits_1_with_one_timed_out_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = {"name": "check", "timeout_s": 1,
+                   "command": ["python3", "-c", "import time; time.sleep(5)"]}
+            home = make_home(tmp, [job])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json")) or []
+            details = [f.get("detail", "").lower() for f in written]
+            self.assertEqual((result.returncode, len(details), "timed out" in "".join(details)),
+                             (1, 1, True))
+
 
 if __name__ == "__main__":
     unittest.main()
