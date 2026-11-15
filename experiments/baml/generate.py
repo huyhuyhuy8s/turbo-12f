@@ -36,7 +36,7 @@ ALIASES = {
 def classes():
     return {
         class_name(name): {
-            "tool": tools.STR,
+            "tool": f'"{name}"',
             **{arg: BAML_TYPES.get(shape, shape) for arg, shape in args.items()},
         }
         for kind in tools.TOOLS.values()

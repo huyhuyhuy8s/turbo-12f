@@ -13,7 +13,7 @@ enum ItemKind {
 }
 
 class TestListReady {
-  tool string
+  tool "test_list_ready"
   items UnitTestItem[]
   gaps string[]
   directives string[]
@@ -21,12 +21,12 @@ class TestListReady {
 }
 
 class Escalate {
-  tool string
+  tool "escalate"
   question string
 }
 
 class RedTestReady {
-  tool string
+  tool "red_test_ready"
   item_id string
   test_file string
   test_name string
@@ -36,23 +36,23 @@ class RedTestReady {
 }
 
 class NoCheatLeft {
-  tool string
+  tool "no_cheat_left"
   reason string
 }
 
 class GreenReady {
-  tool string
+  tool "green_ready"
   summary string
 }
 
 class RefactorDone {
-  tool string
+  tool "refactor_done"
   summary string
   changed bool
 }
 
 class Review {
-  tool string
+  tool "review"
   verdict Verdict
   findings Finding[]
   verification string
