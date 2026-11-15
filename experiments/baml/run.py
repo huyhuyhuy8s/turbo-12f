@@ -1,6 +1,7 @@
 import enum
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -114,9 +115,45 @@ def submit(reply, kind, parse, act, record=None):
     return result
 
 
+def _option(argv, name):
+    return argv[argv.index(name) + 1] if name in argv else None
+
+
+def _execute(argv):
+    return subprocess.run(argv).returncode
+
+
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
-        act = act or (lambda call: (True, "ok"))
+        raw = _option(argv, "--reply-file")
+        if act is None and raw is None:
+            def act(call):
+                return True, "ok"
+
+        if act is None:
+            run = run or _execute
+
+            def act(call):
+                call_file = raw + ".call.json"
+                with open(call_file, "w") as handle:
+                    handle.write(json.dumps(call))
+                command = [
+                    str(Path(__file__).resolve().parents[2] / "bin" / "t12"),
+                    "act",
+                    "--home", _option(argv, "--home"),
+                    "--task-id", _option(argv, "--task-id"),
+                    "--role", _option(argv, "--role"),
+                    "--session", _option(argv, "--session"),
+                    "--input", call_file,
+                    "--raw", raw,
+                    "--parsed-by", "extracted",
+                ]
+                for flag in ("--unit", "--run-id"):
+                    if _option(argv, flag) is not None:
+                        command += [flag, _option(argv, flag)]
+                code = run(command)
+                return code == 0, "" if code == 0 else f"t12 act exited {code}"
+
         def forward(call):
             result = act(call)
             return result if isinstance(result, tuple) else (True, "ok")
