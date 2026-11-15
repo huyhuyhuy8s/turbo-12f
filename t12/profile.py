@@ -48,6 +48,7 @@ not change a built-in's kind.
 import json
 import os
 import re
+import shlex
 
 from . import gitio, globs
 from .errors import RunnerError, StateError
@@ -351,7 +352,7 @@ def _jobs(value):
             try:
                 command = job["command"]
                 if isinstance(command, str):
-                    command = command.split()
+                    command = shlex.split(command)
                 sandbox.check_command(command)
             except RunnerError as exc:
                 raise StateError(f"{where}: {exc}") from exc
