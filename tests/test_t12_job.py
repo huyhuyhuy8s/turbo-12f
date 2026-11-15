@@ -433,5 +433,17 @@ class MissingConfigTest(unittest.TestCase):
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
 
+class MalformedConfigTest(unittest.TestCase):
+    def test_a_home_whose_config_file_is_not_valid_json_exits_2_not_1_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            with open(os.path.join(home, "config.json"), "w") as fh:
+                fh.write("{not json")
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
 if __name__ == "__main__":
     unittest.main()
