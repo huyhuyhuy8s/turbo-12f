@@ -150,6 +150,14 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("jobs", message)
 
+    def test_job_that_is_not_an_object_is_refused_with_a_state_error(self):
+        caught = None
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": ["fuzz"]}))
+        except Exception as exc:  # noqa: BLE001
+            caught = exc
+        self.assertIsInstance(caught, StateError)
+
 
 if __name__ == "__main__":
     unittest.main()
