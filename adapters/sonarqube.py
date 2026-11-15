@@ -5,7 +5,7 @@ import sys
 
 def main(argv=None, fetch=None):
     job = json.loads(argv[argv.index("--job") + 1])
-    config = job["config"]
+    config = job.get("config") or {}
     base_url = config.get("base_url")
     if not base_url:
         print("sonarqube: config has no base_url", file=sys.stderr)
