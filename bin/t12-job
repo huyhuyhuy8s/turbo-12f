@@ -11,7 +11,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from t12 import profile  # noqa: E402
+from t12 import profile, sandbox  # noqa: E402
 from t12.errors import StateError  # noqa: E402
 
 parser = argparse.ArgumentParser(prog="t12-job", description=__doc__)
@@ -126,7 +126,8 @@ def run_command(job, repo, commit):
     try:
         result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                                 errors="replace", timeout=job.get("timeout_s"),
-                                env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TMPDIR")})
+                                env={**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")},
+                                     **sandbox.verification_env(home, "job-" + job["name"])})
     except subprocess.TimeoutExpired:
         failures.append(command_failure(job["name"], "command timed out after %ss" % job["timeout_s"]))
     except OSError as exc:
