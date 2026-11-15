@@ -268,5 +268,18 @@ class UnknownJobTest(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual((result.returncode, os.path.exists(os.path.join(home, "jobs", "nope"))), (2, False))
 
+
+class CommandEnvironmentTest(unittest.TestCase):
+    def test_a_command_job_does_not_see_the_factorys_forbidden_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["sh", "-c", "echo $GITHUB_TOKEN; exit 1"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True,
+                                    env={**os.environ, "GITHUB_TOKEN": "secret123"})
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                details = [f["detail"] for f in json.load(fh)["findings"]]
+            self.assertEqual((result.returncode, len(details), "secret123" in "".join(details)), (1, 1, False))
+
+
 if __name__ == "__main__":
     unittest.main()
