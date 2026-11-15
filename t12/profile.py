@@ -346,6 +346,8 @@ def _check_job(job):
     if "command" in job:
         try:
             command = job["command"]
+            if not isinstance(command, (str, list)):
+                raise StateError(f"{where}: command must be a string or a list")
             if isinstance(command, str):
                 command = shlex.split(command)
             sandbox.check_command(command)
