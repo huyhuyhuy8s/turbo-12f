@@ -56,6 +56,12 @@ class ToolClassNames(unittest.TestCase):
                  "changed": classes["RefactorDone"]["changed"]}
         self.assertEqual({"last_assertion_line": "int", "changed": "bool"}, found)
 
+    def test_integer_list_and_maybe_empty_string_item_fields_map_to_baml_types(self):
+        block = re.search(r"class TestItem\s*\{(.*?)\}", generate.render(), re.S)
+        fields = dict(re.findall(r"^\s*(\w+)\s+(.*?)\s*$", block.group(1) if block else "", re.M))
+        found = {"criteria": fields.get("criteria"), "needed": fields.get("needed")}
+        self.assertEqual({"criteria": "int[]", "needed": "string"}, found)
+
 
 class EnumRendering(unittest.TestCase):
     def test_verdict_enum_has_one_aliased_member_per_review_verdict(self):
