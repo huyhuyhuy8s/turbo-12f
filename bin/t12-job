@@ -15,7 +15,6 @@ args = parser.parse_args()
 
 home = os.path.abspath(args.home)
 job_dir = os.path.join(home, "jobs", args.name)
-os.makedirs(job_dir, exist_ok=True)
 with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
     config = json.load(fh)
 commit = subprocess.run(
@@ -31,6 +30,7 @@ job = next((j for j in jobs if j.get("name") == args.name), None)
 if job is None:
     print("unknown job %r; available jobs: %s" % (args.name, ", ".join(j.get("name", "") for j in jobs)), file=sys.stderr)
     raise SystemExit(2)
+os.makedirs(job_dir, exist_ok=True)
 
 
 def run_adapter(job, repo, commit, home, job_dir):
