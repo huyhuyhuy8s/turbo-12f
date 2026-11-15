@@ -140,5 +140,33 @@ class ExtraArg(unittest.TestCase):
             ([], [{"ok": False, "refused_by": "script", "message": message}]),
             (act.call_args_list, lines))
 
+
+class MissingBamlPy(unittest.TestCase):
+    def test_submit_without_baml_py_exits_2_naming_package_and_both_commands(self):
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            stub = os.path.join(tmp, "stub", "baml_py")
+            os.makedirs(stub)
+            with open(os.path.join(stub, "__init__.py"), "w") as fh:
+                fh.write("raise ImportError('stub: baml_py unavailable')\n")
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("{}")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            proc = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "experiments", "baml", "run.py"),
+                 "submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                 "--task-id", "T", "--role", "R", "--session", "S",
+                 "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                env={**os.environ, "PYTHONPATH": os.path.join(tmp, "stub")},
+                capture_output=True, text=True)
+            out = proc.stdout + proc.stderr
+            needles = ["baml-py", "pip install baml-py pydantic typing_extensions",
+                       "baml-cli generate --from experiments/baml/baml_src"]
+            self.assertEqual(2, proc.returncode, out)
+            self.assertEqual([], [n for n in needles if n not in out], out)
+
 if __name__ == "__main__":
     unittest.main()

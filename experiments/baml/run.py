@@ -77,3 +77,11 @@ def submit(reply, kind, parse, act, record=None):
     except StateError as exc:
         return _refuse(record, "core", str(exc))
     return act({"tool": tool, "args": call})
+
+
+def main(argv):
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
