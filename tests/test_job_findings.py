@@ -494,5 +494,34 @@ class JobFindingsTest(unittest.TestCase):
                 stored = json.load(fh)
         self.assertEqual((code, posts, stored), (0, [("POST", True)], {"a": 9}))
 
+    def test_no_line_outside_a_fence_starts_a_raw_html_block_that_could_swallow_a_later_fence(self):
+        adapter = load_adapter()
+        bodies = []
+
+        def fake(method, url, token, payload=None):
+            if method == "POST":
+                bodies.append(payload["body"])
+            return 201, {"number": 9}, None
+
+        opener = "<" + "!" + "--"
+        findings = [
+            dict(finding("a", "Alpha"), detail="<div>"),
+            dict(finding("b", "Beta"), detail=f"x {opener} hidden"),
+            dict(finding("c", "Gamma"), detail="visible"),
+        ]
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": findings}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                adapter.main(["file", "--home", home, "--findings", findings_path,
+                              "--repo", "o/r"], fetch=fake)
+        outside_fences = re.sub(r"^(`{3,}).*?^\1\s*$", "", bodies[0], flags=re.S | re.M)
+        html_starts = [line for line in outside_fences.splitlines() if line.startswith("<")]
+        self.assertEqual(html_starts, [])
+
 if __name__ == "__main__":
     unittest.main()
