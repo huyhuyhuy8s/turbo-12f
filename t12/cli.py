@@ -726,7 +726,7 @@ def cmd_gate(args):
         gate["commit"] = commit
         if gate_mod.all_passed(run):
             model.transition(run, "review")
-        _save(home, run, "gate-skipped", {})
+        _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
         return 0
     obs = _run_on_commit(home, run, wt, commit, gate["command"])
