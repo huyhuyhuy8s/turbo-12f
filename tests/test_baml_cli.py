@@ -288,6 +288,27 @@ class SubmitMissingReplyFile(unittest.TestCase):
             self.assertEqual((2, True, False), (code, reply in shown, os.path.exists(evidence)))
 
 
+class SubmitReadsReply(unittest.TestCase):
+    def test_parse_receives_the_text_of_the_reply_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write('{"tool": "escalate", "question": "q"}')
+            seen = []
+
+            def parse(text):
+                seen.append(text)
+                return SimpleNamespace(tool="escalate", question="q")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply,
+                     "--home", tmp, "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=parse, act=lambda call: (True, "ok"))
+            self.assertEqual(['{"tool": "escalate", "question": "q"}'], seen)
+
+
 
 if __name__ == "__main__":
     unittest.main()
