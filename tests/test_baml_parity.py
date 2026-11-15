@@ -234,6 +234,13 @@ class ClientBlock(unittest.TestCase):
                        if re.search(r"^\s*client\s+Worker\s*$", body, re.M))
         self.assertEqual(["AnalyzerAnswer", "RedAnswer", "ReviewAnswer"], found)
 
+    def test_each_answer_function_takes_a_single_task_string_parameter(self):
+        signatures = re.findall(r"function\s+(\w+)\s*\(([^)]*)\)", generate.render())
+        found = sorted((name, params.strip()) for name, params in signatures
+                       if name.endswith("Answer"))
+        self.assertEqual([("AnalyzerAnswer", "task: string"), ("RedAnswer", "task: string"),
+                          ("ReviewAnswer", "task: string")], found)
+
 
 if __name__ == "__main__":
     unittest.main()
