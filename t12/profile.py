@@ -323,6 +323,36 @@ JOB_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 JOB_KEYS = {"name", "command", "adapter", "timeout_s", "config", "label"}
 
 
+def _check_job(job):
+    from . import sandbox
+    where = f"{PATH}: job {job.get('name')!r}"
+    unknown = sorted(set(job) - JOB_KEYS)
+    if unknown:
+        raise StateError(f"{where} has unknown keys {unknown}")
+    if "label" in job and (not isinstance(job["label"], str) or not job["label"].strip()):
+        raise StateError(f"{where}: label must be a non-empty string")
+    if "command" in job and "adapter" in job:
+        raise StateError(f"{where} has both command and adapter; "
+                         "a job is one or the other")
+    if "command" not in job and "adapter" not in job:
+        raise StateError(f"{where} has neither command nor adapter; "
+                         "a job is one or the other")
+    if "adapter" in job and "timeout_s" in job:
+        raise StateError(f"{where} is an adapter job and "
+                         "cannot set timeout_s")
+    if "command" in job and "config" in job:
+        raise StateError(f"{where} is a command job and "
+                         "cannot set config")
+    if "command" in job:
+        try:
+            command = job["command"]
+            if isinstance(command, str):
+                command = shlex.split(command)
+            sandbox.check_command(command)
+        except RunnerError as exc:
+            raise StateError(f"{where}: {exc}") from exc
+
+
 def _jobs(value):
     if not isinstance(value, list):
         raise StateError(f"{PATH}: jobs must be a list")
@@ -332,34 +362,8 @@ def _jobs(value):
         name = job.get("name")
         if not isinstance(name, str) or not JOB_NAME_RE.match(name):
             raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
-    from . import sandbox
     for job in value:
-        where = f"{PATH}: job {job.get('name')!r}"
-        unknown = sorted(set(job) - JOB_KEYS)
-        if unknown:
-            raise StateError(f"{where} has unknown keys {unknown}")
-        if "label" in job and (not isinstance(job["label"], str) or not job["label"].strip()):
-            raise StateError(f"{where}: label must be a non-empty string")
-        if "command" in job and "adapter" in job:
-            raise StateError(f"{where} has both command and adapter; "
-                             "a job is one or the other")
-        if "command" not in job and "adapter" not in job:
-            raise StateError(f"{where} has neither command nor adapter; "
-                             "a job is one or the other")
-        if "adapter" in job and "timeout_s" in job:
-            raise StateError(f"{where} is an adapter job and "
-                             "cannot set timeout_s")
-        if "command" in job and "config" in job:
-            raise StateError(f"{where} is a command job and "
-                             "cannot set config")
-        if "command" in job:
-            try:
-                command = job["command"]
-                if isinstance(command, str):
-                    command = shlex.split(command)
-                sandbox.check_command(command)
-            except RunnerError as exc:
-                raise StateError(f"{where}: {exc}") from exc
+        _check_job(job)
     names = [job.get("name") for job in value]
     for name in names:
         if names.count(name) > 1:
