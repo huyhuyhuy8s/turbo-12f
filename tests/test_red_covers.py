@@ -1,7 +1,3 @@
-"""gh-41, ported to the tdd lane: the analyzer's test list maps each item to
-the acceptance criteria it covers, the core records the map, and refuses a
-list that leaves any criterion out (or names one that does not exist)."""
-
 import json
 import os
 import subprocess

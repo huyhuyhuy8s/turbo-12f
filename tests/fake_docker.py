@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""Fake `docker` for the Docker-adapter tests.
-
-Emulates the three docker calls the adapter makes:
-- `docker info` — exit 0 unless FAKE_DOCKER_INFO_OK=0.
-- `docker image inspect <image>` — exit 1 when the image is
-  FAKE_DOCKER_IMAGE_MISSING, else 0.
-- `docker run ...` — parses the flags, then executes the trailing
-  command on the host under a Landlock cage (standing in for the
-  container's confinement) with the -e env and the -w directory.
-
-Every invocation is appended as a JSON line to FAKE_DOCKER_LOG, so
-tests can assert on the exact argv the adapter built. This stub
-emulates the daemon; it is not Docker. RealDockerCase in test_t12.py
-covers the real daemon where one answers.
-"""
-
 import json
 import os
 import subprocess
@@ -63,9 +47,6 @@ def main():
 
 
 def _parse_run(tokens):
-    """Split a `docker run` argv into (command, worktree, verify_home,
-    env, image). Flags take values; the first positional is the image;
-    everything after it is the command."""
     worktree = verify_home = image = None
     env = {}
     i = 0

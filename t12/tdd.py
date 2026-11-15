@@ -60,22 +60,16 @@ LANE_SCOPE = "lane-scope"
 
 
 def _lane(run, record=None):
-    """The lane a handler works on: the lane `record`, or the serial run."""
     if record is None:
         return Lane(run["tdd"], run["worktree"])
     return Lane(record, record["worktree"], record["unit"], record["owns"], record["tests"])
 
 
 def _outside_scope(lane, paths, writable):
-    """The paths of `paths` a lane may not write; `writable` is the lane's
-    owns, or owns and tests. Empty for the serial run, which has no scope of
-    its own."""
     if lane.owns is None:
         return []
     return [p for p in paths if not model.under(p, writable)]
 
-
-# ------------------------------------------------------------ text helpers
 
 def _one_line(text):
     return " ".join(text.split())
@@ -91,9 +85,6 @@ def _names_test(name, line):
 
 
 def _names_test_path(line, test_globs):
-    """True when the line names a path a test glob matches: a file path
-    (any directory prefix of it), or a dotted module path such as
-    `tests.test_a.TestX.test_y`."""
     for token in re.findall(r"[\w.\-/\\]+", line):
         parts = token.replace("\\", "/").split("/")
         if any(globs.match("/".join(parts[i:]), test_globs) for i in range(len(parts))):
@@ -133,9 +124,6 @@ def _test_names(tdd):
 
 
 def _failure_lines(output, tdd):
-    """sanitize_failure, or, when the failure is no assertion (an import
-    or syntax error in production code), the last lines of the output with
-    the same lines removed."""
     names = _test_names(tdd)
     lines = sanitize_failure(output, tdd["test_globs"], names, tdd["assertion_pattern"])
     if not lines:
@@ -146,7 +134,6 @@ def _failure_lines(output, tdd):
 
 
 def _production_lines(output, test_globs):
-    """Lint output about files that are not tests."""
     lines = [ln for ln in output.splitlines()
              if ln.strip() and not _names_test_path(ln, test_globs)]
     return lines[-FAILURE_LINES:]
@@ -160,12 +147,7 @@ def _last_output(text):
     return text[-OUTPUT_CHARS:]
 
 
-# ------------------------------------------------------------ state helpers
-
 def _enter(run, record, *steps):
-    """The lane a handler works on, after checking the run is in the tdd
-    phase and the lane (the serial run's record, or the lane `record`) is at
-    one of `steps`."""
     if record is None:
         tdd = run.get("tdd")
         if not tdd:
@@ -202,8 +184,6 @@ def _at_last_good(lane, require_clean):
 
 
 def _bump_op(run, lane):
-    """One operation spent. A lane counts its own; the run's counter is the
-    serial run's."""
     if lane.unit is None:
         model.bump_op(run)
     else:
@@ -216,7 +196,6 @@ def _accepted(tdd, step):
 
 
 def _pause(run, lane, runner, question, kind, extra=None):
-    """Pause for a human: the run, or only the lane when a lane asked."""
     entry = {"question": question, "kind": kind, "asked_at": time.time(),
              "answer": None, "answered_at": None, **(extra or {})}
     if lane.unit is None:
@@ -231,9 +210,6 @@ def _pause(run, lane, runner, question, kind, extra=None):
 
 def _refuse(run, lane, runner, step, event, check, message, *, exit_code=None, tail=None,
             output="", evidence=None, item=None, next_step=None):
-    """Record a refused step and count the attempt. Raises StateError with
-    `message`; past the attempt limit the run (or the lane) pauses for a
-    human instead, and the pause message is returned."""
     tdd = lane.tdd
     if next_step:
         tdd["step"] = next_step
@@ -255,7 +231,6 @@ def _refuse(run, lane, runner, step, event, check, message, *, exit_code=None, t
 
 
 def _spec(raw):
-    """A test-list item as the model's `new_item` wants it."""
     return {"text": raw["text"], "kind": raw["kind"], "source": raw["source"],
             "needed": raw.get("needed", ""), "criteria": list(raw.get("criteria") or [])}
 
@@ -272,7 +247,6 @@ def _bad_specs(specs, criteria_count):
 
 
 def _evidence_name(tdd, label):
-    """A lane's evidence is named under its unit, `U1/tdd-001-red.txt`."""
     tdd["seq"] = tdd.get("seq", 0) + 1
     prefix = f"{tdd['unit']}/" if tdd.get("unit") else ""
     return f"{prefix}tdd-{tdd['seq']:03d}-{label}.txt"
@@ -287,9 +261,6 @@ def _passed(code, ref):
 
 
 def _run_checks(run, lane, runner, commit, label):
-    """Tests, then lint, on `commit` in the sandbox. The first failure
-    ends it. Returns (failed, result): failed is (check, code, output, ref)
-    or None; result holds each run's evidence ref."""
     tdd = lane.tdd
     result = {"tests": None, "lint": None}
     failed = None
@@ -308,11 +279,7 @@ def _run_checks(run, lane, runner, commit, label):
     return failed, result
 
 
-# ------------------------------------------------------------------ analyze
-
 def _finding_ids(tdd):
-    """Ids of the review findings the analyzer must answer, from the
-    stored report (a review tool call) or an explicit list."""
     findings = tdd.get("findings") or {}
     if findings.get("ids"):
         return list(findings["ids"])
@@ -346,17 +313,12 @@ GLOB_CHARS = frozenset("*?[]{}")
 
 
 def _unit_path(raw):
-    """(path, is_directory) of a unit path as stored: normalised, no
-    trailing slash. None when it is not an exact file or a directory ending
-    in `/`, relative, without glob characters."""
     if not model.is_worktree_path(raw) or GLOB_CHARS & set(raw) or os.path.normpath(raw) == ".":
         return None
     return os.path.normpath(raw), raw.endswith("/")
 
 
 def _glob_may_match_in(directory, test_globs):
-    """Whether some test glob can match a path inside `directory`: its fixed
-    prefix and the directory's lie on one path."""
     prefix = directory + "/"
     for glob in test_globs:
         fixed = re.split(r"[*?\[]", glob, maxsplit=1)[0]
@@ -366,7 +328,6 @@ def _glob_may_match_in(directory, test_globs):
 
 
 def _tests_problem(run, tdd, unit_id, path, is_dir):
-    """A message when a unit's tests path cannot hold a test red creates."""
     wt, base, test_globs = run["worktree"], tdd["last_good_commit"], tdd["test_globs"]
     if is_dir:
         if not _glob_may_match_in(path, test_globs):
@@ -386,9 +347,6 @@ def _tests_problem(run, tdd, unit_id, path, is_dir):
 
 
 def _unit_problem(run, tdd, units, items):
-    """((check, message), None) for the first rule a unit list breaks, else
-    (None, units as stored: paths normalised). The rules are in DESIGN.md,
-    "Parallel TDD lanes"."""
     ids = []
     used = {row["unit"] for row in run.get("lanes") or []}
     for unit in units:
@@ -459,11 +417,6 @@ def _unit_problem(run, tdd, units, items):
 
 
 def _link_deps(run, lane, fork):
-    """Link the task's `verify_deps` that exist in the run worktree into the
-    lane worktree, as the run worktree has them, so a worker's session can run
-    the suite there. The links never show as changes: each path goes in the
-    repository's exclude file. A path tracked at the fork is refused, as in
-    verification."""
     repo = run["worktree"]
     for dep in run.get("verify_deps") or []:
         source = os.path.join(repo, dep)
@@ -479,7 +432,6 @@ def _link_deps(run, lane, fork):
 
 
 def _exclude(repo, path):
-    """Add `path` to the exclude file the repository's worktrees share."""
     common = os.path.join(repo, gitio.git_ok(repo, "rev-parse", "--git-common-dir"))
     exclude = os.path.join(common, "info", "exclude")
     entry = "/" + path.strip("/")
@@ -512,11 +464,6 @@ LANE_FRACTION = (3, 4)
 
 
 def _share(weight, total, ops_left, cycles_left):
-    """A lane's fixed share of what is left, in proportion to its item count.
-    Lanes together get LANE_FRACTION of it; the rest, and the rounding, stays
-    for integration and the cross-unit refactor. The core sees no spend in an
-    act (its input is only the tool call), so cost is not carved here: the
-    lane records its `cost_share`, the fraction of any spend limit it may use."""
     num, den = LANE_FRACTION
     op_limit, cycle_limit = ops_left * num * weight // (den * total), cycles_left * num * weight // (den * total)
     return {"op_limit": op_limit, "cycle_limit": cycle_limit,
@@ -525,10 +472,6 @@ def _share(weight, total, ops_left, cycles_left):
 
 
 def _fan_out(home, run, tdd, units, items, runner):
-    """Make a lane per unit, start the ones with nothing to wait for, and
-    leave the run's own record at step `lanes`. Splits what is left of the
-    op limit and the cycle limit into the lanes' shares, a remainder kept for
-    integration. Returns the lane records."""
     budgets = run["budgets"]
     ops_left = max(0, budgets["op_limit"] - budgets["ops_used"])
     cycles_left = max(0, budgets["cycle_limit"] - tdd["cycle"])
@@ -632,15 +575,11 @@ def analyze(home, run, role, session, args, *, runner, lane=None):
             f"{len(directives)} directives; next step {tdd['step']}")
 
 
-# ---------------------------------------------------------------------- red
-
 _RED_ARGS = ("item_id", "test_file", "test_name", "last_assertion_line", "defeats")
 REDUNDANT_PREFIX = "redundant:"
 
 
 def _normalized_text(text):
-    """An item text as the redundancy check compares it: the part before the
-    reason, lowercase, whitespace collapsed."""
     return _one_line(text.split(" (")[0]).lower()
 
 
@@ -653,8 +592,6 @@ def redundant_items(tdd):
 
 
 def _pruned_note(tdd, adds):
-    """A prefix for a refusal when an added item repeats a case the analyzer
-    pruned as redundant, else ''."""
     pruned = {_normalized_text(r) for r in redundant_items(tdd)}
     repeats = [a["text"] for a in adds if _normalized_text(a["text"]) in pruned]
     if not repeats:
@@ -664,8 +601,6 @@ def _pruned_note(tdd, adds):
 
 
 def _red_checks(tdd, args, output, code, ref, adds_items=False):
-    """(check, message) for the first failed verification of the red run,
-    else None."""
     if code == 0 and not _timed_out(ref):
         if adds_items:
             return ("red-tautology", "tautology: the new test passes against the current "
@@ -809,8 +744,6 @@ def red(home, run, role, session, args, *, runner, lane=None):
 
 
 def _lane_done(tdd):
-    """A lane that has reached its own final waits for integrate; the time it
-    got there orders the merges."""
     if tdd.get("unit") and tdd["step"] == "final":
         tdd["status"], tdd["finished_at"] = "done", time.time()
 
@@ -832,8 +765,6 @@ def no_cheat_left(home, run, role, session, args, *, runner, lane=None):
     return "no cheat left: the final run is next"
 
 
-# ------------------------------------------------------ green and refactor
-
 def _open_entry(tdd):
     if tdd["history"] and tdd["history"][-1].get("open"):
         return tdd["history"][-1]
@@ -852,10 +783,6 @@ def _item_text(tdd):
 
 
 def _apply_step(run, ctx, runner, step, patch):
-    """Apply a blind role's patch, check it, and leave the commit in place
-    on the branch. Returns (commit, refs, changed), or the pause message when
-    a refusal pushed the run past its attempt limit (any other refusal
-    raises). A rejected patch leaves the worktree at the last good commit."""
     tdd = ctx.tdd
     event = f"tdd-{step}-failed"
     wt = _at_last_good(ctx, require_clean=True)
@@ -905,8 +832,6 @@ def _apply_step(run, ctx, runner, step, patch):
 
 
 def _changed_lines(wt, a, b, test_globs):
-    """Production lines added plus deleted between two commits. A binary
-    file counts as unboundedly many."""
     out = gitio.git_ok(wt, "diff", "--numstat", "-z", "--no-renames", a, b, strip=False)
     total = 0
     for record in out.split("\0"):
@@ -964,7 +889,6 @@ def green(home, run, role, session, args, *, runner, patch, lane=None):
 
 
 def _close_cycle(tdd):
-    """Count a finished cycle and pick the next step."""
     tdd["red"] = None
     tdd["last_item"] = tdd.get("current") or tdd.get("last_item")
     tdd["current"] = None
@@ -981,9 +905,6 @@ def cycle_limit(run, tdd):
 
 
 def _cycle_limit_pause(run, ctx, runner):
-    """The pause message when the cycle limit stops the run (or the lane)
-    before the next red, else None. A lane with a share of the cycles pauses
-    as `lane-budget`, naming its unit."""
     tdd = ctx.tdd
     limit = cycle_limit(run, tdd)
     if tdd["step"] != "red" or tdd["cycle"] < limit:
@@ -1042,13 +963,7 @@ def refactor(home, run, role, session, args, *, runner, patch, lane=None):
         f"next {tdd['step']}")
 
 
-# -------------------------------------------------------------------- final
-
 def _structural_problem(run, wt, tip, tdd):
-    """(problem, security_paths) for the tip. problem is (check, message)
-    for the first failure of: a review asking for changes answered with no
-    new commit, locked tests differing, changes outside touches, changes to
-    protected paths; else None."""
     review = model.changes_requested(run)
     if review is not None and tip == review["commit"]:
         return ("no-new-commit", f"the review asked for changes on {tip[:12]} and no new "
@@ -1075,8 +990,6 @@ def _structural_problem(run, wt, tip, tdd):
 
 
 def _unanswered_review(run, tip):
-    """The question a human gets when the tip still carries the commit a review
-    asked changes on: the refusal and the review's report, verbatim."""
     review = model.changes_requested(run)
     with open(review["report"]["path"], encoding="utf-8", errors="replace") as fh:
         report = fh.read()
@@ -1123,16 +1036,11 @@ def final(home, run, *, runner):
     return f"final: candidate {tip[:12]} pinned after {tdd['cycle']} cycles"
 
 
-# -------------------------------------------------------------- integration
-
 def _refuse_message(unit, route):
     return f"integration of {unit} failed ({route})"
 
 
 def _integrable(home, run, lane_record):
-    """Raise unless `lane_record` may integrate now: the run is at step
-    `lanes`, the lane reached its final, and it is the lane that finished
-    first (the lowest unit id among lanes that finished together)."""
     unit = lane_record["unit"]
     if run["phase"] != "tdd":
         raise StateError(f"integrate needs the run in phase 'tdd', it is {run['phase']!r}")
@@ -1150,9 +1058,6 @@ def _integrable(home, run, lane_record):
 
 
 def _lane_problem(run, ctx):
-    """(check, message) for the first thing wrong with a lane's tip, else
-    None: locked tests differing, a path outside the unit's owns and tests,
-    outside the task's touches, or protected."""
     tdd, tip = ctx.tdd, ctx.tdd["last_good_commit"]
     current = gitio.blob_map(ctx.worktree, tip, lambda p: globs.match(p, tdd["test_globs"]))
     if current != tdd["locked"]:
@@ -1201,16 +1106,10 @@ def lane_final(home, run, lane_record, *, runner):
 
 
 def _integration_lane(run, owns=None):
-    """The implicit lane of the integration worktree: the run's record and
-    worktree, and (for the integration green) the union of the owns of the
-    lanes in the merge as its scope."""
     return Lane(run["tdd"], run["worktree"], None, owns)
 
 
 def _merge_into(run, lane_record, pre):
-    """`git merge --no-ff` of the lane's branch into the integration branch.
-    Returns (merge commit, []) or, on a textual conflict, (None, conflicted
-    files) with the merge aborted and the branch back at `pre`."""
     wt = run["worktree"]
     obs = gitio.git(wt, "merge", "--no-ff", "-m",
                     f"tdd({run['task_id']}): merge {lane_record['unit']}", lane_record["branch"])
@@ -1224,8 +1123,6 @@ def _merge_into(run, lane_record, pre):
 
 
 def _conflict(run, lane_record, pre, files, runner):
-    """A textual conflict means the disjointness check has a bug: the run
-    pauses (`integration-conflict`) and the core never retries."""
     unit, tdd = lane_record["unit"], run["tdd"]
     tdd["integration_failures"].append({"unit": unit, "route": "conflict", "failed": [],
                                         "check": "merge", "pre_merge": pre})
@@ -1237,9 +1134,6 @@ def _conflict(run, lane_record, pre, files, runner):
 
 
 def _blamed_units(output, check, lanes):
-    """The units of `lanes` a failed run of the merged commit names: by a test
-    name or test file of the lane in the output, and for lint by a path under
-    the lane's owns or tests. Empty when the output names none of them."""
     blamed = []
     for lane in sorted(lanes, key=lambda l: l["unit"]):
         names = _test_names(lane)
@@ -1254,8 +1148,6 @@ def _blamed_units(output, check, lanes):
 
 
 def _count_repair(run, runner, event, detail, lanes):
-    """One repair used by an integration failure: record the failure, and
-    past the repair cap pause the run as a gate failure does."""
     budgets = run["budgets"]
     budgets["repairs_used"] += 1
     runner.save(event, {**detail, "repairs_used": budgets["repairs_used"],
@@ -1270,8 +1162,6 @@ def _count_repair(run, runner, event, detail, lanes):
 
 
 def _reopen_lane(lane_record, merged, merge_commit, pre, blamed, error):
-    """Only the merging lane's tests failed: reopen it at green, its branch
-    reset to the merge result so green sees the other units' code."""
     wt = lane_record["worktree"]
     gitio.reset_hard(wt, merge_commit)
     created = set()
@@ -1289,11 +1179,7 @@ def _reopen_lane(lane_record, merged, merge_commit, pre, blamed, error):
 
 
 def _start_integration_green(run, lane_record, merged, merge_commit, pre, blamed, error):
-    """Leave the run at step `integration-green`: the worktree is on the merge
-    result, which is not yet recorded as merged, and the green may write the
-    owns of every lane in the merge."""
     tdd = run["tdd"]
-    # The worktree holds the pending lane's tests now: resume checks them as locked.
     tdd["locked"] = {**tdd["locked"], **lane_record["locked"]}
     tdd["red_commit"] = tdd.get("red_commit") or merge_commit
     tdd.update(
@@ -1307,7 +1193,6 @@ def _start_integration_green(run, lane_record, merged, merge_commit, pre, blamed
 
 
 def _merged_lanes(home, run, lane_record):
-    """Every lane record of the run, the merging one as given."""
     lanes = {l["unit"]: l for l in model.list_lanes(home, run["task_id"])}
     lanes[lane_record["unit"]] = lane_record
     return lanes
@@ -1402,10 +1287,6 @@ def to_integration_green(home, run, lane_record, *, runner):
 
 
 def _integration_green(home, run, runner, patch):
-    """The green role on the integration worktree, on the merge result: the
-    same prompt, blindness and checks as a lane's green (every red test and
-    lint on the commit), allowed to write the owns of every lane in the merge.
-    Refusals count attempts; past the attempt limit the run pauses."""
     tdd = run["tdd"]
     if run["phase"] != "tdd":
         raise StateError(f"the run is in phase {run['phase']!r}, not 'tdd'")
@@ -1431,8 +1312,6 @@ def _integration_green(home, run, runner, patch):
 
 
 def _grant(tdd, lane_record):
-    """Give a lane paused on `lane-budget` what the pool has, up to its own
-    share, and resume it. Only integrate calls this."""
     pending = model.open_escalation(lane_record)
     if lane_record["status"] != "paused" or not pending or pending.get("kind") != LANE_BUDGET:
         return None
@@ -1450,11 +1329,6 @@ def _grant(tdd, lane_record):
 
 
 def _complete_merge(home, run, lane_record, lanes, commit, refs, runner, via):
-    """Record a merge: the lane is merged at `commit`, the run's tdd record
-    takes the lane's items, history and counters, what the lane left unspent
-    returns to the pool (and is granted to lanes paused on `lane-budget`), the
-    lanes whose `after` units are all merged start from the new tip, and when
-    every lane is merged the run goes on to the cross-unit refactor or final."""
     tdd, unit = run["tdd"], lane_record["unit"]
     lane_record.update(status="merged", merged_commit=commit)
     order = tdd.setdefault("merge_order", [])
@@ -1502,8 +1376,6 @@ def _complete_merge(home, run, lane_record, lanes, commit, refs, runner, via):
             + (f"; started {', '.join(started)}" if started else "")
             + (f"; every lane merged, next step {tdd['step']}" if everything else ""))
 
-
-# ----------------------------------------------------------------- contexts
 
 def _read_report(ref):
     path = ref.get("path") if isinstance(ref, dict) else None

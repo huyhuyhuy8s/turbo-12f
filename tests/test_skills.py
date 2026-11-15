@@ -1,8 +1,3 @@
-"""adapters/skills.py against locally built tar.gz archives served by file://
-URLs (no network): include filtering, wrapped command files, a stable tree
-hash, refusal of a mismatched pin, --update-hashes, `verify`, and refusal of
-unsafe archive members."""
-
 import contextlib
 import hashlib
 import io
@@ -38,8 +33,6 @@ PIN = {"repo": "owner/name", "rev": REV, "path": "skills/vitest",
 
 
 def archive(files=None, extra=(), prefix=TOP, order=None):
-    """A codeload-shaped tar.gz: one top directory, regular files from
-    `files`, then the TarInfo/data pairs in `extra`."""
     files = FILES if files is None else files
     names = list(files) if order is None else order
     buf = io.BytesIO()

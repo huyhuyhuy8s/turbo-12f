@@ -1,12 +1,3 @@
-"""gh-53: time spent paused is free, however the run paused.
-
-The old builder case (a worker commits, then escalates, and the HEAD check
-at resume refuses) is gone with the builder: in the tdd lane only the core
-commits to the run's worktree, so a worker's escalation can never leave
-HEAD ahead of the last recorded step. The resume refusals for a HEAD or a
-test file that moved while paused are covered in test_t12.py.
-"""
-
 import json
 import os
 import subprocess
@@ -54,8 +45,6 @@ class PausedTimeCase(TddFlow, unittest.TestCase):
         return result
 
     def away(self, command):
-        """Pause the run with `command` (a `pause` or an `escalate`), resume it
-        100000 s later, and return the time 10 s after that."""
         now = time.time()
         with mock.patch("time.time", return_value=now):
             self.assertEqual(cli.main(command + ["--home", self.home, "--task-id", "demo-1"]), 0)

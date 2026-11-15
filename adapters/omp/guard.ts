@@ -1,10 +1,6 @@
 /**
  * omp extension: tool-call guard for turbo-12f workers.
  *
- * Serves 12-factor 3 (the factory owns the tool surface: what a worker may touch is policy, not
- * prompt text), 8 (the stop/refuse decision lives in code the factory controls) and 9 (a refusal
- * comes back to the model as a short in-session error that says what to do instead).
- *
  * Load with `omp -e adapters/omp/guard.ts`. The policy is a JSON file named by $T12_GUARD_POLICY
  * (unset: allow everything). Blocking happens before the tool runs via the `tool_call` hook.
  *
@@ -74,7 +70,6 @@ function normalize(policy: GuardPolicy): Policy {
 	};
 }
 
-// ---------------------------------------------------------------------------------- globs
 
 const regexCache = new Map<string, RegExp>();
 
@@ -119,7 +114,6 @@ function matchesAny(globs: string[], rels: string[]): boolean {
 	});
 }
 
-// ---------------------------------------------------------------------------------- paths
 
 function realish(p: string): string {
 	const rest: string[] = [];
@@ -144,7 +138,6 @@ function inside(root: string, target: string): string | null {
 }
 
 interface Target {
-	/** repo-relative POSIX paths (lexical and symlink-resolved) that lie inside cwd */
 	rels: string[];
 	escapes: boolean;
 }
@@ -159,7 +152,6 @@ function locate(raw: string, cwd: string): Target {
 	return { rels, escapes: lexical === null || real === null };
 }
 
-/** `[path#TAG]` wrapper and `file://` prefix removed. */
 function clean(raw: string): string {
 	const m = /^\[(.+)#[0-9A-Fa-f]{4}\]$/.exec(raw.trim());
 	const s = m ? m[1] : raw.trim();
@@ -171,7 +163,6 @@ function scheme(p: string): string | null {
 	return m ? m[1].toLowerCase() : null;
 }
 
-/** Entries of a path argument: semicolon / newline lists (grep, glob, ast_grep, read recovery). */
 function pieces(raw: string): string[] {
 	return raw.split(/[;\n]/).map(clean).filter(p => p !== "");
 }
@@ -209,7 +200,6 @@ function checkRead(policy: Policy, raw: string, cwd: string): Decision {
 	return ALLOW;
 }
 
-/** Absolute path allowed by `allow_read` (dir root or glob), both lexically and after symlink resolution. */
 function readAllowed(policy: Policy, file: string, cwd: string): boolean {
 	if (policy.allowRead.length === 0 || !isAbsolute(file)) return false;
 	const abs = resolve(cwd, file);
@@ -260,7 +250,6 @@ function checkWrite(policy: Policy, raw: string, cwd: string): Decision {
 		}
 		const hidden = checkHidden(policy, piece, cwd, "write");
 		if (hidden.block) return hidden;
-		// archive member / sqlite row selectors: the file actually written is the first segment
 		const file = piece.split(":")[0];
 		const t = locate(file, cwd);
 		if (t.escapes) return block(`${file} is outside the working directory; write only inside it`);
@@ -295,7 +284,6 @@ function checkWriteExpanding(policy: Policy, raw: string, cwd: string): Decision
 	return ALLOW;
 }
 
-// ---------------------------------------------------------------------------------- tools
 
 function bashDecision(policy: Policy, command: unknown): Decision {
 	if (policy.bash === "allow") return ALLOW;
@@ -304,7 +292,6 @@ function bashDecision(policy: Policy, command: unknown): Decision {
 	return block(`this exact command is not allowed; permitted commands: ${policy.bash.map(c => JSON.stringify(c)).join(", ") || "none"}`);
 }
 
-/** Paths an edit call targets, across hashline, replace, patch, apply_patch and sloppy modes. */
 function editTargets(input: Record<string, unknown>): string[] {
 	const out: string[] = [];
 	if (typeof input.path === "string") out.push(input.path);
@@ -340,7 +327,6 @@ function decideLsp(policy: Policy, input: Record<string, unknown>, cwd: string):
 	}
 	if (!mutating) return ALLOW;
 	if (policy.hidden.length > 0 || policy.readOnly.length > 0 || policy.writable !== null) {
-		// refactors and arbitrary LSP requests can touch files other than `file`
 		return block(`lsp ${action} can modify files beyond ${file || "its target"}; use edit on explicit files`);
 	}
 	if (action === "rename_file" && typeof input.new_name === "string") return checkWrite(policy, input.new_name, cwd);
@@ -454,7 +440,6 @@ function decideNormalized(policy: Policy, tool: string, input: Record<string, un
 	}
 }
 
-// ---------------------------------------------------------------------------------- extension
 
 interface GuardEvent {
 	toolName: string;

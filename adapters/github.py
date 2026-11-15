@@ -75,7 +75,6 @@ def create_pr(home, task_id, repo, title, body, api_base, timeout, token):
         data = report("github", task_id, candidate, outcome, ref, detail)
         return data
 
-    # 1. The branch must already be on the remote.
     status, _body, error = request(
         "GET", f"{api_base}/repos/{repo}/branches/{branch}", token, timeout=timeout)
     if status == 404:
@@ -85,7 +84,6 @@ def create_pr(home, task_id, repo, title, body, api_base, timeout, token):
         outcome, detail = read_outcome(status, error)
         return fail(outcome, f"could not check remote branch: {detail}")
 
-    # 2. A PR for this branch may already exist — find it, do not duplicate.
     status, listing, error = request(
         "GET", f"{api_base}/repos/{repo}/pulls?state=open&head={repo.split('/')[0]}:{branch}"
                f"&base={quote(base, safe='')}",
@@ -115,7 +113,6 @@ def create_pr(home, task_id, repo, title, body, api_base, timeout, token):
                     f"not the reviewed head {candidate[:12]}",
                     ref=pr.get("html_url"))
 
-    # 3. Create the PR.
     status, created, error = request(
         "POST", f"{api_base}/repos/{repo}/pulls", token,
         {"title": title, "head": branch, "base": base, "body": body},
@@ -125,8 +122,6 @@ def create_pr(home, task_id, repo, title, body, api_base, timeout, token):
         return fail(outcome, f"could not create pull request: {detail}")
     number = created["number"]
 
-    # 4. Read it back: a created PR whose head is not the reviewed
-    #    commit is not a confirmed delivery.
     status, pr, error = request(
         "GET", f"{api_base}/repos/{repo}/pulls/{number}", token, timeout=timeout)
     if status != 200 or not isinstance(pr, dict):

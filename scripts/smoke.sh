@@ -1,6 +1,4 @@
 #!/bin/bash
-# Smoke: happy path on a disposable repo. No network, no model: the tool
-# calls a worker would make are written out and passed to `t12 act`.
 set -euo pipefail
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
@@ -25,8 +23,6 @@ export PYTHONDONTWRITEBYTECODE=1
 
 WT="$HOME_DIR/worktrees/demo-1"
 
-# One worker output through `t12 act`; an optional patch is the diff a blind
-# worktree produced (green and refactor).
 act() {
   local role="$1" session="$2" call="$3" patch="${4:-}"
   printf '%s' "$call" > "$TMP/call.json"
@@ -65,7 +61,6 @@ diff --git a/app.py b/app.py
 EOF
 act green sess-green '{"tool":"green_ready","args":{"summary":"greet formats the name"}}' "$TMP/green.patch"
 
-# A 2-line green is under refactor_skip_max_lines (5): the core skips refactor.
 act red sess-red '{"tool":"no_cheat_left","args":{"reason":"every case is covered"}}'
 
 "$T12" tdd-step --home "$HOME_DIR" --task-id demo-1

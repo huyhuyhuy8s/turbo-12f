@@ -1,7 +1,3 @@
-"""The deterministic TDD engine against real temp git repos. The fake
-runner runs the command on a detached checkout of the commit, as the
-verification sandbox does, minus the sandbox."""
-
 import copy
 import os
 import subprocess
@@ -89,7 +85,6 @@ class EngineCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    # -- drivers
     def write(self, rel, text):
         with open(os.path.join(self.repo, rel), "w") as fh:
             fh.write(text)
@@ -596,8 +591,6 @@ class VerifyCheckTest(unittest.TestCase):
 
 
 class LaneRunner(FakeRunner):
-    """The fake runner for a lane: commands run on the lane's worktree."""
-
     lane = None
 
     def run_on_commit(self, run, commit, argv, name):
@@ -605,9 +598,6 @@ class LaneRunner(FakeRunner):
 
 
 class LaneEngineCase(EngineCase):
-    """The engine on one lane of a parallel run: the lane record and worktree,
-    never the run's own."""
-
     def setUp(self):
         super().setUp()
         self.run_["phase"] = "tdd"

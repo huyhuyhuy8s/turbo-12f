@@ -54,7 +54,6 @@ def complete(home, task_id, gid, api_base, timeout, token):
             return None, outcome, f"could not read Asana task: {detail}"
         return body.get("data") or {}, None, None
 
-    # 1. Read first: an already-complete task needs no mutation.
     task, outcome, detail = read_task()
     if task is None:
         return fail(outcome, detail)
@@ -62,7 +61,6 @@ def complete(home, task_id, gid, api_base, timeout, token):
         return fail("confirmed", f"Asana task {gid} is already complete",
                     ref=task.get("permalink_url"))
 
-    # 2. Comment with the delivery evidence.
     text = (
         f"Delivered by turbo-12f: {run['title']}\n"
         f"Candidate: {candidate}\n"
@@ -76,7 +74,6 @@ def complete(home, task_id, gid, api_base, timeout, token):
         outcome, detail = mutation_outcome(status, error, _body)
         return fail(outcome, f"could not comment on Asana task: {detail}")
 
-    # 3. Mark complete.
     status, _body, error = request(
         "PUT", f"{api_base}/tasks/{gid}", token,
         {"data": {"completed": True}}, timeout=timeout)
@@ -84,7 +81,6 @@ def complete(home, task_id, gid, api_base, timeout, token):
         outcome, detail = mutation_outcome(status, error, _body)
         return fail(outcome, f"could not complete Asana task: {detail}")
 
-    # 4. Read it back: only a completed task is a confirmed delivery.
     task, outcome, detail = read_task()
     if task is None:
         return fail(outcome, detail)

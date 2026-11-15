@@ -1,6 +1,3 @@
-"""Glob matching in the core, and parity with the blind worktree's matcher
-in adapters/workspace.py, which builds the hidden view from the same globs."""
-
 import os
 import sys
 import unittest
@@ -12,7 +9,6 @@ sys.path.insert(0, os.path.join(ROOT, "adapters"))
 from t12 import globs  # noqa: E402
 import workspace  # noqa: E402
 
-# (glob, path, matches)
 TABLE = [
     ("tests/**", "tests/test_a.py", True),
     ("tests/**", "tests/sub/test_a.py", True),

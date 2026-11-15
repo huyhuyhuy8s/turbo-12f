@@ -1,8 +1,3 @@
-"""Tests for bin/t12-wizard `take` and `status`. Fake `gh`, a fake intake
-adapter and a fake `t12 board` sit in a temporary workspace; nothing
-touches the network, a socket, or the real home directory.
-"""
-
 import json
 import os
 import re
@@ -114,7 +109,6 @@ class TakeStatusTest(unittest.TestCase):
         lines = [ln for ln in out.splitlines() if re.search(rf"(?<!\d){number}(?!\d)", ln)]
         return lines
 
-    # --- criteria 0 and 1 ---
     def test_take_labels_runs_intake_and_reports_each_issue(self):
         r, out = self.run_wizard(["take", "5", "6"])
         self.assertEqual(r.returncode, 0, out)
@@ -141,7 +135,6 @@ class TakeStatusTest(unittest.TestCase):
         self.assertIn("skipped", six[0])
         self.assertIn("no Acceptance criteria heading with a list", six[0])
 
-    # --- criteria 2 and 4 of status ---
     def test_status_one_sentence_per_run(self):
         self.board([
             {"task_id": "gh-1", "phase": "local-verified", "next": "human: merge"},
@@ -170,7 +163,6 @@ class TakeStatusTest(unittest.TestCase):
         self.assertEqual(len(lines), 1, out)
         self.assertIn("take", lines[0])
 
-    # --- criterion 4 ---
     def test_take_without_login_explains_and_changes_nothing(self):
         r, out = self.run_wizard(["take", "5"], FAKE_NO_AUTH="1")
         self.assertNotEqual(r.returncode, 0)

@@ -42,10 +42,7 @@ STDERR_TAIL_LINES = 50
 STDERR_TAIL_CHARS = 2000
 CANCEL_METHODS = frozenset({"select", "confirm", "input", "editor", "ask"})
 _EOF = object()
-# What a provider says when it refuses for load: HTTP 429 and 529, a rate
-# limit, "overloaded_error", "too many requests".
 RATE_LIMITED = re.compile(r"\b(?:429|529)\b|rate[ _-]?limit|overloaded|too many requests", re.I)
-# Frames that carry assistant messages: one `message`, or a list of `messages`.
 MESSAGE_FRAMES = frozenset({"message_end", "turn_end", "agent_end"})
 
 
@@ -100,7 +97,6 @@ def omp_argv(omp_cmd, *, profile=None, model=None, thinking=None, tools=(), syst
 
 
 def _kill(proc):
-    """SIGKILL the worker's whole process group (omp's tools spawn children)."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):

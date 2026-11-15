@@ -29,8 +29,6 @@ BLOCKS = {"p", "div", "ul", "ol", "br", "pre", "blockquote", "body"}
 
 
 class _Markdown(HTMLParser):
-    """Asana rich text as the markdown a GitHub issue would hold."""
-
     def __init__(self):
         super().__init__()
         self.parts = []

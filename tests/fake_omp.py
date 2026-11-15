@@ -1,37 +1,4 @@
 #!/usr/bin/env python3
-"""A stand-in for `omp --mode rpc` in the omp driver and runner tests: the
-JSONL subset of the protocol that adapters/omp_rpc.py speaks, no model and
-no network. It ignores every CLI flag except to record them.
-
-What it calls is decided by $FAKE_OMP_SCRIPT, a JSON list of
-`{"tool":..., "args":...}` steps (the next step answers each rejection;
-the last one repeats), or by $FAKE_OMP_DELEGATE, a command that gets the
-first prompt's text on stdin and prints one `{"tool":..., "args":...}`
-object (so tests/fake_model.py can stand in for the model). When the
-host refuses a call, the delegate is run again with `TOOL ERROR: <the
-refusal>` on stdin and its new call is made: the model fixing its work in
-the same session.
-With neither, it calls `done` with no arguments.
-
-$FAKE_OMP_MODE picks the behaviour:
-  ""              one host tool call per prompt, then done
-  loop            turns forever, never a call (until aborted or stdin closes)
-  bad-then-good   the first call has wrong arguments, the next is the real one
-  silent          the first prompt ends without a call; the follow-up calls
-  never           no call, ever; each prompt ends after one turn
-  ui              an extension_ui_request `confirm` is answered before calling
-  crash           exits 3 after `ready`, with a message on stderr
-  supersede       the first session ever (claimed in $FAKE_OMP_STATE) runs the shell
-                  command $FAKE_OMP_BEFORE_CALL before its call, e.g. to supersede
-                  the run it works for; every other session behaves as by default
-  rate-limit      the provider refuses the first prompt (see rate_limit); the first
-                  $FAKE_OMP_RATE_LIMITS sessions only, counted in $FAKE_OMP_STATE (a
-                  directory), then the sessions behave as in the default mode
-
-$FAKE_OMP_LOG, when set, gets one JSONL record per line: `{"argv": [...],
-"pid": N}` first, then `{"frame": <stdin frame>}` for each frame received.
-"""
-
 import json
 import os
 import select
@@ -59,14 +26,11 @@ def log(record):
 
 
 class Stdin:
-    """Line reader on fd 0 that select() can wait on."""
-
     def __init__(self):
         self.buf = b""
         self.eof = False
 
     def readline(self, timeout=None):
-        """A line, "" at EOF, None when `timeout` passes first."""
         while b"\n" not in self.buf:
             if self.eof:
                 rest, self.buf = self.buf, b""
@@ -200,8 +164,6 @@ class Fake:
 
     @staticmethod
     def claim(name):
-        """True for the first session to ask for `name`: a marker file under $FAKE_OMP_STATE,
-        created O_EXCL, so each claim has one claimant across processes."""
         try:
             os.close(os.open(os.path.join(os.environ["FAKE_OMP_STATE"], name),
                              os.O_CREAT | os.O_EXCL | os.O_WRONLY))
@@ -210,9 +172,6 @@ class Fake:
         return True
 
     def claim_rate_limit(self):
-        """Whether this session is one of the first $FAKE_OMP_RATE_LIMITS (all of them when
-        unset) to be refused. Sessions are separate processes, so each limit is claimed by
-        creating a marker file under $FAKE_OMP_STATE (O_EXCL: one claimant each)."""
         limits = os.environ.get("FAKE_OMP_RATE_LIMITS")
         if limits is None:
             return True
@@ -226,10 +185,6 @@ class Fake:
         return False
 
     def rate_limit(self):
-        """What omp sends when the provider refuses. $FAKE_OMP_RATE_STYLE: `retry` (default),
-        omp's own retries run out (auto_retry_start, auto_retry_end success false); `stop`, the
-        prompt just ends on an assistant message that stopped with the error; `stall`, omp is
-        still retrying and never gives up."""
         text = os.environ.get("FAKE_OMP_RATE_ERROR", RATE_ERROR)
         message = {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": text}
         emit({"type": "turn_start"})

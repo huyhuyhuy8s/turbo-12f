@@ -9,8 +9,6 @@ import os
 from . import gitio, store
 from .errors import StateError
 
-# The factory prompt of each kind: the tdd roles share the tdd- prefix,
-# every review role starts from the one reviewer prompt.
 PROMPTS = {
     "analyzer": "tdd-analyzer",
     "red": "tdd-red",
@@ -39,8 +37,6 @@ def _factory(factory_root, path):
 
 
 def _factory_prompt(role, kind):
-    # A project role without its own prompt starts from the prompt of
-    # its kind: a ux-copy reviewer gets prompts/reviewer.md.
     return f"prompts/{PROMPTS[kind]}.md"
 
 

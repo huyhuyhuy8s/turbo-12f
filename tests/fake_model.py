@@ -1,34 +1,4 @@
 #!/usr/bin/env python3
-"""The model behind tests/fake_omp.py's FAKE_OMP_DELEGATE in the runner
-tests: it plays a tiny Python repo (`greet` in app.py, unittest under
-tests/) through the TDD roles. fake_omp runs it with the prompt on stdin in
-the omp session's cwd, and with `TOOL ERROR: ...` on stdin when the factory
-refused the last call, so a role can fix its work in the same session.
-It edits files and prints one `{"tool": ..., "args": ...}` object.
-
-Roles, by $T12_ROLE:
-  analyzer   one test-list item for criterion 0; in review-fix mode a
-             directive that names each review finding
-  red        writes tests/test_greet.py; with no current item (the devil
-             pass) calls no_cheat_left
-  green      writes app.py (it runs where no test file exists)
-  refactor   adds a docstring when it has directives, else changes nothing
-  reviewer   merge-ready
-
-$FAKE_MODE picks a misbehaviour:
-  escalate          the analyzer escalates and nothing else happens
-  red-tautology     red's first test already passes; it writes the real one
-                    after the refusal
-  green-wrong       green's first change does not satisfy the red test
-  green-touches-tests  green also writes tests/test_extra.py, and deletes it
-                    after the refusal
-  review-changes    the first review is blocked with finding F1 (needs
-                    $FAKE_STATE, a directory); the next is merge-ready
-
-Every call is appended to $FAKE_LOG: the role, session, cwd, whether it was
-a retry after an error and that error, the files it could see, the guard
-policy it ran under, and whether the prompt named the test file."""
-
 import json
 import os
 import re
@@ -100,8 +70,6 @@ def write(path, text):
 
 
 def finding_ids(node):
-    """Ids of the review findings in a context field, whatever shape the
-    core gives them (a list of findings, or a report as text)."""
     ids = []
     if isinstance(node, dict):
         if "id" in node and "finding" in node:
@@ -124,7 +92,6 @@ def last_assertion_line(text):
 
 
 def stay_hidden_from_tests():
-    """Green and refactor run where no test file exists."""
     if os.path.exists("tests"):
         sys.exit("fake model: a test path is visible to a blind role")
 

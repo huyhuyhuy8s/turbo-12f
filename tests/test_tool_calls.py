@@ -1,6 +1,3 @@
-"""The tool-call registry: which tools each role kind may call, how a
-call is checked, and the schemas hosts register for them."""
-
 import json
 import os
 import sys

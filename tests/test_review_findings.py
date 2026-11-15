@@ -1,8 +1,3 @@
-"""gh-46, ported to the tdd lane: after a changes-requested review the run
-goes back to the analyzer with the review's findings, a second cycle of
-red, green and refactor answers them, and finishing without a new commit is
-refused instead of looping review forever."""
-
 import json
 import os
 import subprocess
@@ -152,8 +147,6 @@ class ChangesRequestedLoop(TddFlow, unittest.TestCase):
             return [json.loads(line) for line in fh if line.strip()]
 
     def answer_with_directive_only(self):
-        """The analyzer answers the finding with a directive, the cycle ends
-        with no commit, and finishing is refused."""
         self.analyze(items=[], directives=["F1: tidy greet"])
         self.refactor()
         self.no_cheat()
@@ -185,8 +178,6 @@ class ChangesRequestedLoop(TddFlow, unittest.TestCase):
         self.assertEqual(record["phase"], phase)
         self.assertEqual(record["escalations"], [])
         os.remove(os.path.join(self.worktree, "scratch.txt"))
-        # The different refusal must not be mistaken for the escalating one:
-        # once clean, the reviewed-commit refusal still escalates.
         self.tdd_step(expect=1)
         self.assertEqual(self.run_record()["phase"], "paused")
 

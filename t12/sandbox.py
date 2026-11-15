@@ -31,7 +31,6 @@ import tempfile
 from . import evidence, store
 from .errors import RunnerError, StateError
 
-# ---------------------------------------------------------------- flags
 
 FORBIDDEN_BYPASS_FLAGS = frozenset({
     "--dangerously-skip-permissions",
@@ -52,8 +51,6 @@ def check_command(argv):
                     f"permission bypass flag {token!r} is forbidden by factory policy"
                 )
 
-
-# ---------------------------------------------------------------- env
 
 FORBIDDEN_ENV_EXACT = frozenset({
     "ASANA_ACCESS_TOKEN", "ASANA_PAT", "ASANA_TOKEN",
@@ -86,8 +83,6 @@ def is_forbidden_env_key(key):
     return upper in FORBIDDEN_ENV_EXACT or any(p.search(upper) for p in FORBIDDEN_ENV_PATTERNS)
 
 
-# ---------------------------------------------------------------- verify-home
-
 def verification_env(home, task_id):
     """Empty home for verification commands: no credential stores, no
     global git config, temp files inside the state home. The XDG
@@ -105,8 +100,6 @@ def verification_env(home, task_id):
     return env
 
 
-# ---------------------------------------------------------------- Landlock
-
 _LANDLOCK_CREATE_RULESET = 444
 _LANDLOCK_ADD_RULE = 445
 _LANDLOCK_RESTRICT_SELF = 446
@@ -122,7 +115,7 @@ _FS_RESOLVE_UNIX = 1 << 16  # connect to a pathname unix socket; ABI >= 9
 _FS_RO_DIR = _FS_EXECUTE | _FS_READ_FILE | _FS_READ_DIR
 _FS_RO_FILE = _FS_EXECUTE | _FS_READ_FILE
 _FS_RW_FILE = _FS_EXECUTE | _FS_WRITE_FILE | _FS_READ_FILE
-_NET_TCP = 3  # bind + connect
+_NET_TCP = 3
 _SCOPE_ALL = 3  # abstract unix sockets + signals leaving the cage; ABI >= 6
 
 _SYSTEM_RO_DIRS = (
@@ -160,8 +153,6 @@ def detect_adapter():
         return "sandbox-exec"
     return "none"
 
-
-# ---------------------------------------------------------------- Docker
 
 DEFAULT_DOCKER_IMAGE = "python:3.12-slim"
 
@@ -332,8 +323,6 @@ def _landlock_preexec(writable, read_only, handled_fs, handled_net, scoped):
 
     return _preexec
 
-
-# ---------------------------------------------------------------- probes
 
 REQUIRED_SAFETY_PROBES = ("forbidden_credential_access", "external_effect_restriction")
 

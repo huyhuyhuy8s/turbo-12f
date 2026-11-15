@@ -1,7 +1,3 @@
-"""adapters/runner.py against real runs, with tests/fake_omp.py standing in
-for omp and tests/fake_model.py (its FAKE_OMP_DELEGATE) playing the roles:
-no network, no model calls."""
-
 import concurrent.futures
 import contextlib
 import io
@@ -164,7 +160,6 @@ class RunnerOmpCase(unittest.TestCase):
             return fh.read().splitlines()
 
     def calls(self):
-        """What the fake model saw, one record per delegate run."""
         return [json.loads(line) for line in self.lines(self.log)]
 
     def role_calls(self, role):
@@ -181,7 +176,6 @@ class RunnerOmpCase(unittest.TestCase):
         return [e for e in self.events() if e["type"].startswith("worker-output")]
 
     def sessions(self):
-        """One dict per omp process: its argv and the frames it was sent."""
         sessions = []
         for line in self.lines(self.omp_log):
             record = json.loads(line)
@@ -196,7 +190,6 @@ class RunnerOmpCase(unittest.TestCase):
         return argv[argv.index(name) + 1]
 
     def tool_errors(self, session):
-        """The text of every call the factory refused in this omp session."""
         return [r["result"]["content"][0]["text"] for r in session["frames"]
                 if r["type"] == "host_tool_result" and r.get("isError")]
 
@@ -334,7 +327,6 @@ class RunnerFlowTest(RunnerOmpCase):
 
 class RunnerRoleModelTest(RunnerOmpCase):
     def roles(self):
-        """The role of each omp session, in order."""
         return [c["role"] for c in self.calls()]
 
     def metas(self):
@@ -415,7 +407,6 @@ class RunnerMisbehaviourTest(RunnerOmpCase):
         self.assertIn("hidden", green[1]["error"])
         green_session = self.sessions()[2]
         self.assertEqual(len(self.tool_errors(green_session)), 1)
-        # the refusal came from the runner, before the core saw a call
         self.assertNotIn("tdd-green-failed", self.event_types())
         self.assertFalse(os.path.exists(
             os.path.join(self.run_record()["worktree"], "tests", "test_extra.py")))
@@ -474,7 +465,6 @@ class RunnerMisbehaviourTest(RunnerOmpCase):
         self.assertIn("demo-1: analyzer: analyze -> analyzer rate-limited:", out)
         self.assertIn("demo-1: rate limited; trying again in 0.05s", out)
         self.assertNotIn("did not move the run", out)
-        # one extra omp process, and the refused one asked the model nothing
         self.assertEqual([c["role"] for c in self.calls()], RunnerFlowTest.ROLES)
         self.assertEqual(len(self.sessions()), len(RunnerFlowTest.ROLES) + 1)
         self.assertNotIn("worker-output-rejected", self.event_types())
@@ -511,9 +501,6 @@ class RunnerMisbehaviourTest(RunnerOmpCase):
         self.assertEqual(self.calls(), [])
 
     def supersede_hook(self):
-        """The shell command fake omp runs, once, before its first call: it stops
-        the run and prepares it again with --supersede while the call is in flight,
-        and keeps a copy of what prepare left."""
         script = os.path.join(self.tmp.name, "supersede.py")
         snap = os.path.join(self.tmp.name, "snap")
         with open(script, "w") as fh:
@@ -533,11 +520,9 @@ for name in ("demo-1.json", "demo-1.events.jsonl"):
                           "FAKE_OMP_BEFORE_CALL": self.supersede_hook()}
         out = self.drive(omp_mode="supersede")
         self.assertIn("superseded", out)
-        # The refused call ends its session: the model is not asked to fix what it cannot.
         self.assertEqual(len(self.sessions()), 1)
         runs = os.path.join(self.home, "runs")
         snap = os.path.join(self.tmp.name, "snap")
-        # The new run is exactly as prepare left it.
         with open(os.path.join(snap, "demo-1.json")) as fh:
             before = json.load(fh)
         now = self.run_record()
@@ -546,7 +531,6 @@ for name in ("demo-1.json", "demo-1.events.jsonl"):
         self.assertEqual(now["phase"], "ready")
         self.assertEqual(self.lines(os.path.join(runs, "demo-1.events.jsonl")),
                          self.lines(os.path.join(snap, "demo-1.events.jsonl")))
-        # The archived log ends with the rejection naming the old run.
         [archived] = [f for f in os.listdir(runs)
                       if f.startswith("demo-1.superseded-") and f.endswith(".events.jsonl")]
         events = [json.loads(e) for e in self.lines(os.path.join(runs, archived))]
@@ -569,8 +553,6 @@ for name in ("demo-1.json", "demo-1.events.jsonl"):
         self.assertEqual(self.worker_events()[0]["type"], "worker-output")
 
     def test_step_retries_is_not_a_profile_key(self):
-        # The omp runner returns a refused call to the same session and the core's
-        # attempt limit escalates; nothing would enforce a runner-side retry count.
         os.makedirs(os.path.join(self.repo, ".t12"), exist_ok=True)
         with open(os.path.join(self.repo, ".t12", "project.json"), "w") as fh:
             json.dump({"version": 1, "step_retries": 2}, fh)
@@ -689,9 +671,6 @@ class RunnerSkillsTest(RunnerOmpCase):
 
 
 class SchedulerCase(unittest.TestCase):
-    """The runner's scheduler on a scripted board: which rows it steps, how many at once,
-    and what a rate limit does, with a fake clock and no sleeping."""
-
     def setUp(self):
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         self.rows = {}
@@ -915,7 +894,6 @@ else:
 
 
 class RunnerLaneTest(RunnerOmpCase):
-    """Two lanes of one run through the real runner, core and git, with a fake omp."""
     MAX_LANES = 2
     # Unit U1's test runs take longer than the 2 s a command waits for a lock, so a lane that
     # held the run lock while it ran tests would make U2's `act` fail as busy.
@@ -978,13 +956,10 @@ class RunnerLaneTest(RunnerOmpCase):
             lane = self.lane_record(unit)
             self.assertEqual((lane["step"], [i["status"] for i in lane["items"]]),
                              ("final", ["done"]), unit)
-        # both reds ran at once; the quick lane's red was accepted while the other's tests ran
         reds = {u: self.model_log(u)[0] for u in ("U1", "U2")}
         self.assertEqual({r["role"] for r in reds.values()}, {"red"})
         self.assertTrue(self.overlap(reds["U1"], reds["U2"]), reds)
         self.assertLess(self.event_index("tdd-red", "U2"), self.event_index("tdd-red", "U1"))
-        # each lane session ran in its own lane's worktree (blind for green and refactor),
-        # and none of them ever saw the other lane's work
         sessions = [r for r in self.model_log() if r["unit"]]
         for record in sessions:
             self.assertFalse(record["sees_other"], record)
@@ -1006,7 +981,6 @@ class RunnerLaneTest(RunnerOmpCase):
         self.assertIn("demo-1@U1: red: red ->", out)
         self.assertIn("demo-1@U2: green: green ->", out)
         self.assertNotIn("lanes: in flight ->", out)
-        # U1's test runs outlast the lock wait; U2's acts were never refused as busy
         self.assertNotIn("busy", out)
         self.assertNotIn("worker-output-rejected", self.event_types())
         self.assertEqual([self.lane_record(u)["step"] for u in ("U1", "U2")], ["final", "final"])
@@ -1031,7 +1005,6 @@ class RunnerLaneTest(RunnerOmpCase):
     def test_a_rate_limit_lowers_the_pool_so_the_lanes_stop_overlapping(self):
         self.extra_env.update(FAKE_OMP_RATE_LIMITS="1", FAKE_OMP_STATE=self.fake_state)
         out = self.drive_lanes(omp_mode="rate-limit")
-        # the analyzer's session was refused: no model call, no attempt used, no stuck mark
         self.assertIn("analyzer rate-limited", out)
         self.assertIn("demo-1: rate limited; trying again in 0.1s", out)
         self.assertNotIn("did not move the run: analyzer", out)
@@ -1039,7 +1012,6 @@ class RunnerLaneTest(RunnerOmpCase):
         self.assertNotIn("worker-output-rejected", self.event_types())
         for unit in ("U1", "U2"):
             self.assertEqual(self.lane_record(unit)["step"], "final", out)
-        # two lanes would overlap at max_lanes 2; one refusal left room for one at a time
         sessions = [r for r in self.model_log() if r["unit"]]
         self.assertEqual(len({r["unit"] for r in sessions}), 2)
         self.assertFalse(any(self.overlap(a, b) for a in sessions for b in sessions if a is not b),

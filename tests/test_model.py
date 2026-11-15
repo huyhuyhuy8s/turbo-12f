@@ -1,11 +1,3 @@
-"""Property tests for the run state machine (Phase 2 hardening).
-
-The transition matrix here is written out independently of
-``t12.model.TRANSITIONS`` — it is the spec, not a copy of the code.
-If the implementation ever allows a transition this matrix forbids,
-or forbids one it allows, these tests fail.
-"""
-
 import copy
 import json
 import os
@@ -17,14 +9,10 @@ import unittest
 from t12 import model, profile, store
 from t12.errors import BudgetError, StateError
 
-# The spec: allowed targets per phase. A transition to the phase
-# itself is always a no-op and is allowed on top of this matrix.
 EXPECTED = {
     "unadmitted": {"ready"},
     "ready": {"tdd", "paused", "stopped"},
     "tdd": {"gates", "paused", "stopped"},
-    # gates -> tdd is a gate failure (repair); review -> tdd is a
-    # changes-requested review (review-fix).
     "gates": {"tdd", "review", "paused", "stopped"},
     "review": {"tdd", "local-verified", "paused", "stopped"},
     "local-verified": set(),
@@ -81,7 +69,6 @@ class TransitionMatrixTest(unittest.TestCase):
                 else:
                     with self.assertRaises(StateError, msg=f"{phase} -> {target}"):
                         model.transition(run, target)
-                    # A refused transition must not mutate the run.
                     self.assertEqual(run, before, f"{phase} -> {target} mutated state")
 
     def test_every_phase_appears_in_transitions(self):

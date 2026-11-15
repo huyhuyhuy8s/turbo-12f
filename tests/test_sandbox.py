@@ -1,9 +1,3 @@
-"""Tests for safe execution (Phase 3): forbidden flags, credential
-stripping, the Landlock cage, verify-home, and safety probes.
-Enforcement tests run only where Landlock is available; elsewhere
-they skip, and the probe tests assert the gap is recorded, not hidden.
-"""
-
 import json
 import os
 import socket
@@ -50,7 +44,7 @@ class FlagTest(unittest.TestCase):
             ["python3", "-c", "print('hello')"],
             ["npm", "test"],
         ):
-            sandbox.check_command(argv)  # must not raise
+            sandbox.check_command(argv)
 
     def test_runner_refuses_forbidden_command(self):
         with self.assertRaises(RunnerError):

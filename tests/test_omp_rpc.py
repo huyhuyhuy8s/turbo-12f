@@ -1,6 +1,3 @@
-"""adapters/omp_rpc.py against tests/fake_omp.py: the RPC driver's session
-control, with no omp, no model and no network."""
-
 import json
 import os
 import shlex
@@ -18,7 +15,6 @@ DONE = {"name": "done", "label": "Done", "description": "Finish the task.",
 
 
 def checker(name, arguments):
-    """Accept any call that carries no `wrong` argument; an accepted call is final."""
     if "wrong" in arguments:
         return False, "unexpected argument: wrong", False
     return True, "accepted", True

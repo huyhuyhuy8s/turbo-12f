@@ -12,10 +12,7 @@ import statistics
 from . import model, store
 
 MIN_COUNT = 3
-# The share of lane merges failing at which retro proposes fewer lanes.
 INTEGRATION_RATE = 0.3
-# The events where the core refused a worker's step; their detail names the
-# step and the check that failed.
 REFUSAL_EVENTS = ("tdd-list-failed", "red-failed", "tdd-green-failed",
                   "tdd-refactor-failed", "tdd-final-failed")
 
@@ -32,10 +29,6 @@ def _events(path):
 
 
 def _review_findings(home, event):
-    """Finding classes from a structured review a worker submitted
-    through `act`, or None when its stored output no longer matches
-    the recorded hash. It counts only if the next event records the
-    review; `act` logs the output before the review step can refuse."""
     ref = event["detail"]["output"]
     path = os.path.join(model.evidence_dir(home, event["task_id"]), ref["name"])
     try:
@@ -49,7 +42,6 @@ def _review_findings(home, event):
 
 
 def _project(home):
-    """The project a state home serves: the repo its config names."""
     try:
         return store.load_json(os.path.join(home, "config.json")).get("repo") or home
     except (OSError, ValueError):
@@ -57,8 +49,6 @@ def _project(home):
 
 
 def _integration(counts):
-    """The merge attempts and failures read from the events, for the project:
-    {attempts, failures, rate, routes}, or {} when no lane merged."""
     attempts = counts["clean"] + counts["failed"] + counts["conflict"]
     if not attempts:
         return {}

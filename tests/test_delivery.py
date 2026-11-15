@@ -1,8 +1,3 @@
-"""Tests for delivery (Phase 7): the core records adapter reports,
-pins them to the reviewed head, and blocks blind retries after an
-uncertain outcome.
-"""
-
 import json
 import os
 import subprocess
@@ -123,13 +118,11 @@ class DeliverCase(TddFlow, unittest.TestCase):
                           "--adapter", "github", "--report", path2, expect=1)
         self.assertIn("blocked", result.stderr)
         self.assertIn("uncertain", result.stderr)
-        # A resolving report (a read-back, not a new action) unblocks it.
         result = self.t12("deliver", "--home", self.home, "--task-id", "demo-1",
                           "--adapter", "github", "--report", path2, "--resolves")
         self.assertIn("github confirmed", result.stdout)
         out = self.t12("status", "--home", self.home, "--task-id", "demo-1").stdout
         self.assertEqual(len(json.loads(out)["deliveries"]), 2)
-        # The block is per adapter: asana is unaffected.
         path3 = self.write_report("confirmed", candidate, adapter="asana")
         self.t12("deliver", "--home", self.home, "--task-id", "demo-1",
                  "--adapter", "asana", "--report", path3)

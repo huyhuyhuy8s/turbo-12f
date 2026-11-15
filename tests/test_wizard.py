@@ -1,7 +1,3 @@
-"""Tests for bin/t12-wizard `setup`. Fake `git`, `gh` and `t12` programs sit
-first (and alone) on PATH and log their argv and cwd; no network, no sockets.
-"""
-
 import ast
 import json
 import os
@@ -134,7 +130,6 @@ class WizardTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, self.out(r))
         return r
 
-    # --- criterion 0 and 1 ---
     def test_happy_path_all_flags_no_terminal(self):
         r = self.run_wizard(["setup"] + self.flags(), stdin=None,
                             GH_TOKEN="sekret-token-123")
@@ -184,7 +179,6 @@ class WizardTest(unittest.TestCase):
         self.assertEqual(data["rules_branch"], "local")
         self.assertNotIn("sekret-token-123", raw)
 
-    # --- criterion 2 and R2 ---
     def test_failure_stops_prints_retry_and_rerun_converges(self):
         for fail, step_word, later in (("t12 init", "init", ("label",)),
                                        ("label create", "label", ())):
@@ -215,7 +209,6 @@ class WizardTest(unittest.TestCase):
                                          and ("-b" in e["args"] or "-c" in e["args"]), e)
                 self.assertTrue(os.path.exists(self.ws))
 
-    # --- criterion 3 ---
     def test_no_forge_login_says_gh_auth_login_and_never_stores_token(self):
         r = self.run_wizard(["setup"] + self.flags(), stdin=None,
                             FAKE_NO_AUTH="1", GH_TOKEN="sekret-token-123")
@@ -226,7 +219,6 @@ class WizardTest(unittest.TestCase):
             with open(self.ws) as f:
                 self.assertNotIn("sekret-token-123", f.read())
 
-    # --- criterion 4 ---
     def test_rerun_same_changes_nothing_differing_asks(self):
         self.setup_ok()
         before = os.stat(self.ws).st_mtime_ns
@@ -251,7 +243,6 @@ class WizardTest(unittest.TestCase):
         with open(self.ws) as f:
             self.assertEqual(json.load(f)["commit_name"], "Bob Other")
 
-    # The tdd lane needs a test_command in the profile; intake cannot supply one.
     def test_the_starter_profile_carries_the_test_command_or_says_it_is_missing(self):
         r = self.setup_ok()
         self.assertIn("test_command", self.out(r))
@@ -266,13 +257,11 @@ class WizardTest(unittest.TestCase):
         with open(profile) as f:
             self.assertEqual(json.load(f)["test_command"], ["python3", "-m", "unittest", "-q"])
 
-    # --- criterion 5 ---
     def test_other_command_without_workspace_says_setup_first(self):
         r = self.run_wizard(["status"], stdin=None)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("setup first", self.out(r).lower())
 
-    # --- criterion 6 ---
     def test_stdlib_only_and_only_git_and_gh(self):
         with open(WIZARD) as f:
             tree = ast.parse(f.read())

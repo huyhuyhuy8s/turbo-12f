@@ -231,19 +231,6 @@ def write_report(path, data):
     return path
 
 
-# --- Intake (issue tracker -> task files) -------------------------------
-#
-# An intake adapter turns issues into task files in the queue directory
-# `bin/t12-queue` reads. The issue author is untrusted: the adapter
-# builds each task from a fixed list of fields and never copies a key
-# out of an issue, so no profile-controlled setting (gates, reviews,
-# sandbox, budgets, roles, paths) can arrive through an issue. Whatever
-# the core would refuse at `prepare` is skipped here, with the reason.
-# Intake writes no outcome report, so a failed listing writes nothing
-# and exits non-zero; a half-written queue must not look complete.
-# Only a complete listing withdraws a task, because only it shows that
-# an issue lost its label.
-
 TASK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
 PLAIN_HEADING_RE = re.compile(r"^\s{0,3}(acceptance criteria):?\s*$", re.I)
@@ -274,11 +261,6 @@ def spec_check(body, id_prefix, depends_text=True):
     `acceptance_criteria`, `touches` and, when labelled, `depends_on`.
     DEPENDS_TEXT is false on a forge with native dependencies, where a
     `Depends on:` line is refused so the order lives in one place."""
-    # Intake cannot tell exactly what a forge hides: comment and fence
-    # rules differ between parsers, and a wrong guess either reads text
-    # the maintainer never saw or drops a scope line they did see. So an
-    # issue with a comment is refused, and every other line is read,
-    # fenced or not; visible code can only narrow a task.
     if "<!--" in (body or ""):
         return None, ["the body contains an HTML comment, so intake cannot be sure what the page shows"], []
     criteria, section, seen = [], None, False
@@ -422,7 +404,6 @@ def _render(task):
 
 
 def _source_of(text):
-    """(adapter, ref) of a task file's text, or None."""
     try:
         source = json.loads(text).get("source") or {}
         return source.get("adapter"), source.get("ref")
@@ -431,9 +412,6 @@ def _source_of(text):
 
 
 def _write_if_changed(out_dir, task, adapter):
-    """(verdict, detail). Overwrites only a file this adapter wrote for
-    the same issue: ids repeat across repos, so the adapter alone is
-    not enough."""
     path = os.path.join(out_dir, f"{task['id']}.json")
     text = _render(task)
     if os.path.exists(path):
@@ -483,8 +461,6 @@ def sync(issues, adapter, repo, id_prefix, out_dir, home, depends_text=True):
 
 
 def _withdraw(listed, adapter, repo, out_dir, home):
-    """Delete this repo's queued tasks whose issue the complete listing
-    no longer holds: the label was removed or the issue closed."""
     for entry in sorted(os.scandir(out_dir), key=lambda e: e.name):
         if not entry.name.endswith(".json") or not entry.is_file(follow_symlinks=False):
             continue
@@ -541,8 +517,6 @@ def intake_main(argv, name, id_prefix, token_env, list_issues, add_arguments=Non
     repo = getattr(args, scope[0]) or profile.get(scope[0])
     label = getattr(args, scope[1]) or profile.get(scope[1])
     if not repo or not label:
-        # Anyone can file an issue; the label is what a maintainer
-        # applies to say "the factory may work on this".
         print(f"error: give --{scope[0]} and --{scope[1]}, or an `intake` key in --repo-config; "
               f"without a {scope[1]} every open issue would become a task", file=sys.stderr)
         return 2
@@ -585,8 +559,6 @@ def _intake_profile(args, name):
 
 
 def _committed_profile(repo, branch):
-    """The committed .t12/project.json at the tip of BRANCH; the
-    working tree is never read."""
     def git(*cmd):
         return subprocess.run(["git", "-C", repo, *cmd], capture_output=True, text=True)
     head = git("rev-parse", "--verify", "--quiet", "--end-of-options", f"refs/heads/{branch}")

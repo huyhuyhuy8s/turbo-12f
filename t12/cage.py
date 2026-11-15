@@ -112,7 +112,6 @@ def commit(home, task_id, message):
     check_pointer(worktree, git_dir)
 
     def git(*args):
-        # hooksPath may be relative to the worktree, which the builder writes.
         return gitio.git_ok(
             worktree, f"--git-dir={git_dir}", f"--work-tree={worktree}",
             "-c", "core.hooksPath=/dev/null", *args)
@@ -129,11 +128,6 @@ def commit(home, task_id, message):
 
 
 def _enter_namespaces():
-    """Move this process into a new user namespace, and make its next
-    child the first process of a new PID namespace. An unprivileged
-    process may create a PID namespace only together with a user
-    namespace. The user namespace maps the operator's uid and gid to
-    themselves, so it grants nothing outside itself."""
     uid, gid = os.getuid(), os.getgid()
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.unshare(_CLONE_NEWUSER | _CLONE_NEWPID) != 0:
@@ -161,9 +155,6 @@ def _exit_code(status):
 
 
 def _init(parent_alive, argv, **popen):
-    """Be the PID namespace's first process: start the command, reap
-    what is reparented here, and exit with the command's exit code.
-    Never returns. Any way this process ends kills the namespace."""
     code = 1
     try:
         libc = ctypes.CDLL(None, use_errno=True)
@@ -190,9 +181,6 @@ def _raise_exit(signum, _frame):
 
 
 def _run_contained(argv, **popen):
-    """Run argv as a child of a new PID namespace's first process and
-    return its exit code. Moves the calling process into a new user
-    namespace, so call it once, from a single-threaded process."""
     _enter_namespaces()
     parent_alive, alive = os.pipe()
     try:
@@ -206,8 +194,6 @@ def _run_contained(argv, **popen):
     os.write(alive, b"1")
     os.close(alive)
     status = None
-    # A stop signal before these handlers are set kills this process,
-    # and the kernel then kills the namespace.
     previous = {sig: signal.signal(sig, _raise_exit) for sig in _STOP_SIGNALS}
     try:
         status = os.waitpid(init, 0)[1]

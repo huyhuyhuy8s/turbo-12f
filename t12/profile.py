@@ -179,9 +179,6 @@ def _roles(value):
 
 
 def _intake(value):
-    """Where tasks come from. The core never reads it: the intake
-    adapter does. Validated here so a typo fails at `prepare`, not at
-    the next intake run."""
     where = f"{PATH}: intake"
     if isinstance(value, dict) and value.get("adapter") == "asana-tasks":
         if set(value) - {"adapter", "project", "tag"}:
@@ -210,7 +207,6 @@ SKILL_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _skill_path(path):
-    """A path inside the archive or the skill dir: relative, no `..`."""
     return (isinstance(path, str) and bool(path) and not os.path.isabs(path)
             and ".." not in path.split("/") and "\\" not in path)
 
@@ -233,8 +229,6 @@ def _skill_when(where, when):
 
 
 def _skills(value, roles):
-    """Third-party skills pinned per role. The core validates shape only:
-    `adapters/skills.py` fetches and hashes them, the runner mounts them."""
     if not isinstance(value, dict):
         raise StateError(f"{PATH}: skills must be an object of skill name to pin")
     skills = {}
@@ -316,7 +310,6 @@ def applicable_skills(run_profile, role, repo, commit):
 
 
 def _delivery(value):
-    """Which forge the runner opens change requests on."""
     where = f"{PATH}: delivery"
     if not isinstance(value, dict) or set(value) != {"adapter"}:
         raise StateError(f"{where} must be an object with only an adapter")
@@ -350,8 +343,6 @@ def parse(text):
             _check_type(PATH, key, data[key], kind)
     for key in SCOPE_KEYS:
         data[key] = _paths(key, data.get(key, []))
-    # A profile that lists no deps allows none: otherwise a task's list
-    # would win outright, and deps load from the worker's worktree.
     if text is not None:
         data.setdefault("verify_deps", [])
     data["roles"] = _roles(data.get("roles", {}))
@@ -389,7 +380,6 @@ def _check_pattern(where, key, value, groups=0):
 
 
 def _check_value(where, key, value):
-    """What a value must be beyond its type, for the tdd keys."""
     if key in ("test_command", "lint_command") and value is not None:
         if not value or not all(v.strip() for v in value):
             raise StateError(f"{where}: {key} must be a non-empty argv of non-empty strings")

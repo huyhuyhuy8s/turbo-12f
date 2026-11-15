@@ -22,17 +22,13 @@ UNITS = "list of units (optional: omit for one lane)"
 ITEM_KINDS = ("behavior", "example", "edge", "error")
 ITEM_FIELDS = {"text": STR, "kind": ITEM_KINDS, "source": STR, "needed": TEXT,
                "criteria": INT_LIST}
-# The analyzer's items may name a unit; red's added items never do.
 ITEM_SHAPES = {ITEMS: (ITEM_FIELDS, ITEM_FIELDS),
                UNIT_ITEMS: ({**ITEM_FIELDS, "unit": STR}, ITEM_FIELDS)}
 UNIT_FIELDS = {"id": STR, "owns": STR_LIST, "tests": STR_LIST, "after": STR_LIST, "needed": TEXT}
 
 ESCALATE = {"escalate": {"question": STR}}
-# Args a call may leave out.
 OPTIONAL_ARGS = {"test_list_ready": ("units",)}
 
-# Keyed by kind, the part of a role the core knows how to enforce. A
-# project names its own roles, but each maps to one of these kinds.
 TOOLS = {
     "analyzer": {
         "test_list_ready": {"items": UNIT_ITEMS, "gaps": STR_LIST, "directives": STR_LIST,
@@ -94,9 +90,6 @@ def _check(name, value, kind):
 
 
 def _check_objects(name, value, kind, fields, required):
-    """Every entry is an object with the allowed fields, each of its shape,
-    and every required one: the enum and the required fields are checked
-    here, whether an entry says anything useful is the caller's check."""
     if not isinstance(value, list):
         return f"{name} must be a {kind}"
     problems = []
@@ -164,7 +157,6 @@ def _describe(shape):
     if shape == UNITS:
         return {UNITS: {k: _describe(v) for k, v in UNIT_FIELDS.items()}}
     return shape
-
 
 
 def _arg_schema(shape):

@@ -70,9 +70,6 @@ def _obs(ref):
 
 
 def _expect_exit(home, task_id, ref, label, passing):
-    """The ref hashes, and its recorded observation tells the story the
-    step claims: exit 0 for a check that passed, non-zero (not a timeout)
-    for a red."""
     verify_ref(home, task_id, ref)
     obs = _obs(ref)
     if obs.get("timed_out"):

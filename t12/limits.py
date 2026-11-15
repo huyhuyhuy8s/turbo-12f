@@ -98,9 +98,6 @@ def save_limits(home, recommendation, max_lanes=None):
 
 
 def _hit_repair_cap(record):
-    """A run paused on the repair cap asked a human for help: how many
-    repairs it needed is unknown, so it cannot calibrate anything. One a
-    human then stopped is the same run."""
     escalations = record.get("escalations") or []
     return (record.get("phase") in ("paused", "stopped") and bool(escalations)
             and escalations[-1].get("kind") == "repair-cap")

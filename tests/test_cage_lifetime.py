@@ -1,10 +1,3 @@
-"""Tests for what bin/t12-cage leaves behind (issue #4).
-
-`t12-cage commit` checks the worktree's `.git` pointer once. A caged
-process that outlived the cage could rewrite the pointer after that
-check, so no caged process outlives `t12-cage`, however it ends.
-"""
-
 import os
 import resource
 import signal
@@ -133,14 +126,11 @@ class CageLifetimeTest(CageCase):
             return fh.read()
 
     def start_rewriter(self, attack):
-        """Start t12-cage on REWRITE_LATER and return (t12-cage, the
-        detached process's pid)."""
         pid_file = os.path.join(self.worktree, "rewriter.pid")
         cage = subprocess.Popen(
             [CAGE, "--home", self.home, "--task-id", "demo-1", "--",
              "python3", "-c", REWRITE_LATER, str(attack), str(REWRITE_DELAY_S), pid_file],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=self.worktree,
-            # A killed t12-cage leaves its private temp dir behind.
             env=dict(os.environ, TMPDIR=self.tmp.name))
         self.addCleanup(cage.wait)
         self.addCleanup(cage.kill)
@@ -154,9 +144,6 @@ class CageLifetimeTest(CageCase):
         return cage, pid
 
     def assert_pointer_survives(self, pointer, pid):
-        """The detached process is gone before it could rewrite the
-        pointer. Give it the time it needs to rewrite, so a process
-        that did outlive the cage shows in the pointer too."""
         deadline = time.monotonic() + REWRITE_DELAY_S + 5
         while alive(pid) and time.monotonic() < deadline:
             time.sleep(0.01)

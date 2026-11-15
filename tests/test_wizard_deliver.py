@@ -1,19 +1,3 @@
-"""Tests for bin/t12-wizard `answer` and `deliver`. Fake `t12`, `git`, `gh`
-and a fake forge adapter sit in a temporary workspace and log every call;
-nothing touches the network, a socket, or the real home directory.
-
-Contract the tests pin down (the implementation must follow it):
-- a run is read from <work>/state/runs/gh-N.json (task_id, phase, branch,
-  worktree, delivery_adapter, escalations[-1] = {question, answer});
-- `answer N` shows the open question, then records the answer with
-  `<work>/factory/bin/t12 resume --home <state> --task-id gh-N --answer TEXT`;
-- `deliver N` runs, in order and with the run's worktree as cwd:
-  `git push origin <branch>`,
-  `<python> <work>/factory/adapters/<adapter>.py create-pr --home .. --task-id .. --out F`,
-  `<work>/factory/bin/t12 deliver --home .. --task-id .. --adapter .. --report F`;
-  the pull request link is the `ref` of the adapter's report.
-"""
-
 import json
 import os
 import shutil
@@ -114,7 +98,6 @@ class DeliverTest(unittest.TestCase):
             return [json.loads(line) for line in f]
 
     def steps(self):
-        """Mutating calls only: push, adapter, t12 deliver/resume, and anything gh."""
         out = []
         for c in self.calls():
             if c["tool"] == "t12" and c["args"][:1] in (["board"], ["status"]):

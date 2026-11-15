@@ -22,8 +22,6 @@ VERSION = "0.2.0"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-# ---------------------------------------------------------------- helpers
-
 def _home(args):
     return os.path.abspath(args.home)
 
@@ -45,11 +43,6 @@ def _save(home, run, event_type, detail=None):
 
 
 def _lane_save(home, task_id, lane, event_type, detail=None, mutate=None):
-    """Record one event of a lane command: the lane record and the run's
-    lane table are written and the event appended under the run lock, which
-    a lane command holds only here. `mutate(run)`, when given, changes the
-    run record just loaded (a session binding); it runs before anything is
-    written, so a refusal there leaves both files as they were."""
     with model.run_lock(home, task_id):
         run = _run(home, task_id)
         if mutate is not None:
@@ -61,16 +54,12 @@ def _lane_save(home, task_id, lane, event_type, detail=None, mutate=None):
 
 
 def _load_lane(home, run, unit):
-    """The lane `unit` of the run, for a command that names one. Lanes exist
-    only once an analyzer list declared units."""
     if unit is None:
         return None
     return model.load_lane(home, run["task_id"], unit)
 
 
 def _lane_role(run, role, unit):
-    """The kind of `role` for a lane command: only red, green and refactor
-    work in a lane."""
     kind = model.role_kind(run, role)
     if unit is not None and kind not in ("red", "green", "refactor"):
         raise StateError(f"the {kind} role does not work in a lane; "
@@ -79,8 +68,6 @@ def _lane_role(run, role, unit):
 
 
 def _lane_run(home, run):
-    """A lane command's view of the run: the operations its lanes have
-    spent count against the run's op limit. Never saved."""
     run["budgets"]["ops_used"] += model.lane_ops_used(home, run["task_id"])
     return run
 
@@ -114,9 +101,6 @@ def _time_left(run):
 
 
 def _verification(home, run, worktree, unit=None):
-    """Environment + sandbox context for verification commands. The
-    context carries the run's adapter, so every verification command
-    uses the adapter the run was admitted with. A lane has its own home."""
     env = sandbox.verification_env(home, run["task_id"] if unit is None
                                    else f"{run['task_id']}@{unit}")
     ctx = {"worktree": worktree, "verify_home": env["HOME"],
@@ -126,10 +110,6 @@ def _verification(home, run, worktree, unit=None):
 
 
 def _run_on_commit(home, run, wt, commit, argv, unit=None):
-    """Run a verification command in a fresh checkout of `commit`, with
-    the task's declared dependency folders linked in read-only. A lane's
-    checkout is its own, and its dependencies come from the run's worktree,
-    where they were installed."""
     path = model.verify_checkout_dir(home, run["task_id"], unit)
     with gitio.detached_checkout(wt, path, commit) as checkout:
         env, ctx = _verification(home, run, checkout, unit)
@@ -175,10 +155,6 @@ def _verify_chain_or_raise(home, run):
 
 
 def _tdd_runner(home, run, lane=None):
-    """What the tdd engine needs from the CLI: a command run on a commit in
-    the verification sandbox (its observation stored as evidence `name`),
-    and a save that records one event. For a lane, on the lane's worktree,
-    and saving through the lane."""
     wt = run["worktree"] if lane is None else lane["worktree"]
     unit = None if lane is None else lane["unit"]
 
@@ -196,18 +172,10 @@ def _tdd_runner(home, run, lane=None):
     return tdd_mod.Runner(run_on_commit, save)
 
 
-# The parts of the run record lane commands write (the lane table, the session
-# bindings); an integration save leaves them as it finds them.
 LANE_SHARED = ("lanes", "roles", "bindings")
 
 
 def _integration_runner(home, run):
-    """What the tdd engine needs for the integration worktree. The caller
-    holds the integration lock, so a command here runs for as long as its test
-    runs without the run lock; a save takes the run lock only to write: it
-    reloads the run, puts the integration side's keys on it (not the lane
-    table or session bindings, which lane commands change meanwhile), writes
-    the lane records it names with their table rows, and appends the event."""
     wt = run["worktree"]
     phase = [run["phase"]]
 
@@ -239,13 +207,10 @@ def _integration_runner(home, run):
 
 
 def _lane_budget(home, run, lane):
-    """Pause the lane when it has spent its share of operations. Returns the
-    pause message, or None."""
     return tdd_mod.lane_budget_pause(run, lane, _tdd_runner(home, run, lane))
 
 
 def _tdd_refs(tdd, prefix="tdd"):
-    """Every evidence ref a tdd record holds, as (label, ref)."""
     refs = []
     for entry in tdd.get("history") or []:
         where = f"{prefix} cycle {entry.get('cycle')}"
@@ -269,8 +234,6 @@ def _tdd_refs(tdd, prefix="tdd"):
 
 
 def _evidence_refs(run):
-    """Every evidence ref the run's record holds for the tdd loop and the
-    gates, as (label, ref)."""
     refs = _tdd_refs(run.get("tdd") or {})
     for gate in run["gates"]:
         if gate["observation"]:
@@ -279,7 +242,6 @@ def _evidence_refs(run):
 
 
 def _expected_head(run, phase):
-    """The commit the worktree must sit at while the run is in `phase`."""
     if phase == "ready":
         return run["base_commit"]
     if phase == "tdd":
@@ -290,8 +252,6 @@ def _expected_head(run, phase):
 
 
 def _locked_tests_problem(tdd, wt):
-    """None, or the test files at HEAD that differ from the blobs the last
-    red commit locked."""
     if not tdd.get("red_commit"):
         return None
     current = gitio.blob_map(wt, "HEAD", lambda p: globs.match(p, tdd["test_globs"]))
@@ -301,8 +261,6 @@ def _locked_tests_problem(tdd, wt):
 
 
 def _unfinished_work(old):
-    """The old run's work since its base, as a diff with every test file
-    left out: the new run's red writes its own."""
     wt, base = old["worktree"], old["base_commit"]
     gitio.git_ok(wt, "add", "-A", "-N")
     test_globs = (old.get("tdd") or {}).get("test_globs") or []
@@ -314,9 +272,6 @@ def _unfinished_work(old):
 
 
 def _send_back(home, run, source, ref, detail):
-    """A failed gate or a changes-requested review is one repair: the run
-    goes back into the tdd loop, or, past the repair cap, pauses with an
-    escalation. Returns the run's new phase."""
     phase = model.repair_or_pause(run, source, ref)
     budgets = run["budgets"]
     detail = {**detail, "source": source, "report": ref["name"],
@@ -330,7 +285,6 @@ def _send_back(home, run, source, ref, detail):
 
 
 def _last_compacted_error(home, run):
-    """Factor 9: the next worker gets a compacted error, not raw logs."""
     path = model.events_path(home, run["task_id"])
     if not os.path.exists(path):
         return None
@@ -435,8 +389,6 @@ def _manifest_text(run):
     return "\n".join(lines) + "\n"
 
 
-# ---------------------------------------------------------------- commands
-
 def cmd_init(args):
     repo = os.path.abspath(args.repo)
     home = os.path.abspath(args.home)
@@ -482,10 +434,6 @@ CARRIED_PATCH_CHARS = 12000
 
 
 def _carry_from(home, old, archive):
-    """What a human-approved restart keeps from the stopped run: the
-    answers it received, and its unfinished work as a patch for the
-    analyzer to read (never a commit; the new run's tdd loop, gates and
-    review run normally). The old run's test files are left out."""
     carried = {"from": archive, "patch": None,
                "answers": list((old.get("carried") or {}).get("answers") or []),
                "open_questions": [e["question"] for e in old.get("escalations") or []
@@ -505,9 +453,6 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         raise StateError(f"product repo has uncommitted changes: {repo}")
     base = task.get("base", "main")
     base_commit = gitio.rev_parse(repo, base)
-    # The rules come from the trunk the state home names, never from the
-    # task's base: a task file could point base at a commit, or another
-    # run's branch, whose profile is weaker or missing.
     trunk_commit = gitio.rev_parse(repo, f"refs/heads/{trunk}")
     if not gitio.git_ok_bool(repo, "merge-base", trunk_commit, base_commit):
         raise StateError(f"base {base!r} shares no history with trunk {trunk!r}")
@@ -547,8 +492,6 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         supersedes = model.archive_run(home, old)
         if carry:
             carried = _carry_from(home, old, supersedes)
-        # The old worktree and factory branch are disposable working
-        # state; the archived run record keeps every SHA and ref.
         gitio.remove_worktree_force(repo, old["worktree"])
         if gitio.branch_exists(repo, old["branch"]):
             gitio.delete_branch(repo, old["branch"])
@@ -598,8 +541,6 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
 
 
 def _report_findings(home, run, ref):
-    """The findings of a stored review report (a structured review's list,
-    else the report's tail), after checking it still matches its hash."""
     evidence.verify_ref(home, run["task_id"], ref)
     with open(ref["path"], encoding="utf-8", errors="replace") as fh:
         text = fh.read()
@@ -657,8 +598,6 @@ def _review_context(home, run, role):
                 "findings": _report_findings(home, run, review["report"]),
             }
             break
-    # Pass what the factory observed on the current candidate, never a
-    # worker's own summary; results of a superseded candidate drop.
     candidate = run["candidate"]["commit"] if run["candidate"] else None
     gates = []
     for g in run["gates"]:
@@ -773,8 +712,6 @@ def cmd_gate(args):
     commit = run["candidate"]["commit"]
     obs = _run_on_commit(home, run, wt, commit, gate["command"])
     failed = obs["timed_out"] or obs["exit_code"] != 0
-    # A failing output is the findings the next repair reads, so each failure
-    # keeps its own file: a later run of the gate must not rewrite it.
     name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
             else f"gate-{gate['name']}-output.txt")
     ref = evidence.write_observation(home, run["task_id"], name, obs)
@@ -810,9 +747,6 @@ def cmd_gate(args):
 
 
 def _integrate(home, args):
-    """Integrate one lane (`tdd-step --unit`): the lane's own final checks
-    under its lock, then the merge and the merged tests under the integration
-    lock. The run lock is taken only for each write."""
     run = _run(home, args.task_id)
     lane = _load_lane(home, run, args.unit)
     model.check_budgets(_lane_run(home, copy.deepcopy(run)))
@@ -1233,8 +1167,6 @@ def cmd_pause(args):
 
 
 def _resume_lane(args):
-    """Resume one paused lane. The run's own phase, budgets and escalations
-    are untouched; only the lane's attempt and cycle counters can change."""
     home = _home(args)
     task_id = args.task_id
     run = _run(home, task_id)
@@ -1379,10 +1311,6 @@ def cmd_report(args):
 
 
 def _lane_rows(home, run, done):
-    """One board row per lane that is active, waiting, paused or done and not
-    merged: the run's phase and budgets, and the lane's own step, busy flag
-    and next step. The lane an integration green is repairing is the run's
-    row (`green: green`), not its own."""
     b = run["budgets"]
     ops_left = b["op_limit"] - b["ops_used"] - model.lane_ops_used(home, run["task_id"])
     pending = model.pending_merge(run)
@@ -1495,9 +1423,6 @@ def cmd_probe(args):
     home = _home(args)
     run = _run(home, args.task_id)
     _check_worktree(run)
-    # The probes use the run's recorded adapter, not a fresh
-    # detection: the run was admitted with one adapter, and
-    # re-probing must measure that one.
     if not run.get("sandbox_adapter"):
         run["sandbox_adapter"] = sandbox.detect_adapter()
     probes = sandbox.run_probes(home, run, runner.run)
@@ -1568,8 +1493,6 @@ REVIEW_VERDICTS = {"merge-ready": "approve", "blocked": "changes-requested",
 
 
 def _worker_patch(tool, path):
-    """The blind worktree's diff the host passed with --patch, which a green
-    or refactor call needs (an empty file: nothing changed) and no other does."""
     if tool not in PATCH_TOOLS:
         if path is not None:
             raise StateError(f"--patch applies only to {' and '.join(PATCH_TOOLS)}, not {tool}")
@@ -1612,8 +1535,6 @@ def cmd_act(args):
     else:
         lane["acts"] += 1
         seq, prefix = lane["acts"], f"{args.unit}/"
-    # The integration green holds the integration lock, not the run's: a
-    # run-level record of it is written through the integration runner.
     integration = _integration_runner(home, run) if integrating else None
 
     def record(event_type, detail, bind=None):
@@ -1714,8 +1635,6 @@ def cmd_tool_schema(args):
     print(json.dumps(tools.host_tools(kind) if args.host_tools else tools.json_schema(kind)))
     return 0
 
-
-# ---------------------------------------------------------------- entry
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="t12", description="turbo-12f evidence runner")
@@ -1885,8 +1804,6 @@ def main(argv=None):
                 return args.func(args)
         if unit is None and args.func is cmd_act and _integration_green_pending(
                 _run(_home(args), args.task_id)):
-            # The integration green runs its tests under the integration lock;
-            # the run lock is taken inside, for each write.
             with model.integration_lock(_home(args), args.task_id):
                 args.integration_locked = True
                 return cmd_act(args)

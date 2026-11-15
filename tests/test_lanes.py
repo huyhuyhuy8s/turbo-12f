@@ -1,9 +1,3 @@
-"""Parallel TDD lanes (Phase 9): units are checked by the core, each accepted
-unit gets its own record, lock, branch and worktree, a lane command never holds
-the run lock while its tests run, and `integrate` merges the lanes one at a time
-with every red test rerun on the merge. Driven through the real CLI on a
-synthetic git repo, the way a host does."""
-
 import concurrent.futures
 import difflib
 import itertools
@@ -39,7 +33,6 @@ def make_green(name):
 
 
 def diff(path, old, new):
-    """A unified diff turning `old` into `new`, as a blind worktree's patch."""
     body = difflib.unified_diff(old.splitlines(True), new.splitlines(True),
                                 f"a/{path}", f"b/{path}")
     return f"diff --git a/{path} b/{path}\n" + "".join(body)
@@ -57,13 +50,10 @@ def item(unit_id, criterion, text=None):
 
 UNITS = [unit("U1", "a"), unit("U2", "b"), unit("U3", "c", after=("U1", "U2"))]
 ITEMS = [item("U1", 0), item("U2", 1), item("U3", 2)]
-# Two units that between them cover every criterion.
 TWO_ITEMS = [item("U1", 0), item("U2", 1), item("U1", 2, "fc returns 1")]
-# Two units, one item each: the first also covers the criterion nobody else does.
 PAIR_UNITS = [UNITS[0], UNITS[1]]
 PAIR_ITEMS = [{**item("U1", 0), "criteria": [0, 2]}, item("U2", 1)]
 BASE_B = "def fb():\n    return 0\n"
-# test_a reaches `a` through the module, so another unit's import can change it.
 TEST_A_BY_MODULE = ("import unittest\nimport a\n\nclass TestA(unittest.TestCase):\n"
                     "    def test_a(self):\n        self.assertEqual(a.fa(), 1)\n")
 
@@ -105,7 +95,6 @@ class LaneCase(unittest.TestCase):
     def setup_home(self):
         """Called between `init` and `prepare`, for a case that needs a file in the home."""
 
-    # -- drivers
     def git(self, cwd, *args):
         result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -174,7 +163,6 @@ class LaneCase(unittest.TestCase):
         return self.act("red", "no_cheat_left", {"reason": "every case is covered"}, unit=unit_id)
 
     def finish(self, unit_id, name, text=None, patch=None):
-        """red, green and the devil pass of one unit: the lane is at its final."""
         self.red(unit_id, name, text=text)
         self.green(unit_id, patch or make_green(name))
         self.no_cheat(unit_id)
@@ -195,7 +183,6 @@ class LaneCase(unittest.TestCase):
         return os.path.join(self.home, "worktrees", "demo-1")
 
     def read(self, unit_id, rel):
-        """A file of a lane's worktree, or of the integration worktree (no unit)."""
         base = self.worktree(unit_id) if unit_id else self.run_worktree
         with open(os.path.join(base, rel)) as fh:
             return fh.read()
@@ -516,7 +503,6 @@ class LaneAttemptLimitTest(LaneCase):
 
     def test_the_attempt_limit_pauses_only_the_lane(self):
         self.analyze()
-        # No test file written: refused once, and the second refusal pauses the lane.
         args = {"item_id": "U1-T1", "test_file": "tests/test_a.py", "test_name": "t",
                 "last_assertion_line": 6, "defeats": "x", "add_items": []}
         self.act("red", "red_test_ready", args, unit="U1", expect=1)
@@ -641,7 +627,6 @@ class IntegrateTest(LaneCase):
 
 
 class SemanticConflictTest(LaneCase):
-    """Two units each correct alone and wrong together."""
     task_fields = {"refactor_skip_max_lines": 100}
     OWN_B = "from a import fa\n\n\ndef fb():\n    return fa() + 1\n"
     FIXED_B = "from a import fa\n\n\ndef fb():\n    return fa()\n"
@@ -652,14 +637,12 @@ class SemanticConflictTest(LaneCase):
         self.analyze(units=PAIR_UNITS, items=PAIR_ITEMS)
 
     def own_failure(self):
-        """U2's test passes alone and fails once U1 is merged: only U2's test fails."""
         self.finish("U1", "a")
         self.finish("U2", "b", patch=diff("b.py", BASE_B, self.OWN_B))
         self.integrate("U1")
         self.integrate("U2")
 
     def merged_failure(self):
-        """U2 changes what U1's test sees: a merged lane's test fails."""
         self.finish("U1", "a", text=TEST_A_BY_MODULE)
         self.finish("U2", "b", patch=diff("b.py", BASE_B, self.MERGED_B))
         self.integrate("U1")
@@ -729,7 +712,6 @@ class SemanticConflictTest(LaneCase):
         self.assertEqual((context["integration"], context["writable"]), (True, ["a.py", "b.py"]))
         self.assertNotIn("test_a", json.dumps(context))
         self.integrate("U2", expect=1)
-        # The integration green may write the owns of every lane in the merge, no other file.
         self.integration_green(diff("c.py", "def fc():\n    return 0\n",
                                     "def fc():\n    return 1\n"), expect=1)
         self.assertEqual(self.run_record()["tdd"]["last_error"]["check"], "lane-scope")

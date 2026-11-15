@@ -82,8 +82,6 @@ class SkillError(Exception):
     """A pin is malformed, an archive is unsafe, or a hash does not match."""
 
 
-# -- the tree hash and the cache ------------------------------------------
-
 def tree_files(root):
     """[(relpath, sha256 hex)] of every file under `root`, sorted. A link or
     any other non-regular entry is an error: a skill dir holds plain files."""
@@ -138,11 +136,7 @@ def verify(cache, name, rev, sha256):
     return mount
 
 
-# -- the archive -----------------------------------------------------------
-
 class _Limited:
-    """A read-only stream that fails once more than `limit` bytes pass."""
-
     def __init__(self, stream, limit, what):
         self.stream, self.limit, self.what, self.count = stream, limit, what, 0
 
@@ -155,8 +149,6 @@ class _Limited:
 
 
 def _parts(name):
-    """The path components of a tar member name, refusing absolute names and
-    `..`. `.` and empty parts are dropped."""
     if name.startswith("/") or "\\" in name or "\0" in name:
         raise SkillError(f"unsafe archive member name {name!r}")
     parts = name.split("/")
@@ -196,8 +188,6 @@ def _check_pin(name, pin):
 
 
 def _select(stream, pin):
-    """{relpath: bytes} of the archive members `pin` keeps. See the module
-    docstring for what is refused."""
     path = pin["path"]
     keep = workspace._matcher(pin["include"])
     chosen, total, prefix = {}, 0, None
@@ -239,7 +229,6 @@ def _select(stream, pin):
 
 
 def _frontmatter(text):
-    """(top-level frontmatter keys, body). No frontmatter gives ({}, text)."""
     match = re.match(r"---[ \t]*\r?\n(.*?\r?\n)?---[ \t]*(?:\r?\n|$)", text, re.DOTALL)
     if not match:
         return {}, text
@@ -252,7 +241,6 @@ def _frontmatter(text):
 
 
 def _first_heading(body):
-    """The text of the first markdown heading outside a code fence."""
     fence = None
     for line in body.splitlines():
         marker = FENCE_RE.match(line)
@@ -266,10 +254,6 @@ def _first_heading(body):
 
 
 def _wrapped(name, data):
-    """SKILL.md for a command file: generated frontmatter, then its body. The
-    description is the one in the file's own frontmatter when it has a
-    one-line one (a command file's headings are often examples inside its
-    prompt), else its first heading outside a code fence."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -327,8 +311,6 @@ def build(name, pin, stream, dest):
         raise SkillError(f"skill {name!r}: cannot lay out {rel!r}: {exc}") from exc
     return sorted(files)
 
-
-# -- sync ------------------------------------------------------------------
 
 def fetch_into(name, pin, cache, url=URL):
     """Download and build one skill in a scratch dir under `cache`. Returns
@@ -401,8 +383,6 @@ def sync(profile_json, cache, update_hashes=False, url=URL):
 
 
 def _dump(value, indent=0):
-    """JSON, two-space indent; a list or object that fits in 88 columns stays
-    on one line, so re-pinning does not reflow the rest of the profile."""
     flat = json.dumps(value, ensure_ascii=False)
     if not isinstance(value, (dict, list)) or not value or len(flat) + 2 * indent <= 88:
         return flat

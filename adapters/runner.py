@@ -225,8 +225,6 @@ def parse_role_flag(entries, flag, allowed=None):
 
 
 def _roots(paths):
-    """Each protected root as itself and as everything under it, the way
-    `model.under` reads a protected path."""
     return [p for root in paths for p in (root, root.rstrip("/") + "/**")]
 
 
@@ -239,18 +237,10 @@ def _protected(ctx):
 
 
 def _blind_guard(ctx):
-    """The blind worktree has no test file; read_only also stops a role
-    from creating one, and confine keeps it inside its cwd (and out of
-    .git, the object store it shares with the run's worktree)."""
     return {"read_only": ctx.get("test_globs", []) + _protected(ctx),
             "bash": "deny", "confine": True}
 
 
-# Factors 2, 3 and 8: what an omp worker may use is set here by role kind, not
-# by the prompt. Nothing outside these lists (task, ask, eval, web_search) is
-# ever mounted. `guard` returns the policy adapters/omp/guard.ts enforces.
-# A role with a `patch_tool` is blind: it runs in a worktree without the
-# test files, and that call carries the patch it made.
 ROLE_POLICY = {
     "analyzer": {"tools": [], "max_turns": 4,
                  "guard": lambda ctx: {"writable": [], "bash": "deny"}},
@@ -263,8 +253,6 @@ ROLE_POLICY = {
     "review": {"tools": CHECKER_TOOLS, "max_turns": 30,
                "guard": lambda ctx: {"writable": []}},
 }
-# What a blind role's prompt leaves out of the context: where the tests are,
-# the real worktree they sit in, and the guard's own path lists.
 BLIND_HIDDEN_FIELDS = ("test_globs", "protected_paths", "worktree")
 OMP_PROMPT = os.path.join(os.path.dirname(BIN), "prompts", "omp-worker.md")
 OMP_GUARD = os.path.join(os.path.dirname(BIN), "adapters", "omp", "guard.ts")
@@ -410,7 +398,6 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
                 accepted.append(act.stdout.strip())
                 return True, accepted[-1], True
             error = act.stderr.strip()
-            # Nothing the model can fix: the run it works for is gone.
             return False, error, SUPERSEDED in error
 
         outcome = omp_rpc.run_worker(
