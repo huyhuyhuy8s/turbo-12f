@@ -221,6 +221,24 @@ class SubmitDefaultAct(unittest.TestCase):
                         "--parsed-by", "extracted", "--unit", "U1", "--run-id", "R1"]
             self.assertEqual([expected], seen)
 
+    def test_default_act_omits_unit_and_run_id_flags_when_not_given(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            seen = []
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    run=lambda argv: seen.append(argv) or 0)
+            flags = [[a for a in argv if a in ("--unit", "--run-id")] for argv in seen]
+            self.assertEqual([[]], flags)
+
 
 if __name__ == "__main__":
     unittest.main()
