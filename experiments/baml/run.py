@@ -139,8 +139,10 @@ def _t12_act(argv, raw, run):
             "--raw", raw,
             "--parsed-by", "extracted",
         ]
-        for flag in ():
-            pass
+        for flag in ("--unit", "--run-id"):
+            value = _option(argv, flag)
+            if value is not None:
+                command += [flag, value]
         code = run(command)
         return code == 0, "" if code == 0 else f"t12 act exited {code}"
 
