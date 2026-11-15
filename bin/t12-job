@@ -113,11 +113,17 @@ def command_failure(name, detail):
     return {"fingerprint": name + ":command", "title": "command failed", "detail": detail, "url": None}
 
 
+def is_valid_timeout(timeout):
+    """True for a finite positive number (booleans excluded)."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout != timeout:
+        return False
+    return 0 < timeout <= sys.float_info.max
+
+
 def run_command(job, repo, commit):
     """Run the job's command on a checkout of commit and return the failure findings."""
     timeout = job.get("timeout_s")
-    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout != timeout
-                or timeout in (float("inf"), float("-inf")) or timeout <= 0 or timeout > sys.float_info.max):
+    if timeout is not None and not is_valid_timeout(timeout):
         print("job %r: timeout_s must be a number" % job["name"], file=sys.stderr)
         raise SystemExit(2)
     failures = []
