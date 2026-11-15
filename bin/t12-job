@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import subprocess
+import time
 
 parser = argparse.ArgumentParser(prog="t12-job", description=__doc__)
 parser.add_argument("--home", required=True)
@@ -26,6 +27,30 @@ shown = subprocess.run(
 jobs = json.loads(shown.stdout).get("jobs", []) if shown.returncode == 0 else []
 job = next((j for j in jobs if j.get("name") == args.name), {})
 findings = []
+kind = None
+if "adapter" in job:
+    kind = "adapter"
+    name = job["adapter"]
+    adapter = os.path.join(os.path.abspath(args.home), "adapters", name + ".py")
+    if not os.path.exists(adapter):
+        adapter = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "adapters", name + ".py")
+    out_path = os.path.join(job_dir, "adapter-out.tmp")
+    try:
+        subprocess.run(
+            ["python3", adapter, "job", "--job", json.dumps(job), "--repo", config["repo"], "--commit", commit,
+             "--home", os.path.abspath(args.home), "--out", out_path],
+            check=True, stdin=subprocess.DEVNULL,
+        )
+        with open(out_path, encoding="utf-8") as fh:
+            findings = json.load(fh)["findings"]
+        for f in findings:
+            if not isinstance(f.get("fingerprint"), str):
+                raise ValueError("finding without fingerprint")
+    except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise SystemExit(2)
+    finally:
+        if os.path.exists(out_path):
+            os.remove(out_path)
 if "command" in job:
     try:
         result = subprocess.run(job["command"], cwd=config["repo"], capture_output=True, text=True,
@@ -40,6 +65,11 @@ while os.path.exists(os.path.join(job_dir, "findings-%d.json" % seq)):
     seq += 1
 findings_path = os.path.join(job_dir, "findings-%d.json" % seq)
 with open(findings_path, "w", encoding="utf-8") as fh:
-    json.dump({"commit": commit, "findings": findings}, fh)
+    record = {"commit": commit, "findings": findings}
+    if kind:
+        record.update({"job": args.name, "kind": kind, "at": int(time.time())})
+    json.dump(record, fh)
+if kind:
+    print(findings_path)
 if findings:
     raise SystemExit(1)
