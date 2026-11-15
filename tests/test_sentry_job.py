@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import tempfile
+import urllib.error
 import unittest
 from unittest import mock
 
@@ -268,6 +269,28 @@ class SentryJobTest(unittest.TestCase):
         self.assertEqual((calls, ids), ([
             base + "?project=42&query=is:unresolved&statsPeriod=7d&limit=100",
             base + "?cursor=0:100:0"], ["sentry:101", "sentry:201"]))
+
+    def test_default_fetch_401_from_urlopen_exits_1_names_status_and_writes_no_out_file(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"org": "acme", "project_id": 42, "min_events": 3}}
+
+        def fake_urlopen(req, *args, **kwargs):
+            raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)
+
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok"}), \
+                    mock.patch("urllib.request.urlopen", fake_urlopen), \
+                    contextlib.redirect_stderr(stderr):
+                try:
+                    code = load_sentry().main(argv)
+                except Exception as exc:
+                    code = type(exc).__name__
+            wrote = os.path.exists(out)
+        self.assertEqual((code, "401" in stderr.getvalue(), wrote), (1, True, False))
 
 
 
