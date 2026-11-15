@@ -166,6 +166,30 @@ class CubicJobTest(unittest.TestCase):
                     distinct = len({f["fingerprint"] for f in json.load(handle)["findings"]})
         self.assertEqual(distinct, 1)
 
+    def test_issue_without_a_line_has_a_detail_headed_by_the_file_alone(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P2", "file": "src/b.py",
+                              "title": "Unused", "description": "y unused"}]}
+
+        def fake(argv, cwd, env):
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps(report), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            try:
+                load_cubic().main(argv, run=fake)
+            except KeyError:
+                pass
+            details = None
+            if os.path.exists(out):
+                with open(out) as handle:
+                    details = [f["detail"] for f in json.load(handle)["findings"]]
+        self.assertEqual(details, ["src/b.py\n\ny unused"])
+
 
 if __name__ == "__main__":
     unittest.main()
