@@ -2,10 +2,12 @@ import hashlib
 import json
 import os
 import sys
+import subprocess
 import tempfile
 
 def _default_run(argv, cwd, env):
-    return 0, '{"issues": []}', ""
+    done = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
+    return done.returncode, done.stdout, done.stderr
 
 
 
