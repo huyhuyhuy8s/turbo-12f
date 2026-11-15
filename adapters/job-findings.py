@@ -15,7 +15,7 @@ def is_open(fetch, repo, number, token):
     if number is None:
         return False
     response = fetch("GET", f"https://api.github.com/repos/{repo}/issues/{number}", token, None)
-    if isinstance(response, tuple) and response[0] == 404:
+    if isinstance(response, tuple) and response[0] in (404, 410):
         return False
     return (_response_body(response) or {}).get("state") != "closed"
 
