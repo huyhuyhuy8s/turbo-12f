@@ -936,7 +936,10 @@ def cmd_check(args):
     changed = _locked_tests_problem(run.get("tdd") or {}, wt)
     if changed:
         raise StateError(f"refusing check: test files changed since the red commit: {changed}")
-    evidence.verify_check(home, run)
+    for gate in run["gates"]:
+        if gate["status"] == "skipped" and gate.get("commit") != run["candidate"]["commit"]:
+            raise StateError(f"refusing check: gate {gate['name']!r} was not skipped on the candidate")
+    evidence.verify_check(home, {**run, "gates": [g for g in run["gates"] if g["status"] != "skipped"]})
     model.check_reviews(run)
     model.bump_op(run)
     model.transition(run, "local-verified")
