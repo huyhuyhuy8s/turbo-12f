@@ -440,5 +440,32 @@ class JobFindingsTest(unittest.TestCase):
                     outcome = f"TypeError: {error}"
         self.assertEqual((outcome, posts), (0, [("POST", True)]))
 
+    def test_finding_whose_stored_issue_is_gone_is_filed_again_and_mapped_to_the_new_number(self):
+        adapter = load_adapter()
+        posts = []
+
+        def fake(method, url, token, payload=None):
+            if method == "GET" and url == CREATE_URL + "/7":
+                return 404, {"message": "Not Found"}, None
+            posts.append((method, "Alpha" in json.dumps(payload)))
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            store_path = os.path.join(home, "jobs", "nightly", "fingerprints.json")
+            with open(store_path, "w") as fh:
+                json.dump({"a": 7}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha")]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = adapter.main(["file", "--home", home, "--findings", findings_path,
+                                     "--repo", "o/r"], fetch=fake)
+            with open(store_path) as fh:
+                stored = json.load(fh)
+        self.assertEqual((code, posts, stored), (0, [("POST", True)], {"a": 9}))
+
 if __name__ == "__main__":
     unittest.main()
