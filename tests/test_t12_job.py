@@ -45,6 +45,17 @@ class CommandJobTest(unittest.TestCase):
             written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
             self.assertEqual(written, [])
 
+    def test_the_findings_file_records_the_trunk_tip_as_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            tip = subprocess.run(["git", "rev-parse", "main"], cwd=os.path.join(tmp, "product"),
+                                 capture_output=True, text=True, check=True).stdout.strip()
+            subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                           capture_output=True, text=True)
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                commit = json.load(fh).get("commit")
+            self.assertEqual(commit, tip)
+
 
 if __name__ == "__main__":
     unittest.main()
