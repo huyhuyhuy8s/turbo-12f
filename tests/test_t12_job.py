@@ -513,3 +513,15 @@ class ConfigRepoNotAStringTest(unittest.TestCase):
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
+class ConfigTrunkNotAStringTest(unittest.TestCase):
+    def test_a_home_whose_config_trunk_is_not_a_string_exits_2_not_1_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            with open(os.path.join(home, "config.json"), "w") as fh:
+                json.dump({"version": 1, "repo": os.path.join(tmp, "product"), "trunk": 5}, fh)
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
