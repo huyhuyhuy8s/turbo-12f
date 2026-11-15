@@ -27,9 +27,9 @@ jobs = json.loads(shown.stdout).get("jobs", []) if shown.returncode == 0 else []
 job = next((j for j in jobs if j.get("name") == args.name), {})
 findings = []
 if "command" in job:
-    result = subprocess.run(job["command"], cwd=config["repo"])
+    result = subprocess.run(job["command"], cwd=config["repo"], capture_output=True, text=True)
     if result.returncode != 0:
-        findings.append({"fingerprint": "check:command"})
+        findings.append({"fingerprint": "check:command", "detail": result.stdout + result.stderr})
 seq = 1
 while os.path.exists(os.path.join(job_dir, "findings-%d.json" % seq)):
     seq += 1
