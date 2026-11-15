@@ -197,5 +197,26 @@ class SonarqubeJobTest(unittest.TestCase):
                 code = f"raised {type(error).__name__}"
         self.assertEqual(code, 1)
 
+    def test_config_without_base_url_exits_one_and_never_calls_fetch(self):
+        job = {"name": "sonar", "adapter": "sonarqube",
+               "config": {"project_key": "web"}}
+        calls = []
+
+        def fake(method, url, token):
+            calls.append(url)
+            return 200, {"issues": [], "paging": {"total": 0}}, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "acme/web", "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SONAR_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    code = load_sonarqube().main(argv, fetch=fake)
+                except Exception as error:
+                    code = f"raised {type(error).__name__}"
+        self.assertEqual((code, calls), (1, []))
+
 if __name__ == "__main__":
     unittest.main()
