@@ -152,6 +152,9 @@ def _t12_act(argv, raw, run):
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
         raw = _option(argv, "--reply-file")
+        if raw is not None and not Path(raw).exists():
+            print(f"reply file not found: {raw}")
+            return 2
         if act is None and raw is None:
             def act(call):
                 return True, "ok"
