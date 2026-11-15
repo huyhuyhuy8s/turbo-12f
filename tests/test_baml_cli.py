@@ -354,5 +354,23 @@ class SubmitKindOption(unittest.TestCase):
                 ['{"arm": "B", "kind": "green", "ok": true, "refused_by": null, "error": null}'],
                 lines)
 
+
+class SubmitNoReplyFileOption(unittest.TestCase):
+    def test_absent_reply_file_option_returns_2_names_the_option_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            out = io.StringIO()
+            calls = []
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                code = run.main(
+                    ["submit", "--kind", "review",
+                     "--home", tmp, "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    run=lambda argv: calls.append(argv) or 0)
+            shown = out.getvalue()
+            self.assertEqual((2, True, False, []),
+                             (code, "--reply-file" in shown, os.path.exists(evidence), calls))
+
 if __name__ == "__main__":
     unittest.main()
