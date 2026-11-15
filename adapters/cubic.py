@@ -54,6 +54,7 @@ def main(argv=None, run=None):
         return 1
     branch_code, _out, _err = run(["git", "branch", BASE_BRANCH, recorded or config.get("since")], repo, env)
     if branch_code != 0:
+        run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
         return 1
     code, stdout, _stderr = run(
         [config.get("cubic", "cubic"), "review", "--base", BASE_BRANCH, "--json"],
