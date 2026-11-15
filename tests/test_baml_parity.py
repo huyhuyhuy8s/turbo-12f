@@ -227,6 +227,13 @@ class ClientBlock(unittest.TestCase):
         self.assertEqual(("openai", True),
                          (provider.group(1) if provider else None, options is not None))
 
+    def test_each_answer_function_body_has_a_client_worker_line(self):
+        functions = re.findall(r"function\s+(\w+)\s*\([^)]*\)\s*->[^{]*\{(.*?)\n\}",
+                               generate.render(), re.DOTALL)
+        found = sorted(name for name, body in functions
+                       if re.search(r"^\s*client\s+Worker\s*$", body, re.M))
+        self.assertEqual(["AnalyzerAnswer", "RedAnswer", "ReviewAnswer"], found)
+
 
 if __name__ == "__main__":
     unittest.main()
