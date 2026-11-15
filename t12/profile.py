@@ -352,6 +352,8 @@ def _check_job(job):
                 command = shlex.split(command)
             if not command:
                 raise StateError(f"{where}: command must not be empty")
+            if not all(isinstance(item, str) for item in command):
+                raise StateError(f"{where}: command items must be strings")
             sandbox.check_command(command)
             if isinstance(job["command"], str):
                 raise StateError(f"{where}: command must be a list, not a string")
