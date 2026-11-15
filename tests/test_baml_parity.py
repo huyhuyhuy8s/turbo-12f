@@ -121,6 +121,13 @@ class AnswerFunctions(unittest.TestCase):
         expected = sorted(pascal(name) for name in tools.TOOLS["review"])
         self.assertEqual(expected, found)
 
+    def test_each_answer_function_prompt_contains_the_output_format_placeholder(self):
+        functions = re.findall(r"function\s+(\w+)\s*\([^)]*\)\s*->[^{]*\{(.*?)\n\}",
+                               generate.render(), re.DOTALL)
+        found = sorted(name for name, body in functions
+                       if "{{ ctx.output_format }}" in body)
+        self.assertEqual(["AnalyzerAnswer", "RedAnswer", "ReviewAnswer"], found)
+
 
 if __name__ == "__main__":
     unittest.main()
