@@ -1,6 +1,7 @@
 import enum
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -77,6 +78,16 @@ def _unexpected(raw, call):
     return None
 
 
+def _raw_args(reply, call):
+    try:
+        raw, _ = json.JSONDecoder().raw_decode(reply, reply.index("{"))
+    except ValueError:
+        raw = {}
+    if "args" not in call and isinstance(raw.get("args"), dict):
+        return {**raw["args"], **{k: v for k, v in raw.items() if k != "args"}}
+    return raw
+
+
 def submit(reply, kind, parse, act, record=None):
     found = _groups(reply)
     if found > 1:
@@ -87,14 +98,7 @@ def submit(reply, kind, parse, act, record=None):
         shape = plain(parsed, True)
     except Exception as exc:
         return _refuse(record, "baml", str(exc))
-    try:
-        raw, _ = json.JSONDecoder().raw_decode(reply, reply.index("{"))
-    except ValueError:
-        raw = {}
-    if "args" not in call and isinstance(raw.get("args"), dict):
-        args = {**raw["args"], **{k: v for k, v in raw.items() if k != "args"}}
-    else:
-        args = raw
+    args = _raw_args(reply, call)
     key = _unexpected({k: v for k, v in args.items() if k != "tool"}, shape)
     if key is not None:
         return _refuse(record, "script", f"unexpected arg '{key}'")
@@ -103,19 +107,90 @@ def submit(reply, kind, parse, act, record=None):
         tools.parse(json.dumps({"tool": tool, "args": call}), kind)
     except StateError as exc:
         return _refuse(record, "core", str(exc))
-    if record is not None:
+    result = act({"tool": tool, "args": call})
+    if isinstance(result, tuple) and not result[0]:
+        _refuse(record, "act", result[1])
+    elif record is not None:
         record({"ok": True})
-    return act({"tool": tool, "args": call})
+    return result
 
 
-def main(argv):
+def _option(argv, name):
+    return argv[argv.index(name) + 1] if name in argv else None
+
+
+def _execute(argv):
+    return subprocess.run(argv).returncode
+
+
+def _t12_act(argv, raw, run):
+    def act(call):
+        call_file = raw + ".call.json"
+        with open(call_file, "w") as handle:
+            handle.write(json.dumps(call))
+        command = [
+            str(Path(__file__).resolve().parents[2] / "bin" / "t12"),
+            "act",
+            "--home", _option(argv, "--home"),
+            "--task-id", _option(argv, "--task-id"),
+            "--role", _option(argv, "--role"),
+            "--session", _option(argv, "--session"),
+            "--input", call_file,
+            "--raw", raw,
+            "--parsed-by", "extracted",
+        ]
+        for flag in ("--unit", "--run-id"):
+            value = _option(argv, flag)
+            if value is not None:
+                command += [flag, value]
+        code = run(command)
+        return code == 0, "" if code == 0 else f"t12 act exited {code}"
+
+    return act
+
+
+def main(argv, parse=None, act=None, run=None):
+    if parse is not None:
+        raw = _option(argv, "--reply-file")
+        if raw is None:
+            print("missing required option: --reply-file")
+            return 2
+        if not Path(raw).exists():
+            print(f"reply file not found: {raw}")
+            return 2
+
+        if act is None:
+            act = _t12_act(argv, raw, run or _execute)
+
+        kind = _option(argv, "--kind") or "review"
+
+        def forward(call):
+            result = act(call)
+            return result if isinstance(result, tuple) else (True, "ok")
+
+        def record(outcome):
+            path = _option(argv, "--evidence")
+            if path is not None:
+                line = {
+                    "arm": "B",
+                    "kind": kind,
+                    "ok": outcome["ok"],
+                    "refused_by": outcome.get("refused_by"),
+                    "error": outcome.get("message"),
+                }
+                with open(path, "a") as evidence:
+                    evidence.write(json.dumps(line) + "\n")
+
+        reply = Path(raw).read_text()
+        ok, message = submit(reply, kind, parse, forward, record)
+        print(message)
+        return 0 if ok else 1
     try:
         import baml_py  # noqa: F401
     except ImportError:
         print(
             "baml-py is not importable; run: pip install baml-py pydantic typing_extensions"
-            " and then: baml-cli generate --from experiments/baml/baml_src",
-            file=sys.stderr,
+            " and then: baml-cli generate --from experiments/baml/baml_src"
         )
     return 2
 
