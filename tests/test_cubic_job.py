@@ -39,6 +39,27 @@ class CubicJobTest(unittest.TestCase):
                     written = json.load(handle)
         self.assertEqual((written, calls), ({"findings": []}, []))
 
+    def test_one_cubic_p1_issue_becomes_one_finding_titled_with_its_priority(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P1", "file": "src/a.py", "line": 3,
+                              "title": "Null deref", "description": "x is None"}]}
+
+        def fake(argv, cwd, env):
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps(report), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+            titles = None
+            if os.path.exists(out):
+                with open(out) as handle:
+                    titles = [f["title"] for f in json.load(handle)["findings"]]
+        self.assertEqual(titles, ["[P1] Null deref"])
+
 
 if __name__ == "__main__":
     unittest.main()
