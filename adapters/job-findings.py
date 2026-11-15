@@ -8,7 +8,8 @@ import common  # noqa: E402
 
 def main(argv=None, fetch=None):
     fetch = fetch or common.request
-    with open(argv[argv.index("--findings") + 1]) as handle:
+    findings_path = argv[argv.index("--findings") + 1]
+    with open(findings_path) as handle:
         record = json.load(handle)
     findings = record["findings"]
     repo = argv[argv.index("--repo") + 1]
@@ -24,7 +25,7 @@ def main(argv=None, fetch=None):
     if "--home" in argv and name:
         job_dir = os.path.join(argv[argv.index("--home") + 1], "jobs", name)
     else:
-        job_dir = os.path.dirname(os.path.abspath(argv[argv.index("--findings") + 1]))
+        job_dir = os.path.dirname(os.path.abspath(findings_path))
     with open(os.path.join(job_dir, "fingerprints.json"), "w") as handle:
         json.dump({finding["fingerprint"]: number for finding in findings}, handle)
     return 0
