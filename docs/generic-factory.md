@@ -308,7 +308,7 @@ findings file; the core schedules nothing. `adapters/job-findings.py`
 files a run's new findings as one issue, deduplicated by fingerprint,
 and never adds the approval label: a finding has no acceptance
 criteria, so a person writes the spec and approves it (Factor 7).
-Tracked in #115.
+Tracked in #123.
 
 None of this moves the human merge. `local-verified` gains evidence but
 still means "the evidence chain was observed", not acceptance. The core
