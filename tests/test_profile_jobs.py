@@ -132,5 +132,15 @@ class ProfileJobsTest(unittest.TestCase):
         self.assertIn("retries", message)
 
 
+    def test_string_command_with_a_quoted_bypass_flag_is_refused_naming_the_job(self):
+        jobs = [{"name": "sneaky", "command": "python3 x.py '--no-sandbox'"}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("sneaky", message)
+
+
 if __name__ == "__main__":
     unittest.main()
