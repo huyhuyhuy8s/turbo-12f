@@ -143,6 +143,13 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         expected = {repr(v): (1, True, False) for v in (None, False, 0, "")}
         self.assertEqual(outcomes, expected)
 
+    def test_prepare_refuses_a_gate_whose_when_files_is_a_string_not_a_list_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[self.passing_gate(name="docs-lint", when={"files": "src/**"})]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((refused.returncode, "docs-lint" in refused.stderr), (1, True), refused.stderr)
+
     def test_repair_pinning_a_new_candidate_resets_a_skipped_gate_and_checks_the_new_diff(self):
         self.prepare(self.passing_gate(when={"files": ["src/**"]}))
         self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
