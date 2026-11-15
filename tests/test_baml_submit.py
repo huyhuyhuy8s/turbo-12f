@@ -193,5 +193,20 @@ class MissingBamlPy(unittest.TestCase):
             self.assertEqual(([], []), (written, os.listdir(home)))
 
 
+class ExtraArgBeforeStrayBrace(unittest.TestCase):
+    def test_extra_key_is_refused_even_when_prose_after_the_group_holds_a_stray_brace(self):
+        reply = ('{"tool": "test_list_ready", "items": [], "gaps": ["g"], '
+                 '"directives": ["d"], "bonus": 1}\nDone :}')
+        parsed = SimpleNamespace(tool="test_list_ready", items=[], gaps=["g"],
+                                 directives=["d"], units=None)
+        act = mock.Mock()
+        lines = []
+        run.submit(reply, "analyzer", lambda text: parsed, act, record=lines.append)
+        message = "unexpected arg 'bonus'"
+        self.assertEqual(
+            ([], [{"ok": False, "refused_by": "script", "message": message}]),
+            (act.call_args_list, lines))
+
+
 if __name__ == "__main__":
     unittest.main()
