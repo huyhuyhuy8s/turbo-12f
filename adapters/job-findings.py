@@ -25,7 +25,7 @@ def _detail(detail):
 
 
 def main(argv=None, fetch=None):
-    if "--label" in argv:
+    if any(arg == "--label" or arg.startswith("--label=") for arg in argv):
         print("job-findings: --label is not supported", file=sys.stderr)
         return 2
     fetch = fetch or common.request
