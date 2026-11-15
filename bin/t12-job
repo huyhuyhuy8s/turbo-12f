@@ -51,7 +51,7 @@ def run_adapter(job, repo, commit, home, job_dir):
         if not isinstance(adapter_findings, list):
             raise ValueError("findings is not a list")
         for f in adapter_findings:
-            if not isinstance(f.get("fingerprint"), str):
+            if not isinstance(f.get("fingerprint"), str) or not f["fingerprint"]:
                 raise ValueError("finding without fingerprint")
         return adapter_findings
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
