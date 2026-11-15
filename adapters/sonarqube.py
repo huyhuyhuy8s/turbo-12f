@@ -7,7 +7,7 @@ def main(argv=None, fetch=None):
     config = job["config"]
     base_url = config["base_url"]
     project_key = config["project_key"]
-    severities = ",".join(["HIGH", "BLOCKER"])
+    severities = ",".join(config.get("severities", ["HIGH", "BLOCKER"]))
     token = os.environ.get("SONAR_TOKEN")
     issues = []
     page = 1
