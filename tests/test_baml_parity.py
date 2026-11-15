@@ -80,6 +80,11 @@ class OptionalAndEdgeRendering(unittest.TestCase):
         field = re.search(r"^\s*units\s+(.*?)\s*$", block.group(1) if block else "", re.M)
         self.assertEqual("Unit[]?", field.group(1) if field else None)
 
+    def test_unit_test_item_has_an_optional_unit_string(self):
+        block = re.search(r"class UnitTestItem\s*\{(.*?)\}", generate.render(), re.S)
+        field = re.search(r"^\s*unit\s+(.*?)\s*$", block.group(1) if block else "", re.M)
+        self.assertEqual("string?", field.group(1) if field else None)
+
 
 if __name__ == "__main__":
     unittest.main()
