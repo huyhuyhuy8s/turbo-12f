@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 
 
 def main(argv=None, run=None):
@@ -20,7 +21,8 @@ def main(argv=None, run=None):
             return 0
     config = job.get("config", {})
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
-    repo = option("--repo")
+    repo = tempfile.mkdtemp()
+    run(["git", "worktree", "add", "--detach", repo, commit], option("--repo"), env)
     run(["git", "branch", "t12-job/cubic-base", config.get("since")], repo, env)
     _code, stdout, _stderr = run(
         [config.get("cubic", "cubic"), "review", "--base", "t12-job/cubic-base", "--json"],
