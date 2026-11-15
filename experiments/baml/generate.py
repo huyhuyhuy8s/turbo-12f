@@ -49,4 +49,5 @@ def class_block(name, fields):
 
 def render():
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
-    return verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks
+    unit_item = class_block("UnitTestItem", {"unit": "string?"})
+    return verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + unit_item
