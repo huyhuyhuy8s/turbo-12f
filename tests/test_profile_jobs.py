@@ -167,6 +167,15 @@ class ProfileJobsTest(unittest.TestCase):
             caught = exc
         self.assertIsInstance(caught, StateError)
 
+    def test_command_that_is_neither_a_string_nor_a_list_is_refused_with_a_state_error(self):
+        jobs = [{"name": "odd", "command": 5}]
+        caught = None
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except Exception as exc:  # noqa: BLE001
+            caught = exc
+        self.assertIsInstance(caught, StateError)
+
 
 if __name__ == "__main__":
     unittest.main()
