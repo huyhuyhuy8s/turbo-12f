@@ -91,6 +91,13 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         self.assertEqual((self.flow_record()["phase"], "unit: skipped" in text),
                          ("local-verified", True), checked.stderr)
 
+    def test_prepare_refuses_a_gate_whose_when_files_is_empty_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[self.passing_gate(name="docs-lint", when={"files": []})]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((refused.returncode, "docs-lint" in refused.stderr), (1, True), refused.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
