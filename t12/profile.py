@@ -318,7 +318,7 @@ def _delivery(value):
     return {"adapter": value["adapter"]}
 
 
-JOB_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+JOB_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
 
 
 def _jobs(value):
