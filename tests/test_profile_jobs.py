@@ -67,6 +67,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("timeout_s", message)
 
+    def test_command_job_with_config_is_refused_naming_the_key(self):
+        jobs = [{"name": "fuzz", "command": ["python3", "a.py"], "config": {"org": "acme"}}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("config", message)
+
 
 if __name__ == "__main__":
     unittest.main()
