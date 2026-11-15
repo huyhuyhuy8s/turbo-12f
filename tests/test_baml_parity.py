@@ -67,6 +67,12 @@ class ToolClassNames(unittest.TestCase):
         found = {"findings": review["findings"], "verdict": review["verdict"]}
         self.assertEqual({"findings": "Finding[]", "verdict": "Verdict"}, found)
 
+    def test_item_list_args_map_to_test_item_and_unit_test_item_lists(self):
+        classes = generate.classes()
+        found = {"add_items": classes["RedTestReady"]["add_items"],
+                 "items": classes["TestListReady"]["items"]}
+        self.assertEqual({"add_items": "TestItem[]", "items": "UnitTestItem[]"}, found)
+
 
 class EnumRendering(unittest.TestCase):
     def test_verdict_enum_has_one_aliased_member_per_review_verdict(self):
