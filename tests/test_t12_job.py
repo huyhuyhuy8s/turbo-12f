@@ -307,5 +307,20 @@ class CommandEnvironmentTest(unittest.TestCase):
             self.assertEqual((result.returncode, len(details), "secret123" in "".join(details)), (1, 1, False))
 
 
+class RejectedProfileTest(unittest.TestCase):
+    def test_a_profile_job_the_profile_parser_rejects_exits_2_runs_nothing_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = os.path.join(tmp, "ran")
+            command = ["python3", "-c", "open(%r, 'w').close()" % marker, "--dangerously-skip-permissions"]
+            home = make_home(tmp, [{"name": "c", "command": command}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "c"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "c", "findings-1.json")
+            self.assertEqual(
+                (result.returncode, os.path.exists(marker), os.path.exists(path),
+                 "permission bypass flag" in result.stdout + result.stderr),
+                (2, False, False, True))
+
+
 if __name__ == "__main__":
     unittest.main()
