@@ -81,6 +81,28 @@ class CubicJobTest(unittest.TestCase):
                     heads = [f["detail"][:10] for f in json.load(handle)["findings"]]
         self.assertEqual(heads, ["src/a.py:3"])
 
+    def test_base_branch_is_created_from_since_before_cubic_reviews_against_it(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P1", "file": "src/a.py", "line": 3,
+                              "title": "Null deref", "description": "x is None"}]}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append(argv)
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps(report), ""
+
+        branch = ["git", "branch", "t12-job/cubic-base", "abc"]
+        review = ["cubic", "review", "--base", "t12-job/cubic-base", "--json"]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+        relevant = [c for c in calls if c in (branch, review)]
+        self.assertEqual(relevant, [branch, review])
+
 
 if __name__ == "__main__":
     unittest.main()

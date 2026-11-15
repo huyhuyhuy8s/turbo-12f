@@ -21,12 +21,12 @@ def main(argv=None, run=None):
     config = job.get("config", {})
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
     repo = option("--repo")
-    run(["git", "branch", "t12-job/cubic-base", config.get("since")], repo, env)
     _code, stdout, _stderr = run(
         [config.get("cubic", "cubic"), "review", "--base", "t12-job/cubic-base", "--json"],
         repo,
         env,
     )
+    run(["git", "branch", "t12-job/cubic-base", config.get("since")], repo, env)
     findings = []
     for issue in json.loads(stdout)["issues"]:
         key = f"{issue['file']}\n{issue['title']}"
