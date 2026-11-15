@@ -93,18 +93,21 @@ class Finding {
 }
 
 function AnalyzerAnswer(input: string) -> TestListReady | Escalate {
+  client Worker
   prompt #"
     {{ ctx.output_format }}
   "#
 }
 
 function RedAnswer(input: string) -> RedTestReady | NoCheatLeft | Escalate {
+  client Worker
   prompt #"
     {{ ctx.output_format }}
   "#
 }
 
 function ReviewAnswer(input: string) -> Review | Escalate {
+  client Worker
   prompt #"
     {{ ctx.output_format }}
   "#
