@@ -322,5 +322,23 @@ class RejectedProfileTest(unittest.TestCase):
                 (2, False, False, True))
 
 
+class TrunkCheckoutTest(unittest.TestCase):
+    def test_a_command_job_runs_on_the_trunk_tip_whatever_the_repo_has_checked_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["test", "-f", "ok"]}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, "ok"), "w") as fh:
+                fh.write("ok")
+            for args in (["add", "ok"], ["commit", "-qm", "add ok"], ["checkout", "-q", "--detach", "main~1"]):
+                git(repo, *args)
+            tip = subprocess.run(["git", "rev-parse", "main"], cwd=repo,
+                                 capture_output=True, text=True, check=True).stdout.strip()
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                record = json.load(fh)
+            self.assertEqual((result.returncode, record["findings"], record["commit"]), (0, [], tip))
+
+
 if __name__ == "__main__":
     unittest.main()
