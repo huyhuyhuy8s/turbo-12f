@@ -298,6 +298,27 @@ class CubicJobTest(unittest.TestCase):
         cubic_called = any(c[0] == "cubic" for c in calls)
         self.assertEqual((code != 0, cubic_called, recorded), (True, False, False))
 
+    def test_failed_worktree_add_fails_the_run_without_branch_or_cubic_and_records_no_commit(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append(argv)
+            if argv[:3] == ["git", "worktree", "add"]:
+                return 128, "", "fatal"
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps({"issues": []}), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            code = load_cubic().main(argv, run=fake)
+            recorded = os.path.exists(os.path.join(tmp, "jobs", "cubic", "cubic-last.json"))
+        later = [c for c in calls if c[:2] == ["git", "branch"] or c[0] == "cubic"]
+        self.assertEqual((code != 0, later, recorded), (True, [], False))
+
 
 if __name__ == "__main__":
     unittest.main()
