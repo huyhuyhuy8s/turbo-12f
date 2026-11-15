@@ -194,6 +194,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("noargv", message)
 
+    def test_command_list_with_a_non_string_item_is_refused_naming_the_job(self):
+        jobs = [{"name": "numeric", "command": [5]}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("numeric", message)
+
 
 if __name__ == "__main__":
     unittest.main()
