@@ -17,6 +17,9 @@ def main(argv=None, fetch=None):
     job = json.loads(args[args.index("--job") + 1])
     out = args[args.index("--out") + 1]
     config = job["config"]
+    if not config.get("org"):
+        print("sentry: config.org is required", file=sys.stderr)
+        return 1
     url = (f"https://sentry.io/api/0/organizations/{config['org']}/issues/"
            f"?project={config['project_id']}&query=is:unresolved"
            f"&statsPeriod={config.get('period', '14d')}&limit=100")
