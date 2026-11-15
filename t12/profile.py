@@ -48,9 +48,10 @@ not change a built-in's kind.
 import json
 import os
 import re
+import shlex
 
 from . import gitio, globs
-from .errors import StateError
+from .errors import RunnerError, StateError
 from .tools import KINDS
 
 PATH = ".t12/project.json"
@@ -131,8 +132,8 @@ TASK_KEYS = {
     "max_lanes": (int, _task_wins),
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
-PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery")
-OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery")
+PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery", "jobs")
+OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery", "jobs")
 DELIVERY_ADAPTERS = ("github", "gitlab", "bitbucket")
 
 
@@ -318,6 +319,68 @@ def _delivery(value):
     return {"adapter": value["adapter"]}
 
 
+JOB_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
+JOB_KEYS = {"name", "command", "adapter", "timeout_s", "config", "label"}
+
+
+def _check_job(job):
+    from . import sandbox
+    where = f"{PATH}: job {job.get('name')!r}"
+    unknown = sorted(set(job) - JOB_KEYS)
+    if unknown:
+        raise StateError(f"{where} has unknown keys {unknown}")
+    if "label" in job and (not isinstance(job["label"], str) or not job["label"].strip()):
+        raise StateError(f"{where}: label must be a non-empty string")
+    if "command" in job and "adapter" in job:
+        raise StateError(f"{where} has both command and adapter; "
+                         "a job is one or the other")
+    if "command" not in job and "adapter" not in job:
+        raise StateError(f"{where} has neither command nor adapter; "
+                         "a job is one or the other")
+    if "adapter" in job and "timeout_s" in job:
+        raise StateError(f"{where} is an adapter job and "
+                         "cannot set timeout_s")
+    if "command" in job and "config" in job:
+        raise StateError(f"{where} is a command job and "
+                         "cannot set config")
+    if "command" in job:
+        try:
+            command = job["command"]
+            if not isinstance(command, (str, list)):
+                raise StateError(f"{where}: command must be a string or a list")
+            if isinstance(command, str):
+                command = shlex.split(command)
+            if not command:
+                raise StateError(f"{where}: command must not be empty")
+            if not all(isinstance(item, str) for item in command):
+                raise StateError(f"{where}: command items must be strings")
+            if not all(item for item in command):
+                raise StateError(f"{where}: command items must not be empty")
+            sandbox.check_command(command)
+            if isinstance(job["command"], str):
+                raise StateError(f"{where}: command must be a list, not a string")
+        except (RunnerError, ValueError) as exc:
+            raise StateError(f"{where}: {exc}") from exc
+
+
+def _jobs(value):
+    if not isinstance(value, list):
+        raise StateError(f"{PATH}: jobs must be a list")
+    for job in value:
+        if not isinstance(job, dict):
+            raise StateError(f"{PATH}: job {job!r} must be an object")
+        name = job.get("name")
+        if not isinstance(name, str) or not JOB_NAME_RE.match(name):
+            raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
+    for job in value:
+        _check_job(job)
+    names = [job.get("name") for job in value]
+    for name in names:
+        if names.count(name) > 1:
+            raise StateError(f"{PATH}: job name {name!r} is used twice")
+    return value
+
+
 def review_roles(roles):
     return sorted(name for name, spec in roles.items() if spec["kind"] == "review")
 
@@ -360,6 +423,8 @@ def parse(text):
         data["skills"] = _skills(data["skills"], data["roles"])
     if "delivery" in data:
         data["delivery"] = _delivery(data["delivery"])
+    if "jobs" in data:
+        data["jobs"] = _jobs(data["jobs"])
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:
@@ -417,6 +482,14 @@ def _check_type(where, key, value, kind):
     _check_value(where, key, value)
 
 
+def _reject_deps_overlapping_protected(deps, roots):
+    for dep in deps:
+        dep_path = os.path.normpath(dep)
+        for root in sorted(roots):
+            if dep_path == root or dep_path.startswith(root + os.sep) or root.startswith(dep_path + os.sep):
+                raise StateError(f"verify_deps entry {dep!r} overlaps protected path {root!r}")
+
+
 def apply(profile, task):
     """The task as the run sees it: profile defaults merged under the
     rules in this module's docstring."""
@@ -430,12 +503,9 @@ def apply(profile, task):
         if key not in profile:
             continue
         merged[key] = merge(profile[key], task[key]) if key in task else profile[key]
-    roots = _protected_paths_and_their_folders(profile["protected_paths"])
-    for dep in merged.get("verify_deps", []):
-        dep_path = os.path.normpath(dep)
-        for root in sorted(roots):
-            if dep_path == root or dep_path.startswith(root + os.sep) or root.startswith(dep_path + os.sep):
-                raise StateError(f"verify_deps entry {dep!r} overlaps protected path {root!r}")
+    _reject_deps_overlapping_protected(
+        merged.get("verify_deps", []),
+        _protected_paths_and_their_folders(profile["protected_paths"]))
     merged.setdefault("test_globs", list(DEFAULT_TEST_GLOBS))
     merged.setdefault("lint_command", None)
     merged.setdefault("assertion_pattern", DEFAULT_ASSERTION_PATTERN)
