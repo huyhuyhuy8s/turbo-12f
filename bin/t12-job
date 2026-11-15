@@ -48,7 +48,7 @@ def check_finding(f):
 def run_adapter(job, repo, commit, home, job_dir):
     """Run the job's adapter and return its findings; exit 2 if it fails or misbehaves."""
     adapter_name = job["adapter"]
-    if os.path.isabs(adapter_name):
+    if "/" in adapter_name or ".." in adapter_name:
         raise SystemExit(2)
     adapter = os.path.join(home, "adapters", adapter_name + ".py")
     if not os.path.exists(adapter):
