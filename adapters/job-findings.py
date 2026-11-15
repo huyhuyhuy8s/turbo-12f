@@ -54,6 +54,9 @@ def main(argv=None, fetch=None):
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
                      token, payload)
+    if isinstance(response, tuple) and response[0] >= 400:
+        print(f"job-findings: create failed with status {response[0]}", file=sys.stderr)
+        return 1
     number = (_response_body(response) or {}).get("number")
     store.update({finding["fingerprint"]: number for finding in findings})
     with open(store_path, "w") as handle:
