@@ -99,5 +99,14 @@ class OptionalAndEdgeRendering(unittest.TestCase):
         self.assertEqual({"class_": "class"}, generate.ALIASES["fields"])
 
 
+class AnswerFunctions(unittest.TestCase):
+    def test_analyzer_answer_returns_union_of_exactly_the_analyzer_tool_classes(self):
+        head = re.search(r"function\s+AnalyzerAnswer\s*\([^)]*\)\s*->\s*([^{]*?)\s*\{",
+                         generate.render())
+        found = sorted(part.strip() for part in head.group(1).split("|")) if head else []
+        expected = sorted(pascal(name) for name in tools.TOOLS["analyzer"])
+        self.assertEqual(expected, found)
+
+
 if __name__ == "__main__":
     unittest.main()
