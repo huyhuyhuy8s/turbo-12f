@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sys
@@ -17,6 +18,26 @@ def main(argv=None, run=None):
             with open(option("--out"), "w") as handle:
                 json.dump({"findings": []}, handle)
             return 0
+    config = job.get("config", {})
+    env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
+    repo = option("--repo")
+    run(["git", "branch", "t12-job/cubic-base", config.get("since")], repo, env)
+    _code, stdout, _stderr = run(
+        [config.get("cubic", "cubic"), "review", "--base", "t12-job/cubic-base", "--json"],
+        repo,
+        env,
+    )
+    findings = []
+    for issue in json.loads(stdout)["issues"]:
+        key = f"{issue['file']}\n{issue['title']}"
+        findings.append({
+            "fingerprint": "cubic:" + hashlib.sha256(key.encode()).hexdigest()[:16],
+            "title": f"[{issue['priority']}] {issue['title']}",
+            "detail": f"{issue['file']}:{issue['line']}\n\n{issue['description'][:4000]}",
+            "url": None,
+        })
+    with open(option("--out"), "w") as handle:
+        json.dump({"findings": findings}, handle)
     return 0
 
 
