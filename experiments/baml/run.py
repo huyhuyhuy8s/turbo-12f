@@ -152,12 +152,12 @@ def _t12_act(argv, raw, run):
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
         raw = _option(argv, "--reply-file")
-        if raw is not None and not Path(raw).exists():
+        if raw is None:
+            print("missing required option: --reply-file")
+            return 2
+        if not Path(raw).exists():
             print(f"reply file not found: {raw}")
             return 2
-        if act is None and raw is None:
-            def act(call):
-                return True, "ok"
 
         if act is None:
             act = _t12_act(argv, raw, run or _execute)
@@ -181,7 +181,7 @@ def main(argv, parse=None, act=None, run=None):
                 with open(path, "a") as evidence:
                     evidence.write(json.dumps(line) + "\n")
 
-        reply = Path(raw).read_text() if raw is not None else ""
+        reply = Path(raw).read_text()
         ok, message = submit(reply, kind, parse, forward, record)
         print(message)
         return 0 if ok else 1
