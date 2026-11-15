@@ -10,13 +10,13 @@ from .errors import StateError
 
 def next_gate(run):
     for gate in run["gates"]:
-        if gate["status"] != "passed":
+        if gate["status"] not in ("passed", "skipped"):
             return gate
     return None
 
 
 def all_passed(run):
-    return all(g["status"] == "passed" for g in run["gates"])
+    return all(g["status"] in ("passed", "skipped") for g in run["gates"])
 
 
 def find_gate(run, name):
@@ -30,7 +30,7 @@ def check_order(run, gate):
     for prior in run["gates"]:
         if prior is gate:
             break
-        if prior["status"] != "passed":
+        if prior["status"] not in ("passed", "skipped"):
             raise StateError(
                 f"gate {gate['name']!r} cannot run before gate {prior['name']!r} passes"
             )

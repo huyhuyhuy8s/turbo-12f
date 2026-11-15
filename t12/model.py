@@ -675,7 +675,7 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
             raise StateError(f"gate {g.get('name')!r} must have a non-empty argv command")
         gates.append(
             {"name": g["name"], "command": list(g["command"]), "status": "pending",
-             "observation": None, "commit": None}
+             "observation": None, "commit": None, "when": g.get("when")}
         )
     if not gates:
         raise StateError("task must declare at least one gate")

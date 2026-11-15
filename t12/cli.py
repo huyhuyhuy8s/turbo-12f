@@ -719,6 +719,16 @@ def cmd_gate(args):
         raise StateError("every gate has passed on this candidate")
     gate_mod.check_order(run, gate)
     commit = run["candidate"]["commit"]
+    when = gate.get("when")
+    if when and not any(globs.match(p, when["files"])
+                        for p in gitio.changed_paths(wt, run["base_commit"], commit)):
+        gate["status"] = "skipped"
+        gate["commit"] = commit
+        if gate_mod.all_passed(run):
+            model.transition(run, "review")
+        _save(home, run, "gate-skipped", {"gate": gate["name"]})
+        print(f"gate {gate['name']}: skipped — no changed file matches when.files")
+        return 0
     obs = _run_on_commit(home, run, wt, commit, gate["command"])
     failed = obs["timed_out"] or obs["exit_code"] != 0
     name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
