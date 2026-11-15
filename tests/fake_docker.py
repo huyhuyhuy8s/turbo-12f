@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""Fake `docker` for the Docker-adapter tests.
-
-Emulates the three docker calls the adapter makes:
-- `docker info` — exit 0 unless FAKE_DOCKER_INFO_OK=0.
-- `docker image inspect <image>` — exit 1 when the image is
-  FAKE_DOCKER_IMAGE_MISSING, else 0.
-- `docker run ...` — parses the flags, then executes the trailing
-  command on the host under a Landlock cage (standing in for the
-  container's confinement) with the -e env and the -w directory.
-
-Every invocation is appended as a JSON line to FAKE_DOCKER_LOG, so
-tests can assert on the exact argv the adapter built. This stub
-emulates the daemon; it is not Docker. RealDockerCase in test_t12.py
-covers the real daemon where one answers.
-"""
-
 import json
 import os
 import subprocess
@@ -27,6 +11,10 @@ from t12 import sandbox as sb  # noqa: E402
 def log(argv):
     with open(os.environ["FAKE_DOCKER_LOG"], "a") as fh:
         fh.write(json.dumps(argv) + "\n")
+
+
+def container_env(env):
+    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
 
 
 def main():
@@ -42,17 +30,12 @@ def main():
         if worktree is None or image is None:
             print("fake-docker: could not parse docker run argv", file=sys.stderr)
             return 125
-        full_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-        # Only the -e flags reach the command — exactly like a real
-        # container. The stub's own inherited environment (which may
-        # hold the probe canary) must not leak in.
-        full_env.update(env)
         preexec = None
         if sb.landlock_available():
             preexec = sb.landlock_preexec(worktree, verify_home or worktree)
         try:
             proc = subprocess.run(
-                rest, cwd=worktree, env=full_env, preexec_fn=preexec,
+                rest, cwd=worktree, env=container_env(env), preexec_fn=preexec,
                 capture_output=False)
         except OSError as exc:
             print(f"fake-docker: cannot launch {' '.join(rest)}: {exc}", file=sys.stderr)
@@ -63,9 +46,6 @@ def main():
 
 
 def _parse_run(tokens):
-    """Split a `docker run` argv into (command, worktree, verify_home,
-    env, image). Flags take values; the first positional is the image;
-    everything after it is the command."""
     worktree = verify_home = image = None
     env = {}
     i = 0

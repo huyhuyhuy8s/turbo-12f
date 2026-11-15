@@ -1,18 +1,3 @@
-"""Tests for bin/t12-wizard `run`. A fake runner and a fake `t12 board` sit
-in a temporary workspace; nothing touches the network, a socket, or the
-real home directory.
-
-Contract the tests pin down (the implementation must follow it):
-- the workspace file t12-workspace.json may carry `omp_cmd`, `omp_profile`
-  and `omp_model`;
-- `run` calls <work>/factory/adapters/runner.py with --home and --queue, and
-  --omp-model (and the other omp flags) only for the keys the workspace
-  carries (the user passes none);
-- while the runner is alive, `run` reads `<work>/factory/bin/t12 board
-  --home <state> --json` and prints a progress line each interval; the
-  interval in seconds comes from env T12_WIZARD_PROGRESS_SECS (default 60).
-"""
-
 import json
 import os
 import re

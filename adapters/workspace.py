@@ -48,7 +48,6 @@ class WorkspaceError(Exception):
 
 
 def _git(cwd, *args, input=None):
-    """Run git in `cwd`; stdout as bytes. Raise WorkspaceError on failure."""
     env = {k: v for k, v in os.environ.items() if k not in GIT_ENV_DROP}
     try:
         proc = subprocess.run(
@@ -63,7 +62,6 @@ def _git(cwd, *args, input=None):
 
 
 def _paths(raw):
-    """Split NUL-separated git output into repo-relative paths."""
     return [p.decode("utf-8", "surrogateescape")
             for p in raw.split(b"\0") if p]
 
@@ -106,7 +104,6 @@ def _matcher(hidden_globs):
 
 
 def _forget_dirs(root, path):
-    """Remove the now-empty parent directories of a deleted `path`."""
     parent = os.path.dirname(os.path.join(root, path))
     root = os.path.abspath(root)
     while os.path.abspath(parent) != root:

@@ -1,8 +1,3 @@
-"""adapters/workspace.py against real git repositories: the blind worktree
-hides files from disk and from `git status`, and the patch it exports
-carries edits, new files, binary files and deletions back, but never a
-hidden path."""
-
 import os
 import shutil
 import subprocess

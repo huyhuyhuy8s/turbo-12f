@@ -1,12 +1,3 @@
-"""Tests for the delivery adapters (Phase 7) against fake GitHub,
-GitLab, Bitbucket and Asana servers on localhost. No network, no real credentials.
-
-The scenarios encode the outcome rules, including the two lessons
-from the original Turbo's integration work: a 401/403 or 5xx on a
-READ is uncertain (state unknown), never denied or rejected; and a
-5xx during confirmation is uncertain, never rejected.
-"""
-
 import json
 import os
 import re
@@ -38,7 +29,6 @@ OTHER_HEAD = "b" * 40
 
 
 def outside_fences(markdown):
-    """Lines of markdown that render as text, not inside a ``` fence."""
     lines, fence = [], None
     for line in markdown.split("\n"):
         opener = re.match(r"^(`{3,})", line)
@@ -53,9 +43,6 @@ def outside_fences(markdown):
 
 
 def make_verified_home(tmp, adapter_fields=None):
-    """A state home with a fabricated local-verified run. The adapters
-    only read the run record + manifest; the core's chain checks are
-    covered by test_delivery.py."""
     home = os.path.join(tmp, "state")
     run = {
         "task_id": "demo-1",
@@ -501,9 +488,7 @@ class GitHubAdapterCase(AdapterCase):
         data, _ = self.github(home, {"readback_status": 500})
         self.assertEqual(data["outcome"], "uncertain")
 
-    def test_list_forbidden_is_uncertain_not_denied(self):
-        # The Turbo lesson: a 403 on a READ means the state is unknown,
-        # not that the delivery was denied.
+    def test_a_403_on_a_read_leaves_delivery_state_unknown_rather_than_denied(self):
         home = make_verified_home(self.tmp.name, {"github_repo": "o/r"})
         data, _ = self.github(home, {"list_status": 403})
         self.assertEqual(data["outcome"], "uncertain")
@@ -574,9 +559,6 @@ class AsanaAdapterCase(AdapterCase):
 
 
 class ForgeContract:
-    """The change-request contract shared by the GitLab and Bitbucket
-    adapters: the same scenarios, the same outcomes."""
-
     SCRIPT = None
     COMMAND = None
     TOKEN_ENV = None
@@ -806,9 +788,6 @@ class BitbucketAdapterCase(ForgeContract, AdapterCase):
 
 @unittest.skipIf(LOOPBACK_DENIED, CAGED)
 class EndToEndCase(unittest.TestCase):
-    """One real factory run, then each forge adapter against its fake
-    server, then `t12 deliver` recording the confirmed outcome."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.repo = os.path.join(self.tmp.name, "product")

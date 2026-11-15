@@ -1,5 +1,4 @@
 #!/bin/bash
-# turbo-12f in a container: same CLI, same arguments as bin/t12.
 # Paths are mounted at their host locations because run records and
 # git worktree links store absolute paths; a state home stays usable
 # from the host and from the container.

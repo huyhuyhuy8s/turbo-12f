@@ -1,10 +1,3 @@
-"""Tests for turbo-12f. Synthetic git repos only: no network, no model,
-no credentials. Each test builds a disposable product repo and drives
-the real CLI end to end, the way a host does: the tdd lane through
-`t12 act` tool calls (green and refactor with a patch built in a blind
-copy of the worktree), then `tdd-step`, `gate`, `review`, `check`.
-"""
-
 import fcntl
 import hashlib
 import json
@@ -37,11 +30,9 @@ class TestGreet(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 """
-# The line of the last assertion in TEST_FILE: where a proper red fails.
 TEST_LAST_LINE = 9
 
 TEST_COMMAND = ["python3", "-m", "unittest", "discover", "-s", "tests", "-q"]
-# Passes unless the code carries a TODO: a gate the tests alone do not cover.
 NO_TODO_GATE = ["python3", "-c", "import sys; sys.exit(int('TODO' in open('app.py').read()))"]
 
 
@@ -64,9 +55,6 @@ def task_dict(task_id="demo-1", gates=None):
 
 
 class TddFlow:
-    """The tdd lane as a host drives it. The class that mixes this in has
-    `t12(*args, expect=0)`, `tmp` (a TemporaryDirectory) and `home`."""
-
     flow_env = None
     acts = 0
     DEFAULT_ITEM = {"text": "greet returns a greeting for a name and for no name",
@@ -95,7 +83,6 @@ class TddFlow:
             fh.write(text)
 
     def act(self, role, session, output, expect=0, home=None, task_id="demo-1", patch=None):
-        """One worker output through `t12 act`: a dict (a tool call) or raw text."""
         TddFlow.acts += 1
         path = os.path.join(self.tmp.name, f"act-{task_id}-{role}-{TddFlow.acts}.json")
         with open(path, "w") as fh:
@@ -112,8 +99,6 @@ class TddFlow:
         return self.act(role, session or f"sess-{role}", {"tool": tool, "args": args}, **kw)
 
     def blind_patch(self, files, home=None, task_id="demo-1", keep_tests=False):
-        """The diff a blind worker makes: a copy of HEAD without any test file,
-        `files` changed in it ({path: text}, None deletes, ("symlink", target))."""
         wt = self.flow_worktree(home, task_id)
         scratch = tempfile.mkdtemp(dir=self.tmp.name)
         archive = subprocess.run(["git", "archive", "HEAD"], cwd=wt, check=True,
@@ -179,7 +164,6 @@ class TddFlow:
         self.red(**kw)
 
     def run_tdd(self, home=None, task_id="demo-1", app=APP_V2, files=None):
-        """analyzer, one cycle of red, green and refactor, the devil pass, tdd-step."""
         kw = {"home": home, "task_id": task_id}
         self.analyze(**kw)
         self.red(**kw)
@@ -216,16 +200,12 @@ class TddFlow:
         self.assertEqual(self.flow_phase(home, task_id), "review")
 
     def run_to_verified(self, home=None, task_id="demo-1"):
-        """The whole lane. Returns the candidate commit."""
         self.run_to_review(home, task_id)
         self.do_review(home, task_id)
         self.check(home, task_id)
         return self.flow_record(home, task_id)["candidate"]["commit"]
 
     def review_fix_cycle(self, finding_ids=("F1",), home=None, task_id="demo-1"):
-        """The reviewer asks for changes; the analyzer answers with directives,
-        the refactor makes a new commit, the devil pass ends the loop, and the
-        gates run on the new candidate."""
         kw = {"home": home, "task_id": task_id}
         self.do_review(home, task_id, verdict="changes-requested")
         self.analyze(items=[], directives=[f"{i}: tidy greet" for i in finding_ids] or ["tidy greet"],
@@ -320,7 +300,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assertIn("tdd: 1 cycles, 1/1 items done", text)
         self.assertIn("lint command: not configured", text)
         self.assertIn("final run: tests exit=0", text)
-        # Terminal success cannot be stopped.
         self.t12("stop", "--home", self.home, "--task-id", "demo-1",
                  "--reason", "too late", expect=1)
         self.assertEqual(self.phase(), "local-verified")
@@ -356,7 +335,6 @@ class CliCase(TddFlow, unittest.TestCase):
         result = self.t12("gate", "--home", home2, "--task-id", "two-gates",
                           "--name", "second", expect=1)
         self.assertIn("cannot run before gate 'first'", result.stderr)
-        # Without --name the next pending gate runs, each in order.
         self.t12("gate", "--home", home2, "--task-id", "two-gates")
         self.assertEqual(self.flow_phase(home2, "two-gates"), "gates")
         self.t12("gate", "--home", home2, "--task-id", "two-gates")
@@ -381,7 +359,6 @@ class CliCase(TddFlow, unittest.TestCase):
     def test_a_passing_test_cannot_be_red(self):
         self.analyze()
         passing = TEST_FILE.replace('"Hello, Ana!"', '"Hello!"').replace('"Hello, world!"', '"Hello!"')
-        # app.py still returns "Hello!", so a test expecting that passes.
         result = self.red(text=passing, expect=1)
         self.assertIn("tautology", result.stderr)
 
@@ -411,10 +388,7 @@ class CliCase(TddFlow, unittest.TestCase):
         result = self.red(text=source, line=6, expect=1)
         self.assertIn("assertion_pattern", result.stderr)
 
-    def test_a_setup_that_loads_code_not_written_yet_is_not_a_valid_red(self):
-        # Upstream's old flow accepted these. Here a red must fail at its
-        # named last assertion; code that does not exist yet is made to
-        # exist with a red stub (red_stub_max_lines), not excused.
+    def test_a_red_that_fails_in_setup_not_at_the_named_assertion_is_refused_and_asks_for_a_stub(self):
         self.analyze()
         for exc in ("FileNotFoundError('adapters/new.py')", "ImportError('no module new')"):
             source = (
@@ -449,12 +423,10 @@ class CliCase(TddFlow, unittest.TestCase):
         self.red(test_file="tests/unit/test_greet.py")
         self.assertEqual(self.run_record()["tdd"]["step"], "green")
 
-    def test_red_runs_on_the_commit_not_the_worktree(self):
+    def test_red_runs_on_the_commit_which_does_not_carry_an_ignored_package_that_the_worktree_has(self):
         self.analyze()
         with open(os.path.join(self.repo, ".git", "info", "exclude"), "a") as fh:
             fh.write("app/\n")
-        # An ignored package that shadows app.py would make the test pass in
-        # the worktree; the commit under test does not carry it.
         self.write_worktree("app/__init__.py", APP_V2)
         self.red()
         self.assertEqual(self.run_record()["tdd"]["step"], "green")
@@ -494,7 +466,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.t12("stop", "--home", self.home, "--task-id", "demo-1", "--reason", "abandoned")
         self.assertEqual(self.phase(), "stopped")
         self.assertEqual(self.status()["stop_reason"], "abandoned")
-        # A stopped run cannot move again.
         self.tdd_step(expect=1)
         self.green(expect=1)
 
@@ -564,9 +535,7 @@ class CliCase(TddFlow, unittest.TestCase):
         self.to_red_verified()
         self.t12("stop", "--home", self.home, "--task-id", "demo-1", "--reason", "bad approach")
         self.assertEqual(self.phase(), "stopped")
-        # Plain prepare refuses to overwrite.
         self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=1)
-        # Supersede archives the old run and starts fresh.
         self.t12("prepare", "--home", self.home, "--task", self.task_path, "--supersede")
         self.assertEqual(self.phase(), "ready")
         archived = [f for f in os.listdir(os.path.join(self.home, "runs"))
@@ -576,7 +545,6 @@ class CliCase(TddFlow, unittest.TestCase):
         with open(os.path.join(self.home, "runs", archived[0])) as fh:
             old = json.load(fh)
         self.assertEqual(old["phase"], "stopped")
-        # The fresh run starts at the analyzer, and can go all the way.
         self.assertEqual(self.status()["tdd"]["step"], "analyzer")
         self.run_to_verified()
         self.assertEqual(self.phase(), "local-verified")
@@ -637,7 +605,6 @@ class CliCase(TddFlow, unittest.TestCase):
         home2 = os.path.join(self.tmp.name, "home2")
         self.t12("init", "--home", home2, "--repo", self.repo)
         self.t12("prepare", "--home", home2, "--task", task_path)
-        # Simulate a failed probe by editing the recorded result.
         run_path = os.path.join(home2, "runs", "demo-rp.json")
         with open(run_path) as fh:
             run = json.load(fh)
@@ -713,8 +680,6 @@ class CliCase(TddFlow, unittest.TestCase):
         run["gates"][0]["observation"]["observation"]["exit_code"] = 1
         with open(os.path.join(self.home, "runs", "demo-1.json"), "w") as fh:
             json.dump(run, fh)
-        # Absorb the edit into the chain with a probe run, so only the
-        # exit-code check can catch it.
         self.t12("probe", "--home", self.home, "--task-id", "demo-1")
         result = self.check(expect=1)
         self.assertIn("observation failed or timed out", result.stderr)
@@ -736,7 +701,6 @@ class CliCase(TddFlow, unittest.TestCase):
         m = self.run_record()["measurements"]
         self.assertIsNotNone(m)
         self.assertGreater(m["wall_used_s"], 0)
-        # analyzer, red, green, devil pass, final, gate, review, check
         self.assertEqual(m["ops_used"], 8)
         self.assertEqual(m["repairs_used"], 0)
         self.assertEqual(m["gates"], 1)
@@ -771,7 +735,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assertEqual(saved["op_limit"], 20)
         self.assertEqual(saved["repair_cap"], 2)
         self.assertEqual(saved["calibrated_from"]["runs"], 3)
-        # A task without budgets now inherits the calibrated defaults.
         task = task_dict(task_id="r4")
         for key in ("time_limit_s", "op_limit", "repair_cap"):
             del task[key]
@@ -784,7 +747,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assertEqual(run["budgets"]["op_limit"], 20)
         self.assertEqual(run["budgets"]["repair_cap"], 2)
         self.assertEqual(run["budget_source"], "calibrated")
-        # A task with explicit budgets keeps them.
         task = task_dict(task_id="r5", gates=None)
         task["time_limit_s"] = 123
         task_path = os.path.join(self.tmp.name, "task-r5.json")
@@ -911,7 +873,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assertIsNone(context["last_error"])
         self.assertIsNone(context["findings"])
         self.assertEqual([t["name"] for t in context["tools"]], ["test_list_ready", "escalate"])
-        # A refusal reaches the analyzer as its last error.
         self.analyze(items=[], expect=1)
         _, context = self.context("analyzer")
         self.assertEqual(context["last_error"]["check"], "test-list")
@@ -1034,9 +995,6 @@ class CliCase(TddFlow, unittest.TestCase):
         return json.loads(result.stdout.rsplit("--- context (JSON) ---\n", 1)[1])
 
     def review_then_new_candidate(self, verification="re-ran the red test"):
-        """A first review by tool call, blocked with PRIOR_FINDINGS; the analyzer
-        answers each finding; a new candidate voids the review. Returns the
-        reviewed commit."""
         self.run_to_review()
         self.assertIsNone(self.reviewer_context()["prior_review"])
         self.call("reviewer", "review", {
@@ -1051,7 +1009,6 @@ class CliCase(TddFlow, unittest.TestCase):
         return reviewed
 
     def fake_reviewer(self, context):
-        """A stand-in reviewer model: marks each prior finding it is shown."""
         findings = (context["prior_review"] or {}).get("findings")
         findings = findings if isinstance(findings, list) else []
         marks = "; ".join(f"{f['id']}: {self.PRIOR_MARKS[f['id']]}" for f in findings)
@@ -1111,8 +1068,6 @@ class CliCase(TddFlow, unittest.TestCase):
 
     @staticmethod
     def holds(node, value):
-        """True when value appears anywhere in node (a command may be
-        given as its argv list or as one shell string)."""
         if node == value:
             return True
         if isinstance(node, dict):
@@ -1160,7 +1115,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assert_observed(context["tdd"]["final"], TEST_COMMAND, 0, final["commit"],
                              final["tests"]["sha256"], "final test run")
 
-        # The summary stays in evidence, byte-for-byte, for human auditors.
         with open(os.path.join(self.home, "runs", "demo-1.events.jsonl")) as fh:
             events = [json.loads(line) for line in fh if line.strip()]
         ref = next(e["detail"]["output"] for e in events
@@ -1186,14 +1140,11 @@ class CliCase(TddFlow, unittest.TestCase):
                              new["gates"][0]["observation"]["sha256"], "gate 'unit'")
         self.assertFalse(self.holds(context["gates"], old_commit), f"superseded commit passed: {context}")
         self.assertFalse(self.holds(context["tdd"]["final"], old_commit))
-        # Two runs of the same command can print byte-identical output in the
-        # same rounded duration; such evidence is the same content, not a leak.
         new_shas = {new["gates"][0]["observation"]["sha256"], new["tdd"]["final"]["tests"]["sha256"]}
         for sha in set(old_shas) - new_shas:
             self.assertNotIn(sha, json.dumps(context), "superseded evidence passed")
 
     def failing_gate_task(self, task_id, **fields):
-        """A run whose gate fails while the tests pass: a TODO left in the code."""
         home, path = self.prepare_custom(task_id, gates=[
             {"name": "no-todo", "command": NO_TODO_GATE}], **fields)
         self.t12("prepare", "--home", home, "--task", path)
@@ -1211,12 +1162,10 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assertEqual(record["tdd"]["findings"]["source"], "gate")
         self.assertEqual(record["gates"][0]["status"], "failed")
         self.assertIn("tdd-repair", self.event_types(home, "demo-gate"))
-        # The failure reaches green as sanitized findings, no test in sight.
         _, context = self.context("green", home=home, task_id="demo-gate")
         self.assertIsInstance(context["findings"], list)
         self.assertNotIn("test_greet", json.dumps(context))
         self.assertEqual(self.board(home)["demo-gate"]["next"], "green: green")
-        # Repair: green removes the TODO, the loop ends again, gates reset.
         self.green(files={"app.py": APP_V2}, home=home, task_id="demo-gate")
         self.refactor(home=home, task_id="demo-gate")
         self.tdd_step(home, "demo-gate")
@@ -1238,7 +1187,6 @@ class CliCase(TddFlow, unittest.TestCase):
         self.assertEqual(record["escalations"][-1]["kind"], "repair-cap")
         self.assertIn("repair-cap", self.event_types(home, "demo-cap"))
         self.assertNotEqual(record["phase"], "stopped")
-        # Resuming without raising the cap would be refused at every step.
         result = self.t12("resume", "--home", home, "--task-id", "demo-cap",
                           "--answer", "try again", expect=1)
         self.assertIn("--repair-cap", result.stderr)
@@ -1308,13 +1256,11 @@ class CliCase(TddFlow, unittest.TestCase):
         result = self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=1)
         self.assertIn("gate requires phase 'gates'", result.stderr)
 
-    def test_green_checks_the_commit_not_the_worktree(self):
+    def test_green_fails_when_the_commit_under_test_does_not_carry_an_ignored_module_the_worktree_has(self):
         self.analyze()
         self.red()
         with open(os.path.join(self.repo, ".git", "info", "exclude"), "a") as fh:
             fh.write("app_fix.py\n")
-        # The ignored module exists only in the worktree, so the commit
-        # under test cannot import it and the tests fail there.
         self.write_worktree("app_fix.py", APP_V2)
         result = self.green(files={"app.py": "from app_fix import greet\n"}, expect=1)
         self.assertIn("tests failed", result.stderr)
@@ -1519,7 +1465,6 @@ class CliCase(TddFlow, unittest.TestCase):
     def test_a_refused_red_costs_an_operation(self):
         self.analyze()
         self.red(line=3, expect=1)
-        # one for the accepted analyzer call, one for the red run
         self.assertEqual(self.run_record()["budgets"]["ops_used"], 2)
 
     def test_answer_without_an_open_question_is_refused(self):
@@ -2125,8 +2070,6 @@ class CliCase(TddFlow, unittest.TestCase):
 
 
 class DockerFlow(TddFlow, unittest.TestCase):
-    """A product repo and the commands that drive a docker-adapter run."""
-
     @property
     def flow_env(self):
         return self.docker_env
@@ -2190,10 +2133,6 @@ class DockerFlow(TddFlow, unittest.TestCase):
 
 
 class DockerCase(DockerFlow):
-    """Docker adapter end-to-end against the fake docker stub, for
-    machines without Docker. The stub emulates the daemon and stands
-    in for the container's confinement with a Landlock cage."""
-
     def setUp(self):
         super().setUp()
         bindir = os.path.join(self.tmp.name, "bin")
@@ -2289,8 +2228,6 @@ REAL_DOCKER_IMAGE = "python:3.12"
 @unittest.skipUnless(sandbox.docker_available() and sandbox.docker_image_present(REAL_DOCKER_IMAGE),
                      f"needs a Docker daemon and the {REAL_DOCKER_IMAGE} image")
 class RealDockerCase(DockerFlow):
-    """The docker adapter end to end against the real daemon."""
-
     def test_real_docker_end_to_end(self):
         wt = self.prepare_task("demo-real", image=REAL_DOCKER_IMAGE)
         self.run_docker_to_verified("demo-real")

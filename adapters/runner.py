@@ -52,7 +52,7 @@ through `t12-queue`, then takes each run's `next` from `t12 board --json`:
   529, overloaded) uses no attempt and does not mark the step as stuck. The
   row is queued again after an exponential, capped backoff, and the pool is one
   smaller for the rest of the invocation (never below one). A step refused
-  more than MAX_RATE_LIMIT_RETRIES times in a row is given up on.
+  more than MAX_CONSECUTIVE_RATE_LIMIT_RETRIES times in a row is given up on.
 
 The runner writes no state. The run records and event logs are the
 only state, so it can be killed at any point and started again
@@ -91,15 +91,12 @@ FORGES = {"github": ("create-pr", "GITHUB_TOKEN"),
           "gitlab": ("create-mr", "GITLAB_TOKEN"),
           "bitbucket": ("create-pr", "BITBUCKET_TOKEN")}
 DETERMINISTIC = ("tdd-step", "gate", "check")
-# The board's words for a lane's state (see `t12 board --json`): the run row while its lanes
-# are open, and the lane row that integrates a finished lane.
-LANES_IN_FLIGHT = "lanes: in flight"
-INTEGRATE = "tdd-step: integrate"
+BOARD_NEXT_LANES_IN_FLIGHT = "lanes: in flight"
+BOARD_NEXT_INTEGRATE_LANE = "tdd-step: integrate"
 LANE_CAP = 4
 BACKOFF_BASE_S = 30.0
 BACKOFF_MAX_S = 600.0
-# A step the provider refuses this many times in a row is given up on, like one that did not move.
-MAX_RATE_LIMIT_RETRIES = 6
+MAX_CONSECUTIVE_RATE_LIMIT_RETRIES = 6
 # Blind worktrees are made and removed under one lock: concurrent `git worktree add` and
 # `prune` in one repository race. The attempt report starts once however many lanes ask.
 WORKTREES = threading.Lock()
@@ -159,7 +156,7 @@ def steppable(row):
     """Whether a step can be taken for this row now. A run whose lanes are in flight, and
     a lane waiting for its `after` units, have no step of their own."""
     nxt = row["next"]
-    return not (nxt == LANES_IN_FLIGHT or row.get("waiting") or nxt.startswith("waiting: ")
+    return not (nxt == BOARD_NEXT_LANES_IN_FLIGHT or row.get("waiting") or nxt.startswith("waiting: ")
                 or row["busy"] or waiting_reason(row))
 
 
@@ -225,8 +222,6 @@ def parse_role_flag(entries, flag, allowed=None):
 
 
 def _roots(paths):
-    """Each protected root as itself and as everything under it, the way
-    `model.under` reads a protected path."""
     return [p for root in paths for p in (root, root.rstrip("/") + "/**")]
 
 
@@ -239,18 +234,10 @@ def _protected(ctx):
 
 
 def _blind_guard(ctx):
-    """The blind worktree has no test file; read_only also stops a role
-    from creating one, and confine keeps it inside its cwd (and out of
-    .git, the object store it shares with the run's worktree)."""
     return {"read_only": ctx.get("test_globs", []) + _protected(ctx),
             "bash": "deny", "confine": True}
 
 
-# Factors 2, 3 and 8: what an omp worker may use is set here by role kind, not
-# by the prompt. Nothing outside these lists (task, ask, eval, web_search) is
-# ever mounted. `guard` returns the policy adapters/omp/guard.ts enforces.
-# A role with a `patch_tool` is blind: it runs in a worktree without the
-# test files, and that call carries the patch it made.
 ROLE_POLICY = {
     "analyzer": {"tools": [], "max_turns": 4,
                  "guard": lambda ctx: {"writable": [], "bash": "deny"}},
@@ -263,8 +250,6 @@ ROLE_POLICY = {
     "review": {"tools": CHECKER_TOOLS, "max_turns": 30,
                "guard": lambda ctx: {"writable": []}},
 }
-# What a blind role's prompt leaves out of the context: where the tests are,
-# the real worktree they sit in, and the guard's own path lists.
 BLIND_HIDDEN_FIELDS = ("test_globs", "protected_paths", "worktree")
 OMP_PROMPT = os.path.join(os.path.dirname(BIN), "prompts", "omp-worker.md")
 OMP_GUARD = os.path.join(os.path.dirname(BIN), "adapters", "omp", "guard.ts")
@@ -410,7 +395,6 @@ def omp_worker_step(home, row, role, omp, scratch, attempt=None):
                 accepted.append(act.stdout.strip())
                 return True, accepted[-1], True
             error = act.stderr.strip()
-            # Nothing the model can fix: the run it works for is gone.
             return False, error, SUPERSEDED in error
 
         outcome = omp_rpc.run_worker(
@@ -554,7 +538,8 @@ class Scheduler:
                 if inflight and (row.get("unit") is None
                                  or any(r.get("unit") is None for r in inflight.values())):
                     continue
-                if row["next"] == INTEGRATE and any(r["next"] == INTEGRATE for r in inflight.values()):
+                if row["next"] == BOARD_NEXT_INTEGRATE_LANE and any(
+                        r["next"] == BOARD_NEXT_INTEGRATE_LANE for r in inflight.values()):
                     continue
                 tried.add(k)
                 inflight[pool.submit(step, self.home, row, self.scratch,
@@ -570,7 +555,7 @@ class Scheduler:
         if result.rate_limited:
             hits = self.rate_hits[k] = self.rate_hits.get(k, 0) + 1
             self.dropped += 1
-            if hits > MAX_RATE_LIMIT_RETRIES:
+            if hits > MAX_CONSECUTIVE_RATE_LIMIT_RETRIES:
                 self.stuck[k] = (f"{row['next']} was rate limited {hits} times: {result.line}")[:200]
                 return False
             delay = min(self.backoff_max, self.backoff_base * 2 ** (hits - 1))

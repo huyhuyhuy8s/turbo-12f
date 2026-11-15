@@ -38,6 +38,8 @@ _CLONE_NEWUSER = 0x10000000
 _CLONE_NEWPID = 0x20000000
 _PR_SET_PDEATHSIG = 1
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+_GIT_NO_HOOKS = ("-c", "core.hooksPath=/dev/null")
+_MIN_LANDLOCK_ABI = 5
 _XDG_DIRS = {
     "XDG_CONFIG_HOME": "config",
     "XDG_CACHE_HOME": "cache",
@@ -112,10 +114,9 @@ def commit(home, task_id, message):
     check_pointer(worktree, git_dir)
 
     def git(*args):
-        # hooksPath may be relative to the worktree, which the builder writes.
         return gitio.git_ok(
             worktree, f"--git-dir={git_dir}", f"--work-tree={worktree}",
-            "-c", "core.hooksPath=/dev/null", *args)
+            *_GIT_NO_HOOKS, *args)
 
     if git("symbolic-ref", "HEAD") != f"refs/heads/{run['branch']}":
         raise StateError(f"refusing: the worktree is not on {run['branch']!r}")
@@ -129,11 +130,6 @@ def commit(home, task_id, message):
 
 
 def _enter_namespaces():
-    """Move this process into a new user namespace, and make its next
-    child the first process of a new PID namespace. An unprivileged
-    process may create a PID namespace only together with a user
-    namespace. The user namespace maps the operator's uid and gid to
-    themselves, so it grants nothing outside itself."""
     uid, gid = os.getuid(), os.getgid()
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.unshare(_CLONE_NEWUSER | _CLONE_NEWPID) != 0:
@@ -161,16 +157,13 @@ def _exit_code(status):
 
 
 def _init(parent_alive, argv, **popen):
-    """Be the PID namespace's first process: start the command, reap
-    what is reparented here, and exit with the command's exit code.
-    Never returns. Any way this process ends kills the namespace."""
     code = 1
     try:
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL, 0, 0, 0) != 0:
             raise OSError(ctypes.get_errno(), "PR_SET_PDEATHSIG failed")
-        # End of file here means t12-cage died before the line above.
-        if os.read(parent_alive, 1):
+        parent_released_us = os.read(parent_alive, 1)
+        if parent_released_us:
             os.close(parent_alive)
             # A new session has no controlling terminal to push input into.
             command = subprocess.Popen(argv, start_new_session=True, **popen)
@@ -190,9 +183,6 @@ def _raise_exit(signum, _frame):
 
 
 def _run_contained(argv, **popen):
-    """Run argv as a child of a new PID namespace's first process and
-    return its exit code. Moves the calling process into a new user
-    namespace, so call it once, from a single-threaded process."""
     _enter_namespaces()
     parent_alive, alive = os.pipe()
     try:
@@ -206,8 +196,6 @@ def _run_contained(argv, **popen):
     os.write(alive, b"1")
     os.close(alive)
     status = None
-    # A stop signal before these handlers are set kills this process,
-    # and the kernel then kills the namespace.
     previous = {sig: signal.signal(sig, _raise_exit) for sig in _STOP_SIGNALS}
     try:
         status = os.waitpid(init, 0)[1]
@@ -226,11 +214,10 @@ def run(home, task_id, argv, read=(), write=(), network=False):
     """Run argv in the cage and return its exit code. Raises before
     the command starts when no cage can be applied. When it returns,
     no process argv started is alive. Call it once per process."""
-    # The cage's ruleset names an access right that ABI 5 added.
-    if not sandbox.landlock_available() or sandbox.landlock_abi() < 5:
+    if not sandbox.landlock_available() or sandbox.landlock_abi() < _MIN_LANDLOCK_ABI:
         raise StateError(
             "refusing to start: no cage can be applied on this host "
-            "(needs Linux Landlock, ABI 5 or later)")
+            f"(needs Linux Landlock, ABI {_MIN_LANDLOCK_ABI} or later)")
     run_record, common_dir = _load(home, task_id)
     worktree = os.path.realpath(run_record["worktree"])
     common_dir = os.path.realpath(common_dir)

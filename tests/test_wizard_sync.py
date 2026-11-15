@@ -1,13 +1,3 @@
-"""Tests for bin/t12-wizard `sync`. A fake `git` logs every call (cwd, argv)
-in a temporary workspace; no network, socket, or real home directory.
-
-Contract: factory clone is <work>/factory, product clone is <work>/product,
-trunk branch is t12-trunk. `sync` runs `git pull ...` in both clones; with
-rules_branch "local" it also runs `git rebase ... main` in the product clone;
-on a rebase conflict it runs `git rebase --abort`, checks out main last, exits
-non-zero and says the product changed under the profile.
-"""
-
 import json
 import os
 import shutil

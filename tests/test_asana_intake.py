@@ -1,13 +1,3 @@
-"""gh-48: the Asana tasks intake adapter (`adapters/asana-tasks.py`).
-
-No socket is opened: `common.request` is replaced by a fake Asana that
-answers from memory. Decisions this test assumes (from the issue's
-answers): the approval marker is a tag (`--tag` / `intake.tag`), the
-project is `--project` / `intake.project`, the task id is `as-<gid>`,
-the source ref is `<project>#<gid>`, and each sub-task is its own
-queued task, and a tagged parent with open sub-tasks is refused.
-"""
-
 import ast
 import contextlib
 import importlib.util
@@ -45,9 +35,6 @@ def atask(gid, name="Fix greet", html=HTML, tags=("factory",), completed=False, 
 
 
 class FakeAsana:
-    """Answers the Asana API shapes the adapters use. Lists are paged
-    by `offset` tokens (`next_page.offset`), never by page number."""
-
     def __init__(self, tasks=(), subtasks=None, fail_offset=None, status=None):
         self.tasks = list(tasks)
         self.subtasks = subtasks or {}
@@ -111,7 +98,6 @@ class AsanaCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.out = os.path.join(self.tmp.name, "queue")
         self.home = os.path.join(self.tmp.name, "state")
-        # Loaded after the patch, whichever way the module imports `request`.
         self.module = self.load("asana-tasks.py", "asana_tasks_under_test")
 
     def load(self, filename, name):

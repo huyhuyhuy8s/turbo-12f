@@ -1,14 +1,3 @@
-"""Tests for bin/t12-cage: the builder's cage (issue #4).
-
-A builder runs inside the cage. It can write its worktree, but not the
-shared product `.git` (where a hook, filter, replace ref, or attributes
-line would run code in the orchestrator's later git calls) and not the
-state home (where a .pth file in the verify home would run code in the
-next verification). Its edits reach the run's branch through
-`t12-cage commit`, run outside the cage, which refuses a worktree whose
-`.git` pointer no longer matches what `prepare` created.
-"""
-
 import json
 import os
 import subprocess
@@ -21,10 +10,7 @@ from tests.test_t12 import APP_V1, BIN, ROOT, task_dict
 
 CAGE = os.path.join(ROOT, "bin", "t12-cage")
 
-# Each vector is (name, path, mode, payload). Run inside the cage; it
-# reports which writes landed. It never fails on a denial: denial is
-# the expected outcome and the test reads the report.
-PLANT = r"""
+PLANT_EXPECTING_DENIAL = r"""
 import json, sys
 vectors = json.loads(sys.argv[1])
 report = {}
@@ -40,9 +26,6 @@ print(json.dumps(report))
 
 
 class CageCase(unittest.TestCase):
-    """A disposable product repo with one prepared run, demo-1. Not a
-    CliCase subclass: that would inherit and rerun all of its tests."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -110,8 +93,6 @@ class TamperingVectorTest(CageCase):
     def test_each_vector_is_denied_and_worktree_write_succeeds(self):
         git_dir = self.git_dir()
         verify_home = os.path.join(self.home, "verify-home", "demo-1")
-        # Parent dirs exist before the cage starts, so a denial can only
-        # come from the cage, not from a missing directory.
         for d in (
             os.path.join(git_dir, "hooks"),
             os.path.join(git_dir, "refs", "replace"),
@@ -139,7 +120,7 @@ class TamperingVectorTest(CageCase):
         ]
         result = self.cage(
             "--home", self.home, "--task-id", "demo-1", "--",
-            "python3", "-c", PLANT, json.dumps(vectors),
+            "python3", "-c", PLANT_EXPECTING_DENIAL, json.dumps(vectors),
         )
         report = json.loads(result.stdout.strip().splitlines()[-1])
 
@@ -149,7 +130,6 @@ class TamperingVectorTest(CageCase):
                             f"{name} was not denied: {report[name]}")
         self.assertEqual(report["worktree-file"], "written")
 
-        # The filesystem agrees with the report.
         self.assertFalse(os.path.exists(os.path.join(git_dir, "hooks", "pre-commit")))
         with open(os.path.join(git_dir, "config")) as fh:
             self.assertEqual(fh.read(), config_before)
@@ -194,7 +174,6 @@ class CageCommitTest(CageCase):
                          "BUILDER_EDIT = True")
 
     def test_commit_refuses_a_changed_git_pointer(self):
-        # A decoy repo the builder could redirect the worktree into.
         decoy = os.path.join(self.tmp.name, "decoy")
         os.makedirs(decoy)
         self._git(decoy, "init", "-b", "main")

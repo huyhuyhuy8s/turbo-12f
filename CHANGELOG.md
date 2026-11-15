@@ -6,6 +6,17 @@ The CLI version is `VERSION` in `t12/cli.py`. Versions follow
 bumps the minor number. Questions go to huy.leminh@gradion.com, security
 reports as [`SECURITY.md`](SECURITY.md) describes.
 
+## Unreleased
+
+### Changed
+
+- Comments and docstrings that restated the code are removed. Public
+  docstrings and comments about constraints we cannot change stay. The
+  prose they replaced now lives in names: `LOCK_WAIT_S` is
+  `LOCK_BUSY_TIMEOUT_S`, and the repair sources, lane failure rates and
+  container environment are named constants or helpers. No behavior
+  change.
+
 ## 0.2.0 (2026-11-15)
 
 ### Breaking

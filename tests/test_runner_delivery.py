@@ -1,14 +1,3 @@
-"""The runner delivers local-verified runs to the forge the profile names.
-
-No network and no sockets. The test copies the factory (t12/, bin/,
-adapters/) into a temp dir and overwrites the github, gitlab and
-bitbucket adapters there with fakes that take the real adapters'
-subcommands and write a report. A fake `git` first on PATH records
-`git push` and never contacts a remote; every other git call goes to
-the real git. tests/fake_omp.py stands in for omp and tests/fake_model.py
-(its FAKE_OMP_DELEGATE) plays the roles, as in test_runner.py.
-"""
-
 import json
 import os
 import shutil
@@ -216,12 +205,10 @@ class RunnerDeliveryCase(unittest.TestCase):
                          [("gitlab", "confirmed")])
         self.assertEqual(run["deliveries"][0]["head"], run["candidate"]["commit"])
         self.assertIn("https://gitlab.example.invalid/demo-1/pull/1", out)
-        # A restart finds the confirmed delivery and does nothing more.
         self.drive()
         self.assertEqual(len(self.jsonl(self.push_log)), 1)
         self.assertEqual(len(self.jsonl(self.adapter_log)), 1)
         self.assertEqual(len(self.run_record()["deliveries"]), 1)
-        # Only ever a create call: no merge, approve or close.
         for call in self.jsonl(self.adapter_log):
             self.assertTrue(call["argv"][0].startswith("create-"), call)
 

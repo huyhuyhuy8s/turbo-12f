@@ -728,7 +728,7 @@ writer:
   for item B refuses because HEAD is not the last good commit after
   item A's green;
 - one run lock, held while `test_command` runs, so a second command
-  waits up to `LOCK_WAIT_S` (2 s) and then fails as busy;
+  waits up to `LOCK_BUSY_TIMEOUT_S` (2 s) and then fails as busy;
 - one op budget that every agent draws from, so the bill has no
   per-agent bound.
 
@@ -815,7 +815,7 @@ then integration, then run. No command takes them in reverse.
 Before this phase `t12/cli.py` `main` took the run lock around every
 command with a task id, so a lane command would have held it while
 its tests ran and every other lane would have failed as busy after
-`LOCK_WAIT_S`. `main` now sends lane commands to their lane lock and
+`LOCK_BUSY_TIMEOUT_S`. `main` now sends lane commands to their lane lock and
 the integration green to the integration lock; the run lock is taken
 inside, around the event append and the lane-table write. Readers
 never lock lane files: the store writes them atomically, so a reader

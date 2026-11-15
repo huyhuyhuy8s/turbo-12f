@@ -1,11 +1,3 @@
-"""Property tests for the run state machine (Phase 2 hardening).
-
-The transition matrix here is written out independently of
-``t12.model.TRANSITIONS`` — it is the spec, not a copy of the code.
-If the implementation ever allows a transition this matrix forbids,
-or forbids one it allows, these tests fail.
-"""
-
 import copy
 import json
 import os
@@ -17,14 +9,10 @@ import unittest
 from t12 import model, profile, store
 from t12.errors import BudgetError, StateError
 
-# The spec: allowed targets per phase. A transition to the phase
-# itself is always a no-op and is allowed on top of this matrix.
 EXPECTED = {
     "unadmitted": {"ready"},
     "ready": {"tdd", "paused", "stopped"},
     "tdd": {"gates", "paused", "stopped"},
-    # gates -> tdd is a gate failure (repair); review -> tdd is a
-    # changes-requested review (review-fix).
     "gates": {"tdd", "review", "paused", "stopped"},
     "review": {"tdd", "local-verified", "paused", "stopped"},
     "local-verified": set(),
@@ -81,7 +69,6 @@ class TransitionMatrixTest(unittest.TestCase):
                 else:
                     with self.assertRaises(StateError, msg=f"{phase} -> {target}"):
                         model.transition(run, target)
-                    # A refused transition must not mutate the run.
                     self.assertEqual(run, before, f"{phase} -> {target} mutated state")
 
     def test_every_phase_appears_in_transitions(self):
@@ -282,14 +269,14 @@ class LaneStateTest(unittest.TestCase):
 
     def test_a_held_lane_lock_fails_as_busy(self):
         model.save_lane(self.home, model.new_lane(self.home, self.run, SPEC, "active"), "demo-1")
-        original, model.LOCK_WAIT_S = model.LOCK_WAIT_S, 0.1
+        original, model.LOCK_BUSY_TIMEOUT_S = model.LOCK_BUSY_TIMEOUT_S, 0.1
         try:
             with model.lane_lock(self.home, "demo-1", "U1"):
                 with self.assertRaisesRegex(StateError, "busy"):
                     with model.lane_lock(self.home, "demo-1", "U1"):
                         pass
         finally:
-            model.LOCK_WAIT_S = original
+            model.LOCK_BUSY_TIMEOUT_S = original
 
     def test_a_lane_lock_needs_a_lane(self):
         with self.assertRaises(StateError):

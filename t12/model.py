@@ -33,20 +33,23 @@ PHASES = (
     "stopped",
 )
 
-# Allowed transitions. "gates -> tdd" is a gate failure: the run goes
-# back to green with the failing output as findings. "review -> tdd" is
-# changes-requested: back to the analyzer with the review findings. Both
-# are repairs and count against the repair cap; a candidate is only
-# pinned again by the final step of the tdd loop (tdd -> gates).
-TRANSITIONS = {
+REPAIR_FROM_GATE_FAILURE = "gate"
+REPAIR_FROM_CHANGES_REQUESTED = "review"
+REPAIR_SOURCE_PHASE = {REPAIR_FROM_GATE_FAILURE: "gates", REPAIR_FROM_CHANGES_REQUESTED: "review"}
+
+_FORWARD_TRANSITIONS = {
     "unadmitted": {"ready"},
     "ready": {"tdd", "paused", "stopped"},
     "tdd": {"gates", "paused", "stopped"},
-    "gates": {"tdd", "review", "paused", "stopped"},
-    "review": {"tdd", "local-verified", "paused", "stopped"},
+    "gates": {"review", "paused", "stopped"},
+    "review": {"local-verified", "paused", "stopped"},
     "local-verified": set(),
     "paused": {"ready", "tdd", "gates", "review", "stopped"},
     "stopped": set(),
+}
+TRANSITIONS = {
+    phase: targets | ({"tdd"} if phase in REPAIR_SOURCE_PHASE.values() else set())
+    for phase, targets in _FORWARD_TRANSITIONS.items()
 }
 
 INTEGRATION_GREEN = "integration-green"
@@ -54,8 +57,8 @@ TDD_STEPS = ("analyzer", "lanes", "red", "green", "refactor", INTEGRATION_GREEN,
 LANE_STATUSES = ("waiting", "active", "done", "paused", "merged")
 TDD_MODES = ("initial", "repair", "review-fix")
 ATTEMPT_STEPS = ("analyzer", "red", "green", "refactor")
-# Where a repair re-enters the loop, by what sent the run back.
-REPAIR_ENTRY = {"gate": ("green", "repair"), "review": ("analyzer", "review-fix")}
+REPAIR_ENTRY = {REPAIR_FROM_GATE_FAILURE: ("green", "repair"),
+                REPAIR_FROM_CHANGES_REQUESTED: ("analyzer", "review-fix")}
 
 
 def run_path(home, task_id):
@@ -66,9 +69,7 @@ def events_path(home, task_id):
     return os.path.join(home, "runs", f"{task_id}.events.jsonl")
 
 
-# Long enough to outlast `board` probing the lock, short enough that a
-# command queued behind a running gate still fails fast.
-LOCK_WAIT_S = 2.0
+LOCK_BUSY_TIMEOUT_S = 2.0
 
 
 def lock_path(home, task_id):
@@ -105,7 +106,6 @@ def _check_id(kind, value):
 
 
 def _probe(path):
-    """True while another process holds the flock on `path`."""
     try:
         fd = os.open(path, os.O_RDWR)
     except FileNotFoundError:
@@ -121,11 +121,8 @@ def _probe(path):
 
 @contextlib.contextmanager
 def _flock(path, busy):
-    """Hold an exclusive flock on `path`, waiting up to LOCK_WAIT_S. The
-    kernel releases it when the process exits, so a crashed command never
-    leaves it held."""
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    deadline = time.monotonic() + LOCK_WAIT_S
+    deadline = time.monotonic() + LOCK_BUSY_TIMEOUT_S
     try:
         while True:
             try:
@@ -242,9 +239,6 @@ def check_session(run, role, session):
 def bind_session(run, role, session):
     check_session(run, role, session)
     run.setdefault("roles", {})[role] = {"session": session, "at": time.time()}
-    # roles keeps the latest session per role; the history keeps every
-    # one, so a re-run under a new session does not free the old one to
-    # take another role.
     run.setdefault("bindings", []).append({"role": role, "session": session})
 
 
@@ -455,10 +449,6 @@ DEFAULT_MAX_LANES = 3
 
 
 def _loop(settings, base_commit):
-    """A tdd loop at its start: the position, the test list, the frozen
-    settings, and what to roll back to. `last_good_commit` is `base_commit`
-    until the first accepted step. A serial run's record and a lane's share
-    this shape."""
     return {
         "step": "analyzer",
         "mode": "initial",
@@ -502,8 +492,6 @@ def new_tdd(profile, task, base_commit=None, max_lanes=DEFAULT_MAX_LANES):
     }
     tdd = _loop(settings, base_commit)
     tdd["max_lanes"] = _setting("max_lanes", max_lanes, task, profile)
-    # Merge attempts of the run's lanes, and the ones that failed with the
-    # route each took; limits and retro read both.
     tdd["integrations"] = 0
     tdd["integration_failures"] = []
     return tdd
@@ -655,9 +643,6 @@ SOURCE_URL_RE = re.compile(r"https?://\S+")
 
 
 def _source(task):
-    """Where the task came from, as an intake adapter wrote it. Kept to
-    one line per field so a delivery adapter can quote it in a change
-    request without escaping."""
     source = task.get("source")
     if source is None:
         return None

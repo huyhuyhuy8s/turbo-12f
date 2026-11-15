@@ -1,7 +1,3 @@
-"""Tests for limits (Phase 5): percentile math, calibration from
-completed runs, censoring, limits.json round-trip, and reporting.
-"""
-
 import json
 import os
 import tempfile
@@ -184,7 +180,6 @@ class CollectTest(unittest.TestCase):
         self.assertEqual([r["task_id"] for r in data["completed"]], ["recovered"])
 
     def test_a_stop_reason_of_repair_cap_no_longer_censors(self):
-        # Nothing stops on the repair cap any more: it pauses.
         self._write("old.json", _record("old", "stopped", stop_reason="repair-cap"))
         self.assertEqual(limits.collect(self.home)["censored"], [])
 
@@ -246,8 +241,6 @@ class LimitsFileTest(unittest.TestCase):
 
 
 class IntegrationRateTest(unittest.TestCase):
-    """Step 6: merge failures per project, the calibrated max_lanes, and retro."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.home = self.tmp.name

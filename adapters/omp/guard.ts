@@ -1,10 +1,6 @@
 /**
  * omp extension: tool-call guard for turbo-12f workers.
  *
- * Serves 12-factor 3 (the factory owns the tool surface: what a worker may touch is policy, not
- * prompt text), 8 (the stop/refuse decision lives in code the factory controls) and 9 (a refusal
- * comes back to the model as a short in-session error that says what to do instead).
- *
  * Load with `omp -e adapters/omp/guard.ts`. The policy is a JSON file named by $T12_GUARD_POLICY
  * (unset: allow everything). Blocking happens before the tool runs via the `tool_call` hook.
  *
@@ -74,12 +70,10 @@ function normalize(policy: GuardPolicy): Policy {
 	};
 }
 
-// ---------------------------------------------------------------------------------- globs
 
 const regexCache = new Map<string, RegExp>();
 
-/** Line-for-line port of `_glob_regex` in adapters/workspace.py. */
-function globToRegExp(glob: string): RegExp {
+function globRegex(glob: string): RegExp {
 	const cached = regexCache.get(glob);
 	if (cached) return cached;
 	let re = "";
@@ -114,12 +108,11 @@ function globToRegExp(glob: string): RegExp {
 
 function matchesAny(globs: string[], rels: string[]): boolean {
 	return globs.some(g => {
-		const re = globToRegExp(g);
+		const re = globRegex(g);
 		return rels.some(r => re.test(r));
 	});
 }
 
-// ---------------------------------------------------------------------------------- paths
 
 function realish(p: string): string {
 	const rest: string[] = [];
@@ -144,7 +137,6 @@ function inside(root: string, target: string): string | null {
 }
 
 interface Target {
-	/** repo-relative POSIX paths (lexical and symlink-resolved) that lie inside cwd */
 	rels: string[];
 	escapes: boolean;
 }
@@ -159,7 +151,6 @@ function locate(raw: string, cwd: string): Target {
 	return { rels, escapes: lexical === null || real === null };
 }
 
-/** `[path#TAG]` wrapper and `file://` prefix removed. */
 function clean(raw: string): string {
 	const m = /^\[(.+)#[0-9A-Fa-f]{4}\]$/.exec(raw.trim());
 	const s = m ? m[1] : raw.trim();
@@ -171,17 +162,11 @@ function scheme(p: string): string | null {
 	return m ? m[1].toLowerCase() : null;
 }
 
-/** Entries of a path argument: semicolon / newline lists (grep, glob, ast_grep, read recovery). */
 function pieces(raw: string): string[] {
 	return raw.split(/[;\n]/).map(clean).filter(p => p !== "");
 }
 
-/**
- * Every string that might name a hidden file inside one path argument: the piece itself, each
- * `:`-separated segment (selectors, archive members, sqlite tables), and whitespace/comma tokens
- * (delimited-list recovery). Over-matching only ever blocks more.
- */
-function hiddenCandidates(piece: string): string[] {
+function possibleFileNames(piece: string): string[] {
 	const out = new Set([piece]);
 	for (const seg of piece.split(":")) out.add(seg);
 	for (const tok of piece.split(/[\s,]+/)) if (tok) out.add(tok);
@@ -190,7 +175,7 @@ function hiddenCandidates(piece: string): string[] {
 
 function checkHidden(policy: Policy, piece: string, cwd: string, verb: string): Decision {
 	if (policy.hidden.length === 0) return ALLOW;
-	for (const cand of hiddenCandidates(piece)) {
+	for (const cand of possibleFileNames(piece)) {
 		if (scheme(cand)) continue;
 		if (matchesAny(policy.hidden, locate(cand, cwd).rels)) {
 			return block(`${piece} is hidden from this task; ${verb} a different path or finish with what you can see`);
@@ -203,13 +188,12 @@ function checkRead(policy: Policy, raw: string, cwd: string): Decision {
 	for (const piece of pieces(raw)) {
 		const d = checkHidden(policy, piece, cwd, "read");
 		if (d.block) return d;
-		const c = checkConfine(policy, piece, cwd, true);
+		const c = checkConfined(policy, piece, cwd, true);
 		if (c.block) return c;
 	}
 	return ALLOW;
 }
 
-/** Absolute path allowed by `allow_read` (dir root or glob), both lexically and after symlink resolution. */
 function readAllowed(policy: Policy, file: string, cwd: string): boolean {
 	if (policy.allowRead.length === 0 || !isAbsolute(file)) return false;
 	const abs = resolve(cwd, file);
@@ -220,20 +204,15 @@ function readAllowed(policy: Policy, file: string, cwd: string): boolean {
 	});
 }
 
-/**
- * `confine`: the blind worktree shares the repo's object store, so anything outside cwd or under a
- * `.git` segment (literal, or a glob segment that could match one) is off limits. `skill://` and
- * `allow_read` locations are readable (`reading` only); writes never get that exemption.
- */
-function checkConfine(policy: Policy, piece: string, cwd: string, reading = false): Decision {
+function checkConfined(policy: Policy, piece: string, cwd: string, reading = false): Decision {
 	if (!policy.confine || scheme(piece)) return ALLOW;
 	const why = `${piece} is outside the project or inside .git; use paths inside the working directory`;
 	const first = piece.split(":")[0];
 	if (locate(first, cwd).escapes && !(reading && readAllowed(policy, first, cwd))) return block(why);
-	for (const cand of hiddenCandidates(piece)) {
+	for (const cand of possibleFileNames(piece)) {
 		if (scheme(cand)) continue;
 		if (locate(cand, cwd).rels.some(r => r.split("/").includes(".git"))) return block(why);
-		if (cand.split("/").some(seg => GLOB_CHARS.test(seg) && !/^\*+$/.test(seg) && globToRegExp(seg).test(".git"))) {
+		if (cand.split("/").some(seg => GLOB_CHARS.test(seg) && !/^\*+$/.test(seg) && globRegex(seg).test(".git"))) {
 			return block(why);
 		}
 	}
@@ -251,7 +230,7 @@ function mayExpand(piece: string, cwd: string): boolean {
 
 function checkWrite(policy: Policy, raw: string, cwd: string): Decision {
 	for (const piece of pieces(raw)) {
-		const confined = checkConfine(policy, piece, cwd);
+		const confined = checkConfined(policy, piece, cwd);
 		if (confined.block) return confined;
 		const sch = scheme(piece);
 		if (sch) {
@@ -260,7 +239,6 @@ function checkWrite(policy: Policy, raw: string, cwd: string): Decision {
 		}
 		const hidden = checkHidden(policy, piece, cwd, "write");
 		if (hidden.block) return hidden;
-		// archive member / sqlite row selectors: the file actually written is the first segment
 		const file = piece.split(":")[0];
 		const t = locate(file, cwd);
 		if (t.escapes) return block(`${file} is outside the working directory; write only inside it`);
@@ -274,11 +252,10 @@ function checkWrite(policy: Policy, raw: string, cwd: string): Decision {
 	return ALLOW;
 }
 
-/** Writes to a set of paths that may be globs or directories: provable only when nothing is restricted. */
-function checkWriteExpanding(policy: Policy, raw: string, cwd: string): Decision {
+function checkWriteGlobOrDirectory(policy: Policy, raw: string, cwd: string): Decision {
 	const restricted = policy.hidden.length > 0 || policy.readOnly.length > 0 || policy.writable !== null;
 	for (const piece of pieces(raw)) {
-		const confined = checkConfine(policy, piece, cwd);
+		const confined = checkConfined(policy, piece, cwd);
 		if (confined.block) return confined;
 		if (!scheme(piece) && mayExpand(piece, cwd)) {
 			if (restricted) {
@@ -295,7 +272,6 @@ function checkWriteExpanding(policy: Policy, raw: string, cwd: string): Decision
 	return ALLOW;
 }
 
-// ---------------------------------------------------------------------------------- tools
 
 function bashDecision(policy: Policy, command: unknown): Decision {
 	if (policy.bash === "allow") return ALLOW;
@@ -304,7 +280,6 @@ function bashDecision(policy: Policy, command: unknown): Decision {
 	return block(`this exact command is not allowed; permitted commands: ${policy.bash.map(c => JSON.stringify(c)).join(", ") || "none"}`);
 }
 
-/** Paths an edit call targets, across hashline, replace, patch, apply_patch and sloppy modes. */
 function editTargets(input: Record<string, unknown>): string[] {
 	const out: string[] = [];
 	if (typeof input.path === "string") out.push(input.path);
@@ -340,7 +315,6 @@ function decideLsp(policy: Policy, input: Record<string, unknown>, cwd: string):
 	}
 	if (!mutating) return ALLOW;
 	if (policy.hidden.length > 0 || policy.readOnly.length > 0 || policy.writable !== null) {
-		// refactors and arbitrary LSP requests can touch files other than `file`
 		return block(`lsp ${action} can modify files beyond ${file || "its target"}; use edit on explicit files`);
 	}
 	if (action === "rename_file" && typeof input.new_name === "string") return checkWrite(policy, input.new_name, cwd);
@@ -426,7 +400,7 @@ function decideNormalized(policy: Policy, tool: string, input: Record<string, un
 				return restricted ? block("ast_edit needs explicit paths") : ALLOW;
 			}
 			for (const p of paths) {
-				const d = checkWriteExpanding(policy, p, cwd);
+				const d = checkWriteGlobOrDirectory(policy, p, cwd);
 				if (d.block) return d;
 			}
 			return ALLOW;
@@ -454,7 +428,6 @@ function decideNormalized(policy: Policy, tool: string, input: Record<string, un
 	}
 }
 
-// ---------------------------------------------------------------------------------- extension
 
 interface GuardEvent {
 	toolName: string;

@@ -31,7 +31,6 @@ import tempfile
 from . import evidence, store
 from .errors import RunnerError, StateError
 
-# ---------------------------------------------------------------- flags
 
 FORBIDDEN_BYPASS_FLAGS = frozenset({
     "--dangerously-skip-permissions",
@@ -52,8 +51,6 @@ def check_command(argv):
                     f"permission bypass flag {token!r} is forbidden by factory policy"
                 )
 
-
-# ---------------------------------------------------------------- env
 
 FORBIDDEN_ENV_EXACT = frozenset({
     "ASANA_ACCESS_TOKEN", "ASANA_PAT", "ASANA_TOKEN",
@@ -86,8 +83,6 @@ def is_forbidden_env_key(key):
     return upper in FORBIDDEN_ENV_EXACT or any(p.search(upper) for p in FORBIDDEN_ENV_PATTERNS)
 
 
-# ---------------------------------------------------------------- verify-home
-
 def verification_env(home, task_id):
     """Empty home for verification commands: no credential stores, no
     global git config, temp files inside the state home. The XDG
@@ -105,8 +100,6 @@ def verification_env(home, task_id):
     return env
 
 
-# ---------------------------------------------------------------- Landlock
-
 _LANDLOCK_CREATE_RULESET = 444
 _LANDLOCK_ADD_RULE = 445
 _LANDLOCK_RESTRICT_SELF = 446
@@ -122,7 +115,7 @@ _FS_RESOLVE_UNIX = 1 << 16  # connect to a pathname unix socket; ABI >= 9
 _FS_RO_DIR = _FS_EXECUTE | _FS_READ_FILE | _FS_READ_DIR
 _FS_RO_FILE = _FS_EXECUTE | _FS_READ_FILE
 _FS_RW_FILE = _FS_EXECUTE | _FS_WRITE_FILE | _FS_READ_FILE
-_NET_TCP = 3  # bind + connect
+_NET_TCP = 3
 _SCOPE_ALL = 3  # abstract unix sockets + signals leaving the cage; ABI >= 6
 
 _SYSTEM_RO_DIRS = (
@@ -160,8 +153,6 @@ def detect_adapter():
         return "sandbox-exec"
     return "none"
 
-
-# ---------------------------------------------------------------- Docker
 
 DEFAULT_DOCKER_IMAGE = "python:3.12-slim"
 
@@ -333,8 +324,6 @@ def _landlock_preexec(writable, read_only, handled_fs, handled_net, scoped):
     return _preexec
 
 
-# ---------------------------------------------------------------- probes
-
 REQUIRED_SAFETY_PROBES = ("forbidden_credential_access", "external_effect_restriction")
 
 _CREDENTIAL_PROBE = """
@@ -398,12 +387,12 @@ _HOST_SOCKETS = (
 )
 
 
-def probe_commands(sentinel_path, outside_path, sockets=()):
+def probe_commands(sentinel_path, outside_cage_target, sockets=()):
     return [
         ("forbidden_credential_access",
          ["python3", "-c", _CREDENTIAL_PROBE, sentinel_path]),
         ("external_effect_restriction",
-         ["python3", "-c", _EXTERNAL_PROBE, outside_path, *sockets]),
+         ["python3", "-c", _EXTERNAL_PROBE, outside_cage_target, *sockets]),
     ]
 
 
@@ -427,12 +416,7 @@ def run_probes(home, run, execute):
     venv = verification_env(home, run["task_id"])
     sentinel = os.path.join(home, "probe-sentinel.txt")
     store.atomic_write(sentinel, b"t12-probe-sentinel\n")
-    # The outside-write target must be outside every cage: the state
-    # home root is not a Landlock-writable path and is not mounted
-    # into a Docker container, while /tmp is the container's own
-    # ephemeral /tmp under Docker (writable, and therefore not a
-    # test of confinement at all).
-    outside = os.path.join(home, "probe-outside.txt")
+    outside_cage_target = os.path.join(home, "probe-outside.txt")
     # Sockets the probe must not reach: the host's well-known ones, a
     # pathname one listening outside the cage (the state home's path
     # can be past the 108-byte socket limit, so a fresh temp dir), and
@@ -450,7 +434,7 @@ def run_probes(home, run, execute):
     os.environ["T12_PROBE_SECRET"] = "canary"
     try:
         results = []
-        for name, argv in probe_commands(sentinel, outside, sockets):
+        for name, argv in probe_commands(sentinel, outside_cage_target, sockets):
             obs = execute(argv, cwd=worktree, timeout_s=15, env=venv,
                           sandbox=sandbox_ctx)
             detail = ""

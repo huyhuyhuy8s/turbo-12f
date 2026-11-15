@@ -15,7 +15,7 @@ WORKSPACE = "t12-workspace.json"
 TRUNK = "t12-trunk"
 LABEL = "factory"
 DEFAULT_FACTORY = "https://github.com/huyle-gradion/turbo-12f"
-FIELDS = (  # (key, flag, prompt)
+FIELDS = (
     ("product_repo", "--product-repo", "Product repo URL"),
     ("work_dir", "--work-dir", "Work folder"),
     ("commit_name", "--commit-name", "Commit name"),

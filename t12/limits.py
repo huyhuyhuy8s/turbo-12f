@@ -98,9 +98,6 @@ def save_limits(home, recommendation, max_lanes=None):
 
 
 def _hit_repair_cap(record):
-    """A run paused on the repair cap asked a human for help: how many
-    repairs it needed is unknown, so it cannot calibrate anything. One a
-    human then stopped is the same run."""
     escalations = record.get("escalations") or []
     return (record.get("phase") in ("paused", "stopped") and bool(escalations)
             and escalations[-1].get("kind") == "repair-cap")
@@ -177,10 +174,10 @@ def integration_by_project(runs):
     return projects
 
 
-# A project whose merges fail more often gets fewer lanes: at most 20% of merge
-# attempts failing keeps the default, at most 50% two lanes, above that one
-# (the analyzer's units are then ignored and the run is serial).
-LANE_STEPS = ((0.2, 3), (0.5, 2))
+DEFAULT_LANES_MAX_FAILURE_RATE = 0.2
+TWO_LANES_MAX_FAILURE_RATE = 0.5
+SERIAL_LANES = 1
+LANE_STEPS = ((DEFAULT_LANES_MAX_FAILURE_RATE, 3), (TWO_LANES_MAX_FAILURE_RATE, 2))
 
 
 def recommend_lanes(data):
@@ -192,7 +189,7 @@ def recommend_lanes(data):
     if attempts < MIN_SAMPLE:
         return None
     rate = failures / attempts
-    max_lanes = next((lanes for ceiling, lanes in LANE_STEPS if rate <= ceiling), 1)
+    max_lanes = next((lanes for ceiling, lanes in LANE_STEPS if rate <= ceiling), SERIAL_LANES)
     return {"max_lanes": max_lanes, "attempts": attempts, "failures": failures, "rate": rate}
 
 

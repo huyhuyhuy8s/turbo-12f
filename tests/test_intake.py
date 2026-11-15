@@ -1,9 +1,3 @@
-"""Tests for the intake adapters against fake GitHub and GitLab issue
-servers on localhost. No network, no real credentials. The properties:
-an issue becomes a task only through a fixed whitelist of fields, a
-re-run changes nothing, and a failed listing writes nothing.
-"""
-
 import json
 import os
 import re
@@ -54,8 +48,6 @@ def issue(number, body=GOOD_BODY, title="Fix greet", labels=("factory",), **extr
 
 
 class FakeIssues(BaseHTTPRequestHandler):
-    """Serves GitHub's and GitLab's issue list. SCENARIO: issues (list),
-    status (every request), fail_page (that page fails with 500)."""
     SCENARIO = {}
     REQUESTS = []
 
@@ -396,8 +388,6 @@ intake: {"adapter": "evil"}
 
 
 def trunk_repo(path, committed, working=None):
-    """A git repo at PATH whose `main` carries COMMITTED as
-    .t12/project.json; WORKING, if given, is left uncommitted on top."""
     os.makedirs(os.path.join(path, ".t12"))
     profile = os.path.join(path, ".t12", "project.json")
     with open(profile, "w") as fh:
@@ -428,8 +418,6 @@ class TrunkProfile(IntakeCase):
 
 
 class TrunkProfileRefusals(unittest.TestCase):
-    """No issue server: each of these must fail before any listing."""
-
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -499,8 +487,6 @@ class GitLabIntake(IntakeCase):
 
 
 class SpecCheckCommand(unittest.TestCase):
-    """The command the factory-spec skill runs on a draft, before filing."""
-
     def check(self, body, *args):
         with tempfile.TemporaryDirectory() as root:
             os.makedirs(os.path.join(root, "src"))
@@ -528,8 +514,6 @@ class SpecCheckCommand(unittest.TestCase):
 
 
 class IntakeToRun(IntakeCase):
-    """Intake, then bin/t12-queue, then prepare, against a real repo."""
-
     def setUp(self):
         super().setUp()
         self.repo = os.path.join(self.tmp.name, "product")
