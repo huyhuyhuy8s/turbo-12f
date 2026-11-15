@@ -6,6 +6,8 @@ BAML_TYPES = {
     tools.UNITS: "Unit[]?",
     tools.INT: "int",
     tools.BOOL: "bool",
+    tools.TEXT: "string",
+    tools.INT_LIST: "int[]",
 }
 
 

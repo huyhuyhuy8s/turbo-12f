@@ -62,8 +62,8 @@ class TestItem {
   text string
   kind ItemKind
   source string
-  needed string, may be empty
-  criteria list of integers
+  needed string
+  criteria int[]
 }
 
 class UnitTestItem {
