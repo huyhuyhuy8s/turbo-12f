@@ -70,6 +70,12 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         gate = self.flow_record()["gates"][0]
         self.assertEqual(gate["status"], "passed")
 
+    def test_skipping_the_last_pending_gate_moves_the_run_to_review(self):
+        self.prepare(self.passing_gate(when={"files": ["src/**"]}))
+        self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.assertEqual(self.flow_record()["phase"], "review")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -724,8 +724,6 @@ def cmd_gate(args):
                                     for p in gitio.changed_paths(wt, run["base_commit"], commit)):
         gate["status"] = "skipped"
         gate["commit"] = commit
-        if gate_mod.all_passed(run):
-            model.transition(run, "review")
         _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
         return 0
