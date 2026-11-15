@@ -18,6 +18,12 @@ def is_open(fetch, repo, number, token):
     return (_response_body(response) or {}).get("state") != "closed"
 
 
+def _detail(detail):
+    if "<!--" in detail:
+        return common.untrusted_block(detail).rstrip("\n")
+    return re.sub(r'#(\d+)', r'# \1', detail)
+
+
 def main(argv=None, fetch=None):
     fetch = fetch or common.request
     findings_path = argv[argv.index("--findings") + 1]
@@ -40,7 +46,7 @@ def main(argv=None, fetch=None):
                 if not is_open(fetch, repo, store.get(finding["fingerprint"]), token)]
     payload = {
         "title": f"{len(findings)} findings",
-        "body": "\n".join(f"- {finding['title']}\n{re.sub(r'#(\d+)', r'# \1', finding.get('detail', ''))}"
+        "body": "\n".join(f"- {finding['title']}\n{_detail(finding.get('detail', ''))}"
                           for finding in findings),
     }
     response = fetch("POST", f"https://api.github.com/repos/{repo}/issues",
