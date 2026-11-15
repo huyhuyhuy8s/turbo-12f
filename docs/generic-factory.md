@@ -246,6 +246,62 @@ A project cannot change:
 - that the core never calls a model or the network and never merges;
   `retro` and `calibrate` propose, a human applies
 
+## Quality control: core, profile, or outside
+
+Quality control here is everything after the tdd lane: gates, review,
+check, and `local-verified`. Red belongs to tdd; its tests are the
+build's own oracle, not an independent check.
+
+One rule sorts every QC idea. The **core** gets a mechanism only when
+every project needs it and it stays deterministic, offline, stdlib only
+and free of any one language. The **profile** holds the commands and
+data a mechanism reads. Work that is not about one task stays
+**outside** the per-task pipeline and reaches the factory as issues
+through intake.
+
+### Two full suites
+
+The factory's own suite (this repo's `tests/`) and a product's suite
+are different things, and each runs only for its own repo:
+
+| | Factory suite | Product suite |
+|---|---|---|
+| Declared in | this repo's `.t12/project.json` | the product's `.t12/project.json` |
+| Runs when | a task changes the factory itself | a task on that product |
+| Never runs | during a product run | during a factory run |
+
+A run on a product is driven by an installed copy of the factory's
+`main` (the candidate never checks itself), so a product run never pays
+for the factory's suite. Inside one repo, `test_command` is what each
+tdd cycle runs and should stay narrow; the full suite belongs in a
+gate. A gate's `when` (below) lets a slow gate run only when the
+candidate's diff touches the paths it covers.
+
+### Where each idea lives
+
+| Idea | Lives in | Why |
+|---|---|---|
+| Gate `when`: run a gate only when the diff from base touches its globs; a skipped gate is recorded with its reason | core mechanism, profile data | the profile configures data, not flow (Factor 8) |
+| Review records pass or fail per acceptance criterion; `merge-ready` is refused while any criterion is not `pass` | core | a refusal in `tools.py` and `act` (Factor 4) |
+| Known red: a failed gate runs again on the base commit; failing there too pauses the run instead of spending a repair | core | green cannot fix what trunk already breaks (Factor 9) |
+| A failed gate reruns once on the same commit; a pass on the rerun is recorded as flaky | core | decided from recorded results (Factor 12) |
+| Advisory gate: its output goes to the reviewer's context and never sends the run back | core | the slot for language-specific evidence (Factor 3) |
+| Holdout acceptance author with the base commit as its kill check | core mechanism, opt-in by profile | a small focused role (Factor 10); the project supplies the command |
+| Route back to red when a red test is wrong | core | a state machine transition (Factor 8); open, see #88 |
+| Mutants and coverage of the diff | profile, as advisory gates | the core cannot mutate every language |
+| Flake quarantine per test | profile (the test runner) | a gate is one command; the core sees no single tests |
+| Smoke, contract, static analysis, integration or load against local stand-ins | profile gates | data only |
+| Property-based tests | profile skill pin with `when: {"dependency": ...}` | prompts in layers (Factor 2) |
+| UI and usability review | profile review role and image | a project role, no core change |
+| Fuzz, penetration, performance, whole-repo scans | outside | slow and about the whole product; jobs that file issues (Factor 11) |
+| Production signals (monitoring, exceptions, real users) | outside, an intake adapter | the intake contract already exists |
+
+None of this moves the human merge. `local-verified` gains evidence but
+still means "the evidence chain was observed", not acceptance. The core
+items are tracked in #107; every new key defaults to today's behaviour,
+because the factory cannot edit the existing tests a changed default
+would break.
+
 ## Plan
 
 Each step is one PR on top of the last. Each ends in a check that
@@ -278,6 +334,11 @@ runs against a disposable repo, as the current tests do.
    five built-in roles, a blind worktree for green and refactor, and
    omp as the worker. It is checked against disposable repos, as the
    other steps are; see DESIGN.md "TDD lane (Phase 8)".
+7. **QC core.** The core mechanisms in "Quality control: core,
+   profile, or outside", each off by default and turned on by the
+   profile: gate `when`, advisory gates, gate reruns, the base check,
+   and per-criterion review verdicts (#107 and its sub-issues). Step 5
+   comes first: the factory has so far delivered only itself.
 
 ## Open questions
 
