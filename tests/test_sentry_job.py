@@ -152,6 +152,48 @@ class SentryJobTest(unittest.TestCase):
                     pass
         self.assertEqual((code, calls), (1, []))
 
+    def test_default_fetch_sends_bearer_get_to_the_issues_url_and_writes_findings(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"org": "acme", "project_id": 42, "min_events": 3}}
+        first = issue("101", "5")
+        requests = []
+
+        class Response:
+            status = 200
+            headers = {}
+
+            def getcode(self):
+                return 200
+
+            def read(self):
+                return json.dumps([first]).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_urlopen(req, *args, **kwargs):
+            requests.append((req.full_url, req.get_method(), req.get_header("Authorization")))
+            return Response()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok-123"}), \
+                    mock.patch("urllib.request.urlopen", fake_urlopen):
+                load_sentry().main(argv)
+            written = None
+            if os.path.exists(out):
+                with open(out) as handle:
+                    written = [f["fingerprint"] for f in json.load(handle)["findings"]]
+        self.assertEqual((requests, written), ([(
+            "https://sentry.io/api/0/organizations/acme/issues/"
+            "?project=42&query=is:unresolved&statsPeriod=14d&limit=100",
+            "GET", "Bearer tok-123")], ["sentry:101"]))
+
 
 
 if __name__ == "__main__":

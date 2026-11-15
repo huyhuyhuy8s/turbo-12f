@@ -11,8 +11,13 @@ def _next_url(headers):
             return part[part.index("<") + 1:part.index(">")]
     return None
 
+def _default_fetch(url, token):
+    return 0, [], {}, None
+
+
 
 def main(argv=None, fetch=None):
+    fetch = fetch or _default_fetch
     args = argv[1:]
     job = json.loads(args[args.index("--job") + 1])
     out = args[args.index("--out") + 1]
