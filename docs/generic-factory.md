@@ -255,9 +255,9 @@ build's own oracle, not an independent check.
 One rule sorts every QC idea. The **core** gets a mechanism only when
 every project needs it and it stays deterministic, offline, stdlib only
 and free of any one language. The **profile** holds the commands and
-data a mechanism reads. Work that is not about one task stays
-**outside** the per-task pipeline and reaches the factory as issues
-through intake.
+data a mechanism reads, including work that is not about one task: a
+whole-product job runs outside the per-task pipeline, but the profile
+declares it, and what it finds reaches the factory as an issue.
 
 ### Two full suites
 
@@ -293,8 +293,22 @@ candidate's diff touches the paths it covers.
 | Smoke, contract, static analysis, integration or load against local stand-ins | profile gates | data only |
 | Property-based tests | profile skill pin with `when: {"dependency": ...}` | prompts in layers (Factor 2) |
 | UI and usability review | profile review role and image | a project role, no core change |
-| Fuzz, penetration, performance, whole-repo scans | outside | slow and about the whole product; jobs that file issues (Factor 11) |
-| Production signals (monitoring, exceptions, real users) | outside, an intake adapter | the intake contract already exists |
+| Formal verification (TLC, Dafny, Kani, CBMC) | profile gate with `when` | any project; one command that exits 0 or not |
+| Fuzz, penetration, performance, whole-repo scans | profile `jobs`, run by `bin/t12-job` | slow and about the whole product; cron, CI or a person starts them (Factor 11) |
+| Production signals (Sentry, SonarQube, cubic) | profile `jobs` of the adapter kind | a host adapter with the credentials; findings become issues |
+
+### Whole-product jobs
+
+A project lists its jobs in the profile's `jobs` key. A `command` job
+runs in the cage on the trunk tip, offline, like a gate. An `adapter`
+job runs a host program from the state home or the factory (never the
+product repo) that holds the credentials and may use the network.
+`bin/t12-job --home HOME --name NAME` runs one job and writes a
+findings file; the core schedules nothing. `adapters/job-findings.py`
+files a run's new findings as one issue, deduplicated by fingerprint,
+and never adds the approval label: a finding has no acceptance
+criteria, so a person writes the spec and approves it (Factor 7).
+Tracked in #115.
 
 None of this moves the human merge. `local-verified` gains evidence but
 still means "the evidence chain was observed", not acceptance. The core
