@@ -142,5 +142,14 @@ class ProfileJobsTest(unittest.TestCase):
         self.assertIn("sneaky", message)
 
 
+    def test_jobs_given_as_an_object_instead_of_a_list_is_refused_naming_jobs(self):
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": {}}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("jobs", message)
+
+
 if __name__ == "__main__":
     unittest.main()
