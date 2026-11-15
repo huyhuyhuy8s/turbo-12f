@@ -103,6 +103,25 @@ class CubicJobTest(unittest.TestCase):
         relevant = [c for c in calls if c in (branch, review)]
         self.assertEqual(relevant, [branch, review])
 
+    def test_cubic_review_runs_in_a_directory_other_than_the_repo(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P1", "file": "src/a.py", "line": 3,
+                              "title": "Null deref", "description": "x is None"}]}
+        review_cwds = []
+
+        def fake(argv, cwd, env):
+            if argv[0] == "git":
+                return 0, "", ""
+            review_cwds.append(cwd)
+            return 1, json.dumps(report), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+        self.assertNotEqual(review_cwds, ["/repo"])
+
 
 if __name__ == "__main__":
     unittest.main()
