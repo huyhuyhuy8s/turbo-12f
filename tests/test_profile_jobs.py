@@ -122,6 +122,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("risky", message)
 
+    def test_job_with_an_unknown_key_other_than_schedule_is_refused_naming_the_key(self):
+        jobs = [{"name": "fuzz", "command": ["python3", "a.py"], "retries": 3}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("retries", message)
+
 
 if __name__ == "__main__":
     unittest.main()
