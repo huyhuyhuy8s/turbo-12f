@@ -108,6 +108,32 @@ class SubmitBamlFailure(unittest.TestCase):
                     parse=parse, act=act)
             self.assertEqual((1, "boom", []), (code, out.getvalue().strip(), calls))
 
+    def test_parse_failure_appends_the_baml_refusal_evidence_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("not a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            evidence = os.path.join(tmp, "evidence.jsonl")
+
+            def parse(text):
+                raise ValueError("boom")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence],
+                    parse=parse, act=lambda call: (True, "ok"))
+            lines = []
+            if os.path.exists(evidence):
+                with open(evidence) as fh:
+                    lines = fh.read().splitlines()
+            self.assertEqual(
+                ['{"arm": "B", "kind": "review", "ok": false, "refused_by": "baml", "error": "boom"}'],
+                lines)
+
 
 if __name__ == "__main__":
     unittest.main()
