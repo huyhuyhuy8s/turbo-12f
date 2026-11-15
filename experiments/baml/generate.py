@@ -1,4 +1,9 @@
-from t12 import tools
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from t12 import tools  # noqa: E402
 
 
 BAML_TYPES = {
@@ -99,3 +104,7 @@ def render():
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
             + "\n" + unit_item + "\n" + unit + "\n" + finding + "\n" + analyzer_answer()
             + "\n" + red_answer() + "\n" + review_answer())
+
+
+if __name__ == "__main__":
+    (Path(__file__).parent / "baml_src" / "tools.baml").write_bytes(render().encode())
