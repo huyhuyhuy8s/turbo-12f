@@ -1386,7 +1386,7 @@ def cmd_board(args):
             "candidate": (run["candidate"] or {}).get("commit"),
             "tdd_step": (run.get("tdd") or {}).get("step"),
             "cycle": (run.get("tdd") or {}).get("cycle"),
-            "gates_passed": sum(g["status"] == "passed" for g in run["gates"]),
+            "gates_passed": sum(g["status"] in ("passed", "skipped") for g in run["gates"]),
             "time_left_s": None if done else int(model.time_left_s(run)),
             "ops_left": None if done else b["op_limit"] - b["ops_used"] - model.lane_ops_used(
                 home, run["task_id"]),
