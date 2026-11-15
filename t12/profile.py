@@ -336,6 +336,9 @@ def _jobs(value):
         if "adapter" in job and "timeout_s" in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} is an adapter job and "
                              "cannot set timeout_s")
+        if "command" in job and "config" in job:
+            raise StateError(f"{PATH}: job {job.get('name')!r} is a command job and "
+                             "cannot set config")
     names = [job.get("name") for job in value]
     for name in names:
         if names.count(name) > 1:
