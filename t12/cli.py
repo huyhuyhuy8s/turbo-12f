@@ -473,6 +473,10 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for role in profile["roles"]:
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
     for gate in task.get("gates", []):
+        extra = sorted(set(gate) - {"name", "command", "when"})
+        if extra:
+            raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
+                             "a gate takes only name, command and when")
         when = gate.get("when")
         if when is not None and set(when) != {"files"}:
             raise StateError(f"gate {gate.get('name')!r}: when accepts only the key files")
