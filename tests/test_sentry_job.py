@@ -1,3 +1,5 @@
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -87,6 +89,25 @@ class SentryJobTest(unittest.TestCase):
         self.assertEqual(calls[:1], [
             "https://sentry.io/api/0/organizations/acme/issues/"
             "?project=42&query=is:unresolved&statsPeriod=7d&limit=100"])
+
+    def test_status_401_exits_1_names_status_and_writes_no_out_file(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"org": "acme", "project_id": 42, "min_events": 3}}
+
+        def fake(url, token):
+            return 401, [], {}, None
+
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(stderr):
+                code = load_sentry().main(argv, fetch=fake)
+            wrote = os.path.exists(out)
+        self.assertEqual((code, "401" in stderr.getvalue(), wrote), (1, True, False))
+
 
 
 if __name__ == "__main__":
