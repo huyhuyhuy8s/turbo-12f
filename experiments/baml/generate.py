@@ -49,5 +49,10 @@ def class_block(name, fields):
 
 def render():
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
+    item = class_block("TestItem", {
+        arg: "ItemKind" if shape == tools.ITEM_KINDS else BAML_TYPES.get(shape, shape)
+        for arg, shape in tools.ITEM_FIELDS.items()
+    })
     unit_item = class_block("UnitTestItem", {"unit": "string?"})
-    return verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + unit_item
+    return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
+            + "\n" + unit_item)
