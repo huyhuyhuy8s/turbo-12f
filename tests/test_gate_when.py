@@ -130,6 +130,19 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         self.assertEqual((refused.returncode, "must have a non-empty argv command" in refused.stderr,
                           "Traceback" in refused.stderr), (1, True, False), refused.stderr)
 
+    def test_prepare_refuses_a_gate_whose_command_is_null_false_zero_or_empty_string(self):
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        outcomes = {}
+        for value in (None, False, 0, ""):
+            with open(self.task_path, "w") as fh:
+                json.dump(task_dict(gates=[{"name": "unit", "command": value}]), fh)
+            refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+            outcomes[repr(value)] = (refused.returncode,
+                                     "must have a non-empty argv command" in refused.stderr,
+                                     "Traceback" in refused.stderr)
+        expected = {repr(v): (1, True, False) for v in (None, False, 0, "")}
+        self.assertEqual(outcomes, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
