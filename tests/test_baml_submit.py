@@ -74,5 +74,18 @@ class ParseRedReply(unittest.TestCase):
                            "needed": "n", "criteria": [0]}]}}
         self.assertEqual([mock.call(expected)], act.call_args_list)
 
+
+class ParseRaises(unittest.TestCase):
+    def test_parse_error_is_refused_by_baml_with_its_text_and_act_is_not_called(self):
+        def parse(text):
+            raise ValueError("boom")
+
+        act = mock.Mock()
+        lines = []
+        run.submit("not a call", "review", parse, act, record=lines.append)
+        self.assertEqual([], act.call_args_list)
+        self.assertEqual([{"ok": False, "refused_by": "baml", "message": "boom"}], lines)
+
+
 if __name__ == "__main__":
     unittest.main()
