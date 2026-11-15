@@ -103,7 +103,7 @@ if "command" in job:
     archive = subprocess.run(["git", "-C", config["repo"], "archive", commit], check=True, capture_output=True).stdout
     subprocess.run(["tar", "-x", "-C", checkout.name], input=archive, check=True)
     try:
-        result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True,
+        result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                                 errors="replace", timeout=job.get("timeout_s"),
                                 env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "TMPDIR")})
     except subprocess.TimeoutExpired:
