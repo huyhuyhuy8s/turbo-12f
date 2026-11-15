@@ -8,7 +8,7 @@ from t12 import tools  # noqa: E402
 
 BAML_TYPES = {
     tools.STR_LIST: "string[]",
-    tools.UNITS: "Unit[]?",
+    tools.UNITS: "Unit[]",
     tools.INT: "int",
     tools.BOOL: "bool",
     tools.TEXT: "string",
@@ -37,7 +37,11 @@ def classes():
     return {
         class_name(name): {
             "tool": f'"{name}"',
-            **{arg: BAML_TYPES.get(shape, shape) for arg, shape in args.items()},
+            **{
+                arg: BAML_TYPES.get(shape, shape)
+                + ("?" if arg in tools.OPTIONAL_ARGS.get(name, ()) else "")
+                for arg, shape in args.items()
+            },
         }
         for kind in tools.TOOLS.values()
         for name, args in kind.items()
