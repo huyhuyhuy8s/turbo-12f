@@ -117,7 +117,7 @@ findings_path = os.path.join(job_dir, "findings-%d.json" % seq)
 with open(findings_path, "w", encoding="utf-8") as fh:
     record = {"commit": commit, "findings": findings}
     if kind:
-        record.update({"job": args.name, "kind": kind, "at": int(time.time())})
+        record.update({"job": args.name, "kind": kind, "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
     json.dump(record, fh)
 print(findings_path)
 if findings:

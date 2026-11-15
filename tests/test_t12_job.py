@@ -350,6 +350,20 @@ class CommandRecordTest(unittest.TestCase):
                 record = json.load(fh)
             self.assertEqual((record.get("job"), record.get("kind")), ("check", "command"))
 
+    def test_a_failing_command_job_records_at_as_epoch_seconds_near_now(self):
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "import sys; sys.exit(3)"]}])
+            before = time.time()
+            subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                           capture_output=True, text=True)
+            after = time.time()
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                record = json.load(fh)
+            at = record.get("at")
+            self.assertTrue(isinstance(at, (int, float)) and before - 5 <= at <= after + 5,
+                            "at=%r not epoch seconds in [%s, %s]" % (at, before, after))
+
 
 if __name__ == "__main__":
     unittest.main()
