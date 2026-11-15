@@ -49,6 +49,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("fuzz", message)
 
+    def test_job_named_with_uppercase_and_underscore_is_refused_naming_the_name(self):
+        jobs = [{"name": "Fuzz_1", "command": ["python3", "a.py"]}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("Fuzz_1", message)
+
 
 if __name__ == "__main__":
     unittest.main()
