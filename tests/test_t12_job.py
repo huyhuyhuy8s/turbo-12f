@@ -218,6 +218,17 @@ class AdapterJobTest(unittest.TestCase):
             path = os.path.join(home, "jobs", "fake", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
+    def test_an_adapter_finding_with_a_non_string_detail_makes_the_job_exit_2_and_write_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "fake", "adapter": "fake"}])
+            os.makedirs(os.path.join(home, "adapters"))
+            with open(os.path.join(home, "adapters", "fake.py"), "w") as fh:
+                fh.write(FAKE_ADAPTER.replace('"detail": ""', '"detail": 5'))
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "fake", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
     def test_an_adapter_that_prints_without_a_trailing_newline_still_leaves_the_path_on_the_last_stdout_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = make_home(tmp, [{"name": "fake", "adapter": "fake"}])
