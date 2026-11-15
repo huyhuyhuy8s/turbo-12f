@@ -119,5 +119,21 @@ class SonarqubeJobTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("403", stderr.getvalue())
 
+    def test_forbidden_status_writes_no_out_file(self):
+        job = {"name": "sonar", "adapter": "sonarqube",
+               "config": {"base_url": "https://sq.example", "project_key": "web"}}
+
+        def fake(method, url, token):
+            return 403, {"errors": [{"msg": "forbidden"}]}, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "acme/web", "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SONAR_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                load_sonarqube().main(argv, fetch=fake)
+            self.assertFalse(os.path.exists(out))
+
 if __name__ == "__main__":
     unittest.main()
