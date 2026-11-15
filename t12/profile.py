@@ -327,6 +327,8 @@ def _jobs(value):
     if not isinstance(value, list):
         raise StateError(f"{PATH}: jobs must be a list")
     for job in value:
+        if not isinstance(job, dict):
+            raise StateError(f"{PATH}: job {job!r} must be an object")
         name = job.get("name")
         if not isinstance(name, str) or not JOB_NAME_RE.match(name):
             raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
