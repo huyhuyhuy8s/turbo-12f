@@ -588,3 +588,13 @@ class CommandCheckoutAttributesTest(unittest.TestCase):
                                     capture_output=True, text=True)
             written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
             self.assertEqual((result.returncode, written), (0, []))
+
+
+class CommandTimeoutHugeTest(unittest.TestCase):
+    def test_a_timeout_s_too_large_for_a_float_exits_2_with_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "timeout_s": 10 ** 400, "command": ["python3", "-c", "pass"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
