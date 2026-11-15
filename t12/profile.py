@@ -50,7 +50,7 @@ import os
 import re
 
 from . import gitio, globs
-from .errors import StateError
+from .errors import RunnerError, StateError
 from .tools import KINDS
 
 PATH = ".t12/project.json"
@@ -326,6 +326,7 @@ def _jobs(value):
         name = job.get("name")
         if not isinstance(name, str) or not JOB_NAME_RE.match(name):
             raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
+    from . import sandbox
     for job in value:
         if "schedule" in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} has unknown keys ['schedule']")
@@ -341,6 +342,11 @@ def _jobs(value):
         if "command" in job and "config" in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} is a command job and "
                              "cannot set config")
+        if "command" in job:
+            try:
+                sandbox.check_command(job["command"])
+            except RunnerError as exc:
+                raise StateError(f"{PATH}: job {job.get('name')!r}: {exc}") from exc
     names = [job.get("name") for job in value]
     for name in names:
         if names.count(name) > 1:
