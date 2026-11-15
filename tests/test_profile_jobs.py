@@ -85,6 +85,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("schedule", message)
 
+    def test_command_job_whose_argv_check_command_refuses_is_refused_naming_the_job(self):
+        jobs = [{"name": "risky", "command": ["python3", "x.py", "--no-sandbox"]}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("risky", message)
+
 
 if __name__ == "__main__":
     unittest.main()
