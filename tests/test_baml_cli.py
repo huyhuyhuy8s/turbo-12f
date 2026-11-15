@@ -153,6 +153,29 @@ class SubmitActFailure(unittest.TestCase):
                     act=lambda call: (False, "refused: bad"))
             self.assertEqual((1, "refused: bad"), (code, out.getvalue().strip()))
 
+    def test_act_refusal_appends_the_act_refusal_evidence_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    act=lambda call: (False, "refused: bad"))
+            lines = []
+            if os.path.exists(evidence):
+                with open(evidence) as fh:
+                    lines = fh.read().splitlines()
+            self.assertEqual(
+                ['{"arm": "B", "kind": "review", "ok": false, "refused_by": "act", "error": "refused: bad"}'],
+                lines)
+
 
 if __name__ == "__main__":
     unittest.main()
