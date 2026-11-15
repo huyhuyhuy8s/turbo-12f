@@ -365,5 +365,15 @@ class CommandRecordTest(unittest.TestCase):
                             "at=%r not epoch seconds in [%s, %s]" % (at, before, after))
 
 
+    def test_a_failing_command_finding_has_a_string_title_and_a_null_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "import sys; sys.exit(3)"]}])
+            subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                           capture_output=True, text=True)
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                finding = json.load(fh)["findings"][0]
+            self.assertEqual((isinstance(finding.get("title"), str), finding.get("url", "missing")), (True, None))
+
+
 if __name__ == "__main__":
     unittest.main()
