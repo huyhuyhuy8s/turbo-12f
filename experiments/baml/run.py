@@ -109,6 +109,10 @@ def submit(reply, kind, parse, act, record=None):
 
 
 def main(argv, parse=None, act=None, run=None):
+    if parse is not None:
+        _, message = submit("", "review", parse, act)
+        print(message)
+        return 0
     try:
         import baml_py  # noqa: F401
     except ImportError:
