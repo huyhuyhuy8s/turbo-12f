@@ -207,6 +207,17 @@ class AdapterJobTest(unittest.TestCase):
             path = os.path.join(home, "jobs", "fake", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
+    def test_an_adapter_that_prints_without_a_trailing_newline_still_leaves_the_path_on_the_last_stdout_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "fake", "adapter": "fake"}])
+            os.makedirs(os.path.join(home, "adapters"))
+            with open(os.path.join(home, "adapters", "fake.py"), "w") as fh:
+                fh.write(FAKE_ADAPTER + "import sys\nsys.stdout.write('noise')\n")
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            lines = result.stdout.strip().splitlines()
+            self.assertEqual(lines[-1] if lines else "", os.path.join(home, "jobs", "fake", "findings-1.json"))
+
 
 class UnknownJobTest(unittest.TestCase):
     def test_an_unknown_job_name_exits_2_and_lists_the_profile_job_names(self):
