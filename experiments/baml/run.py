@@ -28,19 +28,20 @@ def plain(value):
     return {k.removesuffix("_"): plain(v) for k, v in fields.items() if v is not None}
 
 
+def _refuse(record, refused_by, message):
+    if record is not None:
+        record({"ok": False, "refused_by": refused_by, "message": message})
+    return False, message
+
+
 def submit(reply, kind, parse, act, record=None):
     try:
         call = plain(parse(reply))
     except Exception as exc:
-        if record is not None:
-            record({"ok": False, "refused_by": "baml", "message": str(exc)})
-        return False, str(exc)
+        return _refuse(record, "baml", str(exc))
     tool = call.pop("tool")
     try:
         tools.parse(json.dumps({"tool": tool, "args": call}), kind)
     except StateError as exc:
-        message = str(exc)
-        if record is not None:
-            record({"ok": False, "refused_by": "core", "message": message})
-        return False, message
+        return _refuse(record, "core", str(exc))
     return act({"tool": tool, "args": call})
