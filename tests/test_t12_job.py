@@ -615,3 +615,13 @@ class CommandCheckoutFailureTest(unittest.TestCase):
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertFalse(result.returncode == 1 and not os.path.exists(path), result.stderr[-300:])
+
+
+class CommandTimeoutLongTest(unittest.TestCase):
+    def test_a_command_with_a_very_long_timeout_s_runs_normally_and_writes_an_empty_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "timeout_s": 10 ** 7, "command": ["python3", "-c", "pass"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
+            self.assertEqual((result.returncode, written), (0, []), result.stderr[-300:])
