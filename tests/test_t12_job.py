@@ -147,5 +147,14 @@ class AdapterJobTest(unittest.TestCase):
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
 
+class UnknownJobTest(unittest.TestCase):
+    def test_an_unknown_job_name_exits_2_and_lists_the_profile_job_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["true"]}, {"name": "fake", "adapter": "fake"}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "nope"],
+                                    capture_output=True, text=True)
+            output = result.stdout + result.stderr
+            self.assertEqual((result.returncode, "check" in output, "fake" in output), (2, True, True))
+
 if __name__ == "__main__":
     unittest.main()
