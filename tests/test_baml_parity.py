@@ -74,6 +74,11 @@ class ToolClassNames(unittest.TestCase):
                  "items": classes["TestListReady"]["items"]}
         self.assertEqual({"add_items": "TestItem[]", "items": "UnitTestItem[]"}, found)
 
+    def test_tool_field_is_the_quoted_literal_tool_name(self):
+        classes = generate.classes()
+        found = {name: classes[pascal(name)]["tool"] for name in ("escalate", "test_list_ready")}
+        self.assertEqual({"escalate": '"escalate"', "test_list_ready": '"test_list_ready"'}, found)
+
 
 class EnumRendering(unittest.TestCase):
     def test_verdict_enum_has_one_aliased_member_per_review_verdict(self):
