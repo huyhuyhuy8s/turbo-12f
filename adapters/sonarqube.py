@@ -1,6 +1,8 @@
 import json
 import os
 import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import common  # noqa: E402
 
 
 def main(argv=None, fetch=None):
@@ -19,7 +21,7 @@ def main(argv=None, fetch=None):
     if not token:
         print("sonarqube: SONAR_TOKEN is not set", file=sys.stderr)
         return 1
-    fetch = fetch or (lambda method, url, token: (0, None, None))
+    fetch = fetch or common.request
     issues = []
     page = 1
     while True:
