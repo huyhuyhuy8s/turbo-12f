@@ -92,21 +92,21 @@ class Finding {
   owner string
 }
 
-function AnalyzerAnswer(input: string) -> TestListReady | Escalate {
+function AnalyzerAnswer(task: string) -> TestListReady | Escalate {
   client Worker
   prompt #"
     {{ ctx.output_format }}
   "#
 }
 
-function RedAnswer(input: string) -> RedTestReady | NoCheatLeft | Escalate {
+function RedAnswer(task: string) -> RedTestReady | NoCheatLeft | Escalate {
   client Worker
   prompt #"
     {{ ctx.output_format }}
   "#
 }
 
-function ReviewAnswer(input: string) -> Review | Escalate {
+function ReviewAnswer(task: string) -> Review | Escalate {
   client Worker
   prompt #"
     {{ ctx.output_format }}
