@@ -360,8 +360,6 @@ def parse(text):
         data["skills"] = _skills(data["skills"], data["roles"])
     if "delivery" in data:
         data["delivery"] = _delivery(data["delivery"])
-    if "jobs" in data:
-        data["jobs"] = []
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:
