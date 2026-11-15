@@ -135,5 +135,24 @@ class SubmitBamlFailure(unittest.TestCase):
                 lines)
 
 
+class SubmitActFailure(unittest.TestCase):
+    def test_act_refusal_returns_1_and_prints_the_act_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                code = run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    act=lambda call: (False, "refused: bad"))
+            self.assertEqual((1, "refused: bad"), (code, out.getvalue().strip()))
+
+
 if __name__ == "__main__":
     unittest.main()
