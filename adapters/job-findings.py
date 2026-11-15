@@ -21,7 +21,7 @@ def is_open(fetch, repo, number, token):
 def _detail(detail):
     if "<!--" in detail:
         return common.untrusted_block(detail).rstrip("\n")
-    return re.sub(r'#(\d+)', r'# \1', detail)
+    return re.sub(r'(#|GH-)(\d+)', r'\1 \2', detail, flags=re.IGNORECASE)
 
 
 def main(argv=None, fetch=None):
