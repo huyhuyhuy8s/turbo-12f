@@ -46,6 +46,16 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         gate = self.flow_record()["gates"][0]
         self.assertEqual((gate["status"], gate["observation"]), ("skipped", None))
 
+    def test_skipping_a_gate_logs_gate_skipped_naming_the_gate(self):
+        self.prepare(self.passing_gate(when={"files": ["src/**"]}))
+        self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        path = os.path.join(self.home, "runs", "demo-1.events.jsonl")
+        with open(path) as fh:
+            events = [json.loads(line) for line in fh if line.strip()]
+        skipped = [e["detail"].get("gate") for e in events if e["type"] == "gate-skipped"]
+        self.assertEqual(skipped, ["unit"])
+
 
 if __name__ == "__main__":
     unittest.main()
