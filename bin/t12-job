@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Run one profile job and write a findings file."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+
+from t12 import profile, runner, sandbox  # noqa: E402
+from t12.errors import StateError  # noqa: E402
+
+parser = argparse.ArgumentParser(prog="t12-job", description=__doc__)
+parser.add_argument("--home", required=True)
+parser.add_argument("--name", required=True)
+args = parser.parse_args()
+
+home = os.path.abspath(args.home)
+job_dir = os.path.join(home, "jobs", args.name)
+try:
+    with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
+        config = json.load(fh)
+except OSError:
+    print("no config.json in %s" % args.home, file=sys.stderr)
+    raise SystemExit(2)
+except ValueError:
+    print("config.json in %s is not valid JSON" % args.home, file=sys.stderr)
+    raise SystemExit(2)
+if not isinstance(config, dict):
+    print("config.json in %s is not an object" % args.home, file=sys.stderr)
+    raise SystemExit(2)
+if not isinstance(config.get("repo"), str):
+    print("config.json in %s has no repo" % args.home, file=sys.stderr)
+    raise SystemExit(2)
+if not isinstance(config.get("trunk", "main"), str):
+    print("config.json in %s has a trunk that is not a string" % args.home, file=sys.stderr)
+    raise SystemExit(2)
+trunk = config.get("trunk", "main")
+rev = subprocess.run(
+    ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + trunk],
+    capture_output=True, text=True,
+)
+if rev.returncode != 0:
+    print("trunk branch %r does not exist" % trunk, file=sys.stderr)
+    raise SystemExit(2)
+commit = rev.stdout.strip()
+shown = subprocess.run(
+    ["git", "-C", config["repo"], "show", commit + ":.t12/project.json"],
+    capture_output=True, text=True,
+)
+try:
+    prof = profile.parse(shown.stdout if shown.returncode == 0 else None)
+    jobs = prof.get("jobs", [])
+except StateError as exc:
+    print(exc, file=sys.stderr)
+    raise SystemExit(2)
+job = next((j for j in jobs if j.get("name") == args.name), None)
+if job is None:
+    print("unknown job %r; available jobs: %s" % (args.name, ", ".join(j.get("name", "") for j in jobs)), file=sys.stderr)
+    raise SystemExit(2)
+os.makedirs(job_dir, exist_ok=True)
+
+
+def check_finding(f):
+    """Raise ValueError (or AttributeError for a non-dict) if an adapter finding is malformed."""
+    if not isinstance(f.get("fingerprint"), str) or not f["fingerprint"]:
+        raise ValueError("finding without fingerprint")
+    if "title" in f and not isinstance(f["title"], str):
+        raise ValueError("finding title is not a string")
+    if "detail" in f and not isinstance(f["detail"], str):
+        raise ValueError("finding detail is not a string")
+    if f.get("url") is not None and not isinstance(f["url"], str):
+        raise ValueError("finding url is not a string or null")
+
+
+def run_adapter(job, repo, commit, home, job_dir):
+    """Run the job's adapter and return its findings; exit 2 if it fails or misbehaves."""
+    adapter_name = job["adapter"]
+    if not isinstance(adapter_name, str) or "/" in adapter_name or ".." in adapter_name:
+        raise SystemExit(2)
+    adapter = os.path.join(home, "adapters", adapter_name + ".py")
+    if not os.path.exists(adapter):
+        adapter = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "adapters", adapter_name + ".py")
+    out_path = os.path.join(job_dir, "adapter-out.tmp")
+    try:
+        result = subprocess.run(
+            ["python3", adapter, "job", "--job", json.dumps(job), "--repo", repo, "--commit", commit,
+             "--home", home, "--out", out_path],
+            check=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True, errors="replace",
+        )
+        sys.stdout.write(result.stdout)
+        if result.stdout and not result.stdout.endswith("\n"):
+            sys.stdout.write("\n")
+        with open(out_path, encoding="utf-8") as fh:
+            adapter_findings = json.load(fh)["findings"]
+        if not isinstance(adapter_findings, list):
+            raise ValueError("findings is not a list")
+        for f in adapter_findings:
+            check_finding(f)
+        return adapter_findings
+    except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise SystemExit(2)
+    finally:
+        if os.path.exists(out_path):
+            os.remove(out_path)
+
+
+def command_failure(name, detail):
+    """Build the finding reported when a job's command fails."""
+    return {"fingerprint": name + ":command", "title": "command failed", "detail": detail, "url": None}
+
+
+def is_valid_timeout(timeout):
+    """True for a finite positive number (booleans excluded)."""
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout != timeout:
+        return False
+    return 0 < timeout <= sys.float_info.max
+
+
+def run_command(job, repo, commit):
+    """Run the job's command on a checkout of commit and return the failure findings."""
+    timeout = job.get("timeout_s")
+    if timeout is not None and not is_valid_timeout(timeout):
+        print("job %r: timeout_s must be a number" % job["name"], file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        adapter, image = sandbox.resolve_adapter(prof)
+    except StateError as exc:
+        print("job %r: %s" % (job["name"], exc), file=sys.stderr)
+        raise SystemExit(2)
+    if adapter == "none":
+        print("job %r: no sandbox available on this host (need Landlock or docker)" % job["name"], file=sys.stderr)
+        raise SystemExit(2)
+    failures = []
+    checkout = tempfile.TemporaryDirectory()
+    try:
+        with tempfile.TemporaryDirectory() as index_dir:
+            index_env = {**os.environ, "GIT_INDEX_FILE": os.path.join(index_dir, "index")}
+            subprocess.run(["git", "-C", repo, "read-tree", commit], check=True, env=index_env)
+            subprocess.run(["git", "-C", repo, "checkout-index", "-a", "--prefix", os.path.join(checkout.name, "")],
+                           check=True, env=index_env)
+    except subprocess.CalledProcessError:
+        checkout.cleanup()
+        print("job %r: cannot check out trunk tip %s" % (job["name"], commit), file=sys.stderr)
+        raise SystemExit(2)
+    verify_env = sandbox.verification_env(home, "job-" + job["name"])
+    cage = {}
+    argv = job["command"]
+    run_env = {**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")}, **verify_env}
+    if adapter == "docker":
+        argv = sandbox.docker_run_argv(image, checkout.name, verify_env["HOME"], runner.container_env(verify_env), argv)
+        run_env = runner.sanitized_env()
+    else:
+        cage["preexec_fn"] = sandbox.landlock_preexec(checkout.name, verify_env["HOME"])
+    try:
+        result = subprocess.run(argv, cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                                errors="replace", timeout=None if timeout is None else min(timeout, 10**6),
+                                env=run_env, **cage)
+    except subprocess.TimeoutExpired:
+        failures.append(command_failure(job["name"], "command timed out after %ss" % job["timeout_s"]))
+    except (OSError, subprocess.SubprocessError) as exc:
+        failures.append(command_failure(job["name"], "command could not be run: %s" % exc))
+    else:
+        if result.returncode != 0:
+            failures.append(command_failure(job["name"], result.stdout + result.stderr))
+    finally:
+        checkout.cleanup()
+    return failures
+
+
+findings = []
+kind = None
+if "adapter" in job:
+    kind = "adapter"
+    findings = run_adapter(job, config["repo"], commit, home, job_dir)
+if "command" in job:
+    kind = "command"
+    findings += run_command(job, config["repo"], commit)
+seq = 1
+while os.path.exists(os.path.join(job_dir, "findings-%d.json" % seq)):
+    seq += 1
+findings_path = os.path.join(job_dir, "findings-%d.json" % seq)
+with open(findings_path, "w", encoding="utf-8") as fh:
+    record = {"commit": commit, "findings": findings}
+    if kind:
+        record.update({"job": args.name, "kind": kind, "at": int(time.time())})
+    json.dump(record, fh)
+print(findings_path)
+if findings:
+    raise SystemExit(1)
