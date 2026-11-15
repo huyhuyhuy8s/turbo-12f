@@ -171,6 +171,18 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         after_gate = self.flow_record()["gates"][0]["status"]
         self.assertEqual((after_pin, after_gate), ("pending", "passed"))
 
+    def test_prepare_refuses_a_gate_whose_when_is_not_an_object_without_a_traceback(self):
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        outcomes = {}
+        for value in (False, 0, ["files"]):
+            with open(self.task_path, "w") as fh:
+                json.dump(task_dict(gates=[self.passing_gate(name="docs-lint", when=value)]), fh)
+            refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+            outcomes[repr(value)] = (refused.returncode, "docs-lint" in refused.stderr,
+                                     "Traceback" in refused.stderr)
+        expected = {repr(v): (1, True, False) for v in (False, 0, ["files"])}
+        self.assertEqual(outcomes, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
