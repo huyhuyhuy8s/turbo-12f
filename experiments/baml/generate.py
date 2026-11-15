@@ -3,7 +3,12 @@ from t12 import tools
 
 BAML_TYPES = {tools.STR_LIST: "string[]"}
 
-ALIASES = {"enums": {}}
+ALIASES = {
+    "enums": {
+        value.title().replace("-", ""): value
+        for value in [*tools.TOOLS["review"]["review"]["verdict"], *tools.ITEM_KINDS]
+    }
+}
 
 
 def classes():
