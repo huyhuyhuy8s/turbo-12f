@@ -50,3 +50,7 @@ def main(argv=None, fetch=None):
     with open(argv[argv.index("--out") + 1], "w") as handle:
         json.dump({"findings": findings}, handle)
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
