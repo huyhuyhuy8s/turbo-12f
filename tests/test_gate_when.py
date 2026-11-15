@@ -63,6 +63,13 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         gate = self.flow_record()["gates"][0]
         self.assertEqual(gate["status"], "passed")
 
+    def test_gate_without_when_runs_even_when_only_docs_change(self):
+        self.prepare(self.passing_gate())
+        self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        gate = self.flow_record()["gates"][0]
+        self.assertEqual(gate["status"], "passed")
+
 
 if __name__ == "__main__":
     unittest.main()
