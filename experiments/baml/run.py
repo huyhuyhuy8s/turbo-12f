@@ -36,8 +36,18 @@ def _refuse(record, refused_by, message):
 
 def _groups(reply):
     depth = found = 0
+    in_str = escaped = False
     for ch in reply:
-        if ch == "{":
+        if in_str:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"' and depth:
+            in_str = True
+        elif ch == "{":
             found += depth == 0
             depth += 1
         elif ch == "}" and depth:
