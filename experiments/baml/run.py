@@ -181,8 +181,6 @@ def main(argv, parse=None, act=None, run=None):
     try:
         import baml_py  # noqa: F401
     except ImportError:
-        if argv and "tool" in Path(_option(argv, "--reply-file")).read_text():
-            open(argv[-1], "a").close()
         print(
             "baml-py is not importable; run: pip install baml-py pydantic typing_extensions"
             " and then: baml-cli generate --from experiments/baml/baml_src"
