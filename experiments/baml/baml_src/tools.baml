@@ -67,7 +67,20 @@ class TestItem {
 }
 
 class UnitTestItem {
+  text string
+  kind ItemKind
+  source string
+  needed string
+  criteria int[]
   unit string?
+}
+
+class Unit {
+  id string
+  owns string[]
+  tests string[]
+  after string[]
+  needed string
 }
 
 class Finding {

@@ -86,12 +86,16 @@ def review_answer():
 
 def render():
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
-    item = class_block("TestItem", {
+    item_fields = {
         arg: "ItemKind" if shape == tools.ITEM_KINDS else BAML_TYPES.get(shape, shape)
         for arg, shape in tools.ITEM_FIELDS.items()
+    }
+    item = class_block("TestItem", item_fields)
+    unit_item = class_block("UnitTestItem", {**item_fields, "unit": "string?"})
+    unit = class_block("Unit", {
+        arg: BAML_TYPES.get(shape, shape) for arg, shape in tools.UNIT_FIELDS.items()
     })
-    unit_item = class_block("UnitTestItem", {"unit": "string?"})
     finding = class_block("Finding", {f: tools.STR for f in tools.FINDING_FIELDS})
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
-            + "\n" + unit_item + "\n" + finding + "\n" + analyzer_answer()
+            + "\n" + unit_item + "\n" + unit + "\n" + finding + "\n" + analyzer_answer()
             + "\n" + red_answer() + "\n" + review_answer())
