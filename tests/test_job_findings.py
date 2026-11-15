@@ -411,5 +411,34 @@ class JobFindingsTest(unittest.TestCase):
         outside_fences = re.sub(r"^(`{3,}).*?^\1\s*$", "", bodies[0], flags=re.S | re.M)
         self.assertNotIn(opener, outside_fences)
 
+    def test_every_fetch_call_passes_the_payload_argument_positionally(self):
+        adapter = load_adapter()
+        posts = []
+
+        def fake(method, url, token, payload):
+            if method == "GET" and url == CREATE_URL + "/7":
+                return 200, {"number": 7, "state": "open"}, None
+            posts.append((method, "Gamma broke" in json.dumps(payload)))
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            with open(os.path.join(home, "jobs", "nightly", "fingerprints.json"), "w") as fh:
+                json.dump({"a": 7}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke"),
+                                                 finding("c", "Gamma broke")]}, fh)
+            outcome = None
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    outcome = adapter.main(["file", "--home", home, "--findings", findings_path,
+                                            "--repo", "o/r"], fetch=fake)
+                except TypeError as error:
+                    outcome = f"TypeError: {error}"
+        self.assertEqual((outcome, posts), (0, [("POST", True)]))
+
 if __name__ == "__main__":
     unittest.main()
