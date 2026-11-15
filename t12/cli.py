@@ -720,7 +720,8 @@ def cmd_gate(args):
     gate_mod.check_order(run, gate)
     commit = run["candidate"]["commit"]
     when = gate.get("when")
-    if when:
+    if when and not any(globs.match(p, when["files"])
+                        for p in gitio.changed_paths(wt, run["base_commit"], commit)):
         gate["status"] = "skipped"
         gate["commit"] = commit
         if gate_mod.all_passed(run):
