@@ -14,18 +14,22 @@ def kebab(name):
     return re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
 
 
-def plain(value):
+def plain(value, keep_none=False):
     if isinstance(value, enum.Enum):
         return kebab(value.name)
     if isinstance(value, list):
-        return [plain(v) for v in value]
+        return [plain(v, keep_none) for v in value]
     if isinstance(value, dict):
         fields = value
     elif hasattr(value, "__dict__"):
         fields = vars(value)
     else:
         return value
-    return {k.removesuffix("_"): plain(v) for k, v in fields.items() if v is not None}
+    return {
+        k.removesuffix("_"): plain(v, keep_none)
+        for k, v in fields.items()
+        if keep_none or v is not None
+    }
 
 
 def _refuse(record, refused_by, message):
@@ -58,10 +62,10 @@ def _groups(reply):
 def _unexpected(raw, call):
     if isinstance(raw, dict) and isinstance(call, dict):
         for key, value in raw.items():
-            if value is None:
-                continue
             if key not in call:
                 return key
+            if value is None:
+                continue
             found = _unexpected(value, call[key])
             if found is not None:
                 return found
@@ -78,7 +82,9 @@ def submit(reply, kind, parse, act, record=None):
     if found > 1:
         return _refuse(record, "script", f"worker output must hold exactly one call; found {found}")
     try:
-        call = plain(parse(reply))
+        parsed = parse(reply)
+        call = plain(parsed)
+        shape = plain(parsed, True)
     except Exception as exc:
         return _refuse(record, "baml", str(exc))
     try:
@@ -89,7 +95,7 @@ def submit(reply, kind, parse, act, record=None):
         args = {**raw["args"], **{k: v for k, v in raw.items() if k != "args"}}
     else:
         args = raw
-    key = _unexpected({k: v for k, v in args.items() if k != "tool"}, call)
+    key = _unexpected({k: v for k, v in args.items() if k != "tool"}, shape)
     if key is not None:
         return _refuse(record, "script", f"unexpected arg '{key}'")
     tool = call.pop("tool")
