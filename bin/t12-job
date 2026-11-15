@@ -30,6 +30,9 @@ except FileNotFoundError:
 except ValueError:
     print("config.json in %s is not valid JSON" % args.home, file=sys.stderr)
     raise SystemExit(2)
+if not isinstance(config, dict):
+    print("config.json in %s is not an object" % args.home, file=sys.stderr)
+    raise SystemExit(2)
 if "repo" not in config:
     print("config.json in %s has no repo" % args.home, file=sys.stderr)
     raise SystemExit(2)
