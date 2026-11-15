@@ -203,6 +203,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("numeric", message)
 
+    def test_command_list_with_an_empty_string_item_is_refused_naming_the_job(self):
+        jobs = [{"name": "blank", "command": [""]}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("blank", message)
+
 
 if __name__ == "__main__":
     unittest.main()
