@@ -30,7 +30,7 @@ def _detail(detail):
 def _entry(finding):
     title = finding["title"]
     bullet = "" if "<" in title else "- "
-    shown = title if title.startswith("<") else _detail(title)
+    shown = _detail(title)
     return f"{bullet}{shown}\n{_detail(finding.get('detail', ''))}"
 
 
