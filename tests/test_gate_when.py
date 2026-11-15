@@ -216,6 +216,14 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         row = [r for r in board if r["task_id"] == "demo-1"][0]
         self.assertEqual((row["phase"], row["gates_passed"]), ("gates", 1))
 
+    def test_prepare_refuses_a_gate_whose_when_files_holds_an_uncompilable_glob_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[self.passing_gate(name="docs-lint", when={"files": ["[z-a]"]})]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((refused.returncode, "docs-lint" in refused.stderr, "Traceback" in refused.stderr),
+                         (1, True, False), refused.stderr)
+
 
 class NewRunGateCommandCase(unittest.TestCase):
     def test_new_run_refuses_a_gate_without_command_with_the_argv_message_naming_the_gate(self):
