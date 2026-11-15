@@ -360,6 +360,32 @@ class JobFindingsTest(unittest.TestCase):
         outside_fences = re.sub(r"```.*?```", "", bodies[0], flags=re.S)
         self.assertIsNone(re.search(r"closes\s+" + re.escape(issue_url), outside_fences, re.I))
 
+    def test_store_is_created_when_the_job_directory_does_not_exist_yet(self):
+        adapter = load_adapter()
+
+        def fake(method, url, token, payload=None):
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            store_path = os.path.join(home, "jobs", "nightly", "fingerprints.json")
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke")]}, fh)
+            code = None
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    code = adapter.main(["file", "--home", home, "--findings", findings_path,
+                                         "--repo", "o/r"], fetch=fake)
+                except OSError as error:
+                    code = type(error).__name__
+            stored = None
+            if os.path.exists(store_path):
+                with open(store_path) as fh:
+                    stored = json.load(fh)
+        self.assertEqual((code, stored), (0, {"a": 9}))
+
 
 if __name__ == "__main__":
     unittest.main()
