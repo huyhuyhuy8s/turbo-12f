@@ -219,6 +219,30 @@ class JobFindingsTest(unittest.TestCase):
                 stored = json.load(fh)
         self.assertEqual((code, stored), (1, {}))
 
+    def test_no_issue_is_created_when_every_finding_is_still_open(self):
+        adapter = load_adapter()
+        calls = []
+
+        def fake(method, url, token, payload=None):
+            calls.append((method, url))
+            if method == "GET" and url == CREATE_URL + "/7":
+                return 200, {"number": 7, "state": "open"}, None
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            with open(os.path.join(home, "jobs", "nightly", "fingerprints.json"), "w") as fh:
+                json.dump({"a": 7}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke")]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                adapter.main(["file", "--home", home, "--findings", findings_path,
+                              "--repo", "o/r"], fetch=fake)
+        self.assertEqual([c for c in calls if c[0] == "POST"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
