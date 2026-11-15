@@ -52,7 +52,7 @@ through `t12-queue`, then takes each run's `next` from `t12 board --json`:
   529, overloaded) uses no attempt and does not mark the step as stuck. The
   row is queued again after an exponential, capped backoff, and the pool is one
   smaller for the rest of the invocation (never below one). A step refused
-  more than MAX_RATE_LIMIT_RETRIES times in a row is given up on.
+  more than MAX_CONSECUTIVE_RATE_LIMIT_RETRIES times in a row is given up on.
 
 The runner writes no state. The run records and event logs are the
 only state, so it can be killed at any point and started again
@@ -91,15 +91,12 @@ FORGES = {"github": ("create-pr", "GITHUB_TOKEN"),
           "gitlab": ("create-mr", "GITLAB_TOKEN"),
           "bitbucket": ("create-pr", "BITBUCKET_TOKEN")}
 DETERMINISTIC = ("tdd-step", "gate", "check")
-# The board's words for a lane's state (see `t12 board --json`): the run row while its lanes
-# are open, and the lane row that integrates a finished lane.
-LANES_IN_FLIGHT = "lanes: in flight"
-INTEGRATE = "tdd-step: integrate"
+BOARD_NEXT_LANES_IN_FLIGHT = "lanes: in flight"
+BOARD_NEXT_INTEGRATE_LANE = "tdd-step: integrate"
 LANE_CAP = 4
 BACKOFF_BASE_S = 30.0
 BACKOFF_MAX_S = 600.0
-# A step the provider refuses this many times in a row is given up on, like one that did not move.
-MAX_RATE_LIMIT_RETRIES = 6
+MAX_CONSECUTIVE_RATE_LIMIT_RETRIES = 6
 # Blind worktrees are made and removed under one lock: concurrent `git worktree add` and
 # `prune` in one repository race. The attempt report starts once however many lanes ask.
 WORKTREES = threading.Lock()
@@ -159,7 +156,7 @@ def steppable(row):
     """Whether a step can be taken for this row now. A run whose lanes are in flight, and
     a lane waiting for its `after` units, have no step of their own."""
     nxt = row["next"]
-    return not (nxt == LANES_IN_FLIGHT or row.get("waiting") or nxt.startswith("waiting: ")
+    return not (nxt == BOARD_NEXT_LANES_IN_FLIGHT or row.get("waiting") or nxt.startswith("waiting: ")
                 or row["busy"] or waiting_reason(row))
 
 
@@ -541,7 +538,8 @@ class Scheduler:
                 if inflight and (row.get("unit") is None
                                  or any(r.get("unit") is None for r in inflight.values())):
                     continue
-                if row["next"] == INTEGRATE and any(r["next"] == INTEGRATE for r in inflight.values()):
+                if row["next"] == BOARD_NEXT_INTEGRATE_LANE and any(
+                        r["next"] == BOARD_NEXT_INTEGRATE_LANE for r in inflight.values()):
                     continue
                 tried.add(k)
                 inflight[pool.submit(step, self.home, row, self.scratch,
@@ -557,7 +555,7 @@ class Scheduler:
         if result.rate_limited:
             hits = self.rate_hits[k] = self.rate_hits.get(k, 0) + 1
             self.dropped += 1
-            if hits > MAX_RATE_LIMIT_RETRIES:
+            if hits > MAX_CONSECUTIVE_RATE_LIMIT_RETRIES:
                 self.stuck[k] = (f"{row['next']} was rate limited {hits} times: {result.line}")[:200]
                 return False
             delay = min(self.backoff_max, self.backoff_base * 2 ** (hits - 1))

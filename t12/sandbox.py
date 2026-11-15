@@ -387,12 +387,12 @@ _HOST_SOCKETS = (
 )
 
 
-def probe_commands(sentinel_path, outside_path, sockets=()):
+def probe_commands(sentinel_path, outside_cage_target, sockets=()):
     return [
         ("forbidden_credential_access",
          ["python3", "-c", _CREDENTIAL_PROBE, sentinel_path]),
         ("external_effect_restriction",
-         ["python3", "-c", _EXTERNAL_PROBE, outside_path, *sockets]),
+         ["python3", "-c", _EXTERNAL_PROBE, outside_cage_target, *sockets]),
     ]
 
 
@@ -416,12 +416,7 @@ def run_probes(home, run, execute):
     venv = verification_env(home, run["task_id"])
     sentinel = os.path.join(home, "probe-sentinel.txt")
     store.atomic_write(sentinel, b"t12-probe-sentinel\n")
-    # The outside-write target must be outside every cage: the state
-    # home root is not a Landlock-writable path and is not mounted
-    # into a Docker container, while /tmp is the container's own
-    # ephemeral /tmp under Docker (writable, and therefore not a
-    # test of confinement at all).
-    outside = os.path.join(home, "probe-outside.txt")
+    outside_cage_target = os.path.join(home, "probe-outside.txt")
     # Sockets the probe must not reach: the host's well-known ones, a
     # pathname one listening outside the cage (the state home's path
     # can be past the 108-byte socket limit, so a fresh temp dir), and
@@ -439,7 +434,7 @@ def run_probes(home, run, execute):
     os.environ["T12_PROBE_SECRET"] = "canary"
     try:
         results = []
-        for name, argv in probe_commands(sentinel, outside, sockets):
+        for name, argv in probe_commands(sentinel, outside_cage_target, sockets):
             obs = execute(argv, cwd=worktree, timeout_s=15, env=venv,
                           sandbox=sandbox_ctx)
             detail = ""

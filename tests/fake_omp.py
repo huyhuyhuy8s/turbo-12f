@@ -138,7 +138,7 @@ class Fake:
             self.rate_limit()
         elif MODE == "supersede" and self.prompts == 1 and self.claim("supersede"):
             subprocess.run(os.environ["FAKE_OMP_BEFORE_CALL"], shell=True, check=True)
-            os.chdir("/")  # the hook may have removed the worktree this process started in
+            self.leave_possibly_removed_worktree()
             self.start_call()
         elif MODE == "loop":
             self.spin()
@@ -147,6 +147,10 @@ class Fake:
             self.finish("completed")
         else:
             self.start_call()
+
+    @staticmethod
+    def leave_possibly_removed_worktree():
+        os.chdir("/")
 
     def spin(self):
         for _ in range(MAX_LOOP_TURNS):

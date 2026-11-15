@@ -28,6 +28,13 @@ def sanitized_env(extra=None):
     return env
 
 
+_FACTORY_CONTAINER_ENV = {"GIT_ALLOW_PROTOCOL": "none", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def container_env(verification_env):
+    return {**_FACTORY_CONTAINER_ENV, **(verification_env or {})}
+
+
 def run(argv, cwd, timeout_s, env=None, sandbox=None):
     """Run argv (a list) and return an observation dict.
 
@@ -60,20 +67,10 @@ def run(argv, cwd, timeout_s, env=None, sandbox=None):
         if adapter is None:
             adapter = "landlock" if sandbox_module.landlock_available() else "none"
         if adapter == "docker":
-            # The container gets only the verification env, never the
-            # host's environment: secrets live in the host env and
-            # must not ride in through `-e`. Two factory-controlled
-            # values join it: no git protocols, and no __pycache__
-            # writes — without the latter, the verification commands
-            # themselves dirty the worktree and green refuses.
-            container_env = {"GIT_ALLOW_PROTOCOL": "none",
-                             "PYTHONDONTWRITEBYTECODE": "1"}
-            if env:
-                container_env.update(env)
             argv = sandbox_module.docker_run_argv(
                 sandbox.get("image") or sandbox_module.DEFAULT_DOCKER_IMAGE,
                 sandbox["worktree"], sandbox["verify_home"],
-                container_env, argv, sandbox.get("read_only", ()))
+                container_env(env), argv, sandbox.get("read_only", ()))
             sandbox_used = "docker"
         elif adapter == "landlock" and sandbox_module.landlock_available():
             kwargs["preexec_fn"] = sandbox_module.landlock_preexec(

@@ -10,11 +10,7 @@ from t12 import sandbox
 
 from tests.test_cage import CAGE, CageCase
 
-# Leaves the cage's session and process group, then keeps appending
-# to a worktree file. Prints the detached pid before the cage's
-# command exits. /proc is the host's, so /proc/self names the pid the
-# test can look up, which os.getpid() inside a PID namespace does not.
-DETACH = r"""
+DETACH_BEAT_PRINT_HOST_PID = r"""
 import os, sys, time
 beat = sys.argv[1]
 read_end, write_end = os.pipe()
@@ -28,7 +24,8 @@ if os.fork():
 null = os.open(os.devnull, os.O_RDWR)
 for fd in (0, 1, 2):
     os.dup2(null, fd)
-os.write(write_end, os.readlink("/proc/self").encode())
+host_pid = os.readlink("/proc/self")
+os.write(write_end, host_pid.encode())
 os.close(write_end)
 while True:
     with open(beat, "a") as fh:
@@ -36,11 +33,7 @@ while True:
     time.sleep(0.05)
 """
 
-# Detaches like DETACH, records its pid in a worktree file, attacks the
-# process that started the command, then rewrites the worktree's .git
-# pointer after a delay. The command itself exits at once, or stays
-# for a while when the attack is "none".
-REWRITE_LATER = r"""
+DETACH_ATTACK_PARENT_REWRITE_POINTER = r"""
 import os, resource, sys, time
 attack, delay, pid_file = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 parent = os.getppid()
@@ -57,8 +50,9 @@ if os.fork():
 null = os.open(os.devnull, os.O_RDWR)
 for fd in (0, 1, 2):
     os.dup2(null, fd)
+host_pid = os.readlink("/proc/self")
 with open(pid_file + ".tmp", "w") as fh:
-    fh.write(os.readlink("/proc/self"))
+    fh.write(host_pid)
 os.rename(pid_file + ".tmp", pid_file)
 if attack != "none":
     try:
@@ -85,7 +79,7 @@ def alive(pid):
 class CageLifetimeTest(CageCase):
     def detach(self, beat):
         return ["--home", self.home, "--task-id", "demo-1", "--",
-                "python3", "-c", DETACH, beat]
+                "python3", "-c", DETACH_BEAT_PRINT_HOST_PID, beat]
 
     def assert_silent(self, pid, beat):
         self.addCleanup(lambda: alive(pid) and os.kill(pid, signal.SIGKILL))
@@ -110,7 +104,7 @@ class CageLifetimeTest(CageCase):
                "time.sleep(60)"
         proc = subprocess.Popen(
             [CAGE, "--home", self.home, "--task-id", "demo-1", "--",
-             "python3", "-c", hold, DETACH, beat],
+             "python3", "-c", hold, DETACH_BEAT_PRINT_HOST_PID, beat],
             stdout=subprocess.PIPE, text=True, cwd=self.worktree)
         self.addCleanup(proc.stdout.close)
         self.addCleanup(proc.kill)
@@ -129,7 +123,8 @@ class CageLifetimeTest(CageCase):
         pid_file = os.path.join(self.worktree, "rewriter.pid")
         cage = subprocess.Popen(
             [CAGE, "--home", self.home, "--task-id", "demo-1", "--",
-             "python3", "-c", REWRITE_LATER, str(attack), str(REWRITE_DELAY_S), pid_file],
+             "python3", "-c", DETACH_ATTACK_PARENT_REWRITE_POINTER,
+             str(attack), str(REWRITE_DELAY_S), pid_file],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=self.worktree,
             env=dict(os.environ, TMPDIR=self.tmp.name))
         self.addCleanup(cage.wait)
@@ -151,7 +146,7 @@ class CageLifetimeTest(CageCase):
                          "a process that outlived the cage rewrote the .git pointer")
         self.assertFalse(alive(pid), "a detached process outlived the cage")
 
-    def assert_limit_on_the_parent_leaves_no_survivor(self, limit):
+    def assert_zeroed_limit_on_the_parent_leaves_no_survivor(self, limit):
         pointer = self.read_pointer()
         cage, pid = self.start_rewriter(limit)
 
@@ -159,13 +154,11 @@ class CageLifetimeTest(CageCase):
 
         self.assert_pointer_survives(pointer, pid)
 
-    def test_cpu_limit_on_the_parent_leaves_no_survivor(self):
-        # A zero CPU limit makes the kernel kill the process it is set on.
-        self.assert_limit_on_the_parent_leaves_no_survivor(resource.RLIMIT_CPU)
+    def test_a_zero_cpu_limit_that_kills_the_parent_leaves_no_survivor(self):
+        self.assert_zeroed_limit_on_the_parent_leaves_no_survivor(resource.RLIMIT_CPU)
 
-    def test_open_file_limit_on_the_parent_leaves_no_survivor(self):
-        # A zero open-file limit fails any cleanup that opens a file.
-        self.assert_limit_on_the_parent_leaves_no_survivor(resource.RLIMIT_NOFILE)
+    def test_a_zero_open_file_limit_that_fails_cleanup_opening_files_leaves_no_survivor(self):
+        self.assert_zeroed_limit_on_the_parent_leaves_no_survivor(resource.RLIMIT_NOFILE)
 
     def test_killing_the_cage_leaves_no_survivor(self):
         pointer = self.read_pointer()
@@ -176,8 +169,7 @@ class CageLifetimeTest(CageCase):
 
         self.assert_pointer_survives(pointer, pid)
 
-    def test_git_status_works_despite_an_unreadable_user_config(self):
-        # A user exclude file the cage may not read: git dies on it.
+    def give_the_user_an_exclude_file_the_cage_may_not_read(self):
         user_home = os.path.join(self.tmp.name, "user")
         os.makedirs(os.path.join(user_home, ".config", "git"))
         with open(os.path.join(user_home, ".config", "git", "ignore"), "w") as fh:
@@ -186,6 +178,9 @@ class CageLifetimeTest(CageCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("XDG_CONFIG_HOME", None)
+
+    def test_git_status_works_despite_a_user_exclude_file_the_cage_may_not_read(self):
+        self.give_the_user_an_exclude_file_the_cage_may_not_read()
         self.write_worktree("app.py", "BUILDER_EDIT = True\n")
 
         result = self.cage(

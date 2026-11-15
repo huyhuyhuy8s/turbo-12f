@@ -10,10 +10,7 @@ from tests.test_t12 import APP_V1, BIN, ROOT, task_dict
 
 CAGE = os.path.join(ROOT, "bin", "t12-cage")
 
-# Each vector is (name, path, mode, payload). Run inside the cage; it
-# reports which writes landed. It never fails on a denial: denial is
-# the expected outcome and the test reads the report.
-PLANT = r"""
+PLANT_EXPECTING_DENIAL = r"""
 import json, sys
 vectors = json.loads(sys.argv[1])
 report = {}
@@ -123,7 +120,7 @@ class TamperingVectorTest(CageCase):
         ]
         result = self.cage(
             "--home", self.home, "--task-id", "demo-1", "--",
-            "python3", "-c", PLANT, json.dumps(vectors),
+            "python3", "-c", PLANT_EXPECTING_DENIAL, json.dumps(vectors),
         )
         report = json.loads(result.stdout.strip().splitlines()[-1])
 

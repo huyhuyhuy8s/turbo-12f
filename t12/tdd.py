@@ -57,12 +57,24 @@ class Lane(NamedTuple):
 
 
 LANE_SCOPE = "lane-scope"
+NO_NEW_COMMIT = "no-new-commit"
 
 
 def _lane(run, record=None):
     if record is None:
         return Lane(run["tdd"], run["worktree"])
     return Lane(record, record["worktree"], record["unit"], record["owns"], record["tests"])
+
+
+def _is_parallel(units, tdd):
+    several_units = len(units) >= 2
+    lanes_allowed = tdd.get("max_lanes", model.DEFAULT_MAX_LANES) >= 2
+    return several_units and lanes_allowed
+
+
+def _outside_red_boundary(ctx, dirty, test_paths):
+    return [p for p in dirty
+            if not model.under(p, ctx.tests if p in test_paths else ctx.owns)]
 
 
 def _outside_scope(lane, paths, writable):
@@ -531,9 +543,7 @@ def analyze(home, run, role, session, args, *, runner, lane=None):
         if unanswered:
             return refuse("finding-coverage",
                           f"review findings {unanswered} appear in no item text, source or directive")
-    # Without units, or with one, or when max_lanes is 1, the run stays serial
-    # and the list is read as it always was.
-    parallel = len(units) >= 2 and tdd.get("max_lanes", model.DEFAULT_MAX_LANES) >= 2
+    parallel = _is_parallel(units, tdd)
     declared = {u["id"] for u in units}
     if not parallel:
         unknown = sorted({i["unit"] for i in items if "unit" in i and i["unit"] not in declared})
@@ -676,10 +686,7 @@ def red(home, run, role, session, args, *, runner, lane=None):
         return refuse("red-existing-test", "red only creates test files; these existing tests "
                                            f"are read-only to it: {', '.join(existing)}")
     if ctx.unit is not None:
-        # Tests go under the unit's tests; a stub, the only production edit
-        # red may make, under its owns.
-        stray = [p for p in dirty
-                 if not model.under(p, ctx.tests if p in tests else ctx.owns)]
+        stray = _outside_red_boundary(ctx, dirty, tests)
         if stray:
             mine = sorted(p for p in created if model.under(p, ctx.tests))
             extend = (f"; you created {', '.join(mine)} earlier in this run and may add the "
@@ -966,7 +973,7 @@ def refactor(home, run, role, session, args, *, runner, patch, lane=None):
 def _structural_problem(run, wt, tip, tdd):
     review = model.changes_requested(run)
     if review is not None and tip == review["commit"]:
-        return ("no-new-commit", f"the review asked for changes on {tip[:12]} and no new "
+        return (NO_NEW_COMMIT, f"the review asked for changes on {tip[:12]} and no new "
                 "commit was made"), []
     current = gitio.blob_map(wt, tip, lambda p: globs.match(p, tdd["test_globs"]))
     if current != tdd["locked"]:
@@ -979,10 +986,9 @@ def _structural_problem(run, wt, tip, tdd):
     outside = model.outside_touches(run, changed)
     if outside:
         return ("touches", f"changes outside the task's touches: {', '.join(outside)}"), []
-    # Measured from where the tip leaves trunk, so a base that already
-    # carries an unreviewed edit cannot hide it.
-    fork = gitio.merge_base(wt, run["trunk_commit"], tip)
-    changed = sorted(set(changed) | set(gitio.changed_paths(wt, fork, tip)))
+    changed_since_trunk_fork = gitio.changed_paths(
+        wt, gitio.merge_base(wt, run["trunk_commit"], tip), tip)
+    changed = sorted(set(changed) | set(changed_since_trunk_fork))
     protected = [p for p in changed if model.under(p, run["protected_paths"])]
     if protected:
         return ("protected", f"changes to protected paths: {', '.join(protected)}"), []
@@ -1009,10 +1015,8 @@ def final(home, run, *, runner):
             return _refuse(run, ctx, runner, "green", "tdd-final-failed", problem[0], problem[1],
                            tail=[problem[1]], next_step="green")
         except StateError:
-            # A review that asked for changes and a tip that did not move cannot
-            # be repaired by retrying the step: put the report in front of a human.
-            if problem[0] == "no-new-commit":
-                _pause(run, ctx, runner, _unanswered_review(run, tip), "no-new-commit")
+            if problem[0] == NO_NEW_COMMIT:
+                _pause(run, ctx, runner, _unanswered_review(run, tip), NO_NEW_COMMIT)
             raise
     failed, refs = _run_checks(run, ctx, runner, tip, "final")
     if failed:

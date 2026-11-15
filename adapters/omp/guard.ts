@@ -73,8 +73,7 @@ function normalize(policy: GuardPolicy): Policy {
 
 const regexCache = new Map<string, RegExp>();
 
-/** Line-for-line port of `_glob_regex` in adapters/workspace.py. */
-function globToRegExp(glob: string): RegExp {
+function globRegex(glob: string): RegExp {
 	const cached = regexCache.get(glob);
 	if (cached) return cached;
 	let re = "";
@@ -109,7 +108,7 @@ function globToRegExp(glob: string): RegExp {
 
 function matchesAny(globs: string[], rels: string[]): boolean {
 	return globs.some(g => {
-		const re = globToRegExp(g);
+		const re = globRegex(g);
 		return rels.some(r => re.test(r));
 	});
 }
@@ -167,12 +166,7 @@ function pieces(raw: string): string[] {
 	return raw.split(/[;\n]/).map(clean).filter(p => p !== "");
 }
 
-/**
- * Every string that might name a hidden file inside one path argument: the piece itself, each
- * `:`-separated segment (selectors, archive members, sqlite tables), and whitespace/comma tokens
- * (delimited-list recovery). Over-matching only ever blocks more.
- */
-function hiddenCandidates(piece: string): string[] {
+function possibleFileNames(piece: string): string[] {
 	const out = new Set([piece]);
 	for (const seg of piece.split(":")) out.add(seg);
 	for (const tok of piece.split(/[\s,]+/)) if (tok) out.add(tok);
@@ -181,7 +175,7 @@ function hiddenCandidates(piece: string): string[] {
 
 function checkHidden(policy: Policy, piece: string, cwd: string, verb: string): Decision {
 	if (policy.hidden.length === 0) return ALLOW;
-	for (const cand of hiddenCandidates(piece)) {
+	for (const cand of possibleFileNames(piece)) {
 		if (scheme(cand)) continue;
 		if (matchesAny(policy.hidden, locate(cand, cwd).rels)) {
 			return block(`${piece} is hidden from this task; ${verb} a different path or finish with what you can see`);
@@ -194,7 +188,7 @@ function checkRead(policy: Policy, raw: string, cwd: string): Decision {
 	for (const piece of pieces(raw)) {
 		const d = checkHidden(policy, piece, cwd, "read");
 		if (d.block) return d;
-		const c = checkConfine(policy, piece, cwd, true);
+		const c = checkConfined(policy, piece, cwd, true);
 		if (c.block) return c;
 	}
 	return ALLOW;
@@ -210,20 +204,15 @@ function readAllowed(policy: Policy, file: string, cwd: string): boolean {
 	});
 }
 
-/**
- * `confine`: the blind worktree shares the repo's object store, so anything outside cwd or under a
- * `.git` segment (literal, or a glob segment that could match one) is off limits. `skill://` and
- * `allow_read` locations are readable (`reading` only); writes never get that exemption.
- */
-function checkConfine(policy: Policy, piece: string, cwd: string, reading = false): Decision {
+function checkConfined(policy: Policy, piece: string, cwd: string, reading = false): Decision {
 	if (!policy.confine || scheme(piece)) return ALLOW;
 	const why = `${piece} is outside the project or inside .git; use paths inside the working directory`;
 	const first = piece.split(":")[0];
 	if (locate(first, cwd).escapes && !(reading && readAllowed(policy, first, cwd))) return block(why);
-	for (const cand of hiddenCandidates(piece)) {
+	for (const cand of possibleFileNames(piece)) {
 		if (scheme(cand)) continue;
 		if (locate(cand, cwd).rels.some(r => r.split("/").includes(".git"))) return block(why);
-		if (cand.split("/").some(seg => GLOB_CHARS.test(seg) && !/^\*+$/.test(seg) && globToRegExp(seg).test(".git"))) {
+		if (cand.split("/").some(seg => GLOB_CHARS.test(seg) && !/^\*+$/.test(seg) && globRegex(seg).test(".git"))) {
 			return block(why);
 		}
 	}
@@ -241,7 +230,7 @@ function mayExpand(piece: string, cwd: string): boolean {
 
 function checkWrite(policy: Policy, raw: string, cwd: string): Decision {
 	for (const piece of pieces(raw)) {
-		const confined = checkConfine(policy, piece, cwd);
+		const confined = checkConfined(policy, piece, cwd);
 		if (confined.block) return confined;
 		const sch = scheme(piece);
 		if (sch) {
@@ -263,11 +252,10 @@ function checkWrite(policy: Policy, raw: string, cwd: string): Decision {
 	return ALLOW;
 }
 
-/** Writes to a set of paths that may be globs or directories: provable only when nothing is restricted. */
-function checkWriteExpanding(policy: Policy, raw: string, cwd: string): Decision {
+function checkWriteGlobOrDirectory(policy: Policy, raw: string, cwd: string): Decision {
 	const restricted = policy.hidden.length > 0 || policy.readOnly.length > 0 || policy.writable !== null;
 	for (const piece of pieces(raw)) {
-		const confined = checkConfine(policy, piece, cwd);
+		const confined = checkConfined(policy, piece, cwd);
 		if (confined.block) return confined;
 		if (!scheme(piece) && mayExpand(piece, cwd)) {
 			if (restricted) {
@@ -412,7 +400,7 @@ function decideNormalized(policy: Policy, tool: string, input: Record<string, un
 				return restricted ? block("ast_edit needs explicit paths") : ALLOW;
 			}
 			for (const p of paths) {
-				const d = checkWriteExpanding(policy, p, cwd);
+				const d = checkWriteGlobOrDirectory(policy, p, cwd);
 				if (d.block) return d;
 			}
 			return ALLOW;

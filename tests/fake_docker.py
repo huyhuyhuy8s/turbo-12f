@@ -13,6 +13,10 @@ def log(argv):
         fh.write(json.dumps(argv) + "\n")
 
 
+def container_env(env):
+    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **env}
+
+
 def main():
     argv = sys.argv[1:]
     log(argv)
@@ -26,17 +30,12 @@ def main():
         if worktree is None or image is None:
             print("fake-docker: could not parse docker run argv", file=sys.stderr)
             return 125
-        full_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
-        # Only the -e flags reach the command — exactly like a real
-        # container. The stub's own inherited environment (which may
-        # hold the probe canary) must not leak in.
-        full_env.update(env)
         preexec = None
         if sb.landlock_available():
             preexec = sb.landlock_preexec(worktree, verify_home or worktree)
         try:
             proc = subprocess.run(
-                rest, cwd=worktree, env=full_env, preexec_fn=preexec,
+                rest, cwd=worktree, env=container_env(env), preexec_fn=preexec,
                 capture_output=False)
         except OSError as exc:
             print(f"fake-docker: cannot launch {' '.join(rest)}: {exc}", file=sys.stderr)

@@ -154,6 +154,15 @@ def _verify_chain_or_raise(home, run):
         raise StateError("event log failed verification: " + "; ".join(problems[:3]))
 
 
+def _verify_evidence_unchanged(home, task_id, refs):
+    for _, ref in refs:
+        evidence.verify_ref(home, task_id, ref)
+
+
+def _trunk_profile(repo, trunk_commit):
+    return profile_mod.parse(gitio.file_at(repo, trunk_commit, profile_mod.PATH))
+
+
 def _tdd_runner(home, run, lane=None):
     wt = run["worktree"] if lane is None else lane["worktree"]
     unit = None if lane is None else lane["unit"]
@@ -459,7 +468,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     if gitio.file_at(repo, trunk_commit, profile_mod.LEGACY_PATH) is not None:
         raise StateError(f"{profile_mod.LEGACY_PATH} is no longer read; move its "
                          f"security_review_paths into {profile_mod.PATH} on {trunk}")
-    profile = profile_mod.parse(gitio.file_at(repo, trunk_commit, profile_mod.PATH))
+    profile = _trunk_profile(repo, trunk_commit)
     task = profile_mod.apply(profile, task)
     for role in profile["roles"]:
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
@@ -663,7 +672,7 @@ def cmd_context(args):
         "test_globs": list(tdd["test_globs"]),
         "protected_paths": run.get("protected_paths", []),
     }
-    pins = profile_mod.parse(gitio.file_at(run["repo"], run["trunk_commit"], profile_mod.PATH))
+    pins = _trunk_profile(run["repo"], run["trunk_commit"])
     context["skills"] = profile_mod.applicable_skills(pins, args.role, run["repo"],
                                                       run["base_commit"])
     if kind in ("green", "refactor"):
@@ -725,7 +734,7 @@ def cmd_gate(args):
             "duration_s": obs["duration_s"],
             "output": (obs["stdout"] + obs["stderr"])[-4000:],
         })
-        phase = _send_back(home, run, "gate", ref, {"gate": gate["name"]})
+        phase = _send_back(home, run, model.REPAIR_FROM_GATE_FAILURE, ref, {"gate": gate["name"]})
         b = run["budgets"]
         if phase == "paused":
             raise StateError(
@@ -825,10 +834,7 @@ def cmd_review(args):
     })
     _save(home, run, "reviewed", {"role": role, "verdict": args.verdict, "commit": commit[:12]})
     if args.verdict == "changes-requested":
-        # Each changes-requested round is one repair, so a reviewer and a
-        # tdd loop that cannot agree end at the cap, with a human, instead
-        # of looping review forever.
-        if _send_back(home, run, "review", ref, {"role": role}) == "paused":
+        if _send_back(home, run, model.REPAIR_FROM_CHANGES_REQUESTED, ref, {"role": role}) == "paused":
             cap = run["budgets"]["repair_cap"]
             print(f"review: {role} requested changes on {commit[:12]} ({ref['name']}); the repair "
                   f"cap ({cap}) is exceeded, run paused for a human")
@@ -1212,8 +1218,7 @@ def _resume_lane(args):
     changed = _locked_tests_problem(lane, wt)
     if changed:
         raise StateError(f"refusing resume: test files changed while paused: {changed}")
-    for _, ref in _tdd_refs(lane, f"lane {args.unit}"):
-        evidence.verify_ref(home, task_id, ref)
+    _verify_evidence_unchanged(home, task_id, _tdd_refs(lane, f"lane {args.unit}"))
     with model.run_lock(home, task_id):
         _verify_chain_or_raise(home, _run(home, task_id))
     if cycle_limit != limit:
@@ -1275,10 +1280,7 @@ def cmd_resume(args):
     changed = _locked_tests_problem(run.get("tdd") or {}, wt)
     if changed:
         raise StateError(f"refusing resume: test files changed while paused: {changed}")
-    # Resume consistency: every recorded evidence ref must still hash
-    # to what was recorded. A changed byte while paused fails closed.
-    for _, ref in _evidence_refs(run):
-        evidence.verify_ref(home, run["task_id"], ref)
+    _verify_evidence_unchanged(home, run["task_id"], _evidence_refs(run))
     _verify_chain_or_raise(home, run)
     budgets["repair_cap"] = repair_cap
     budgets["cycle_limit"] = cycle_limit
@@ -1774,11 +1776,8 @@ def build_parser():
     return parser
 
 
-# Commands that read and lock nothing: a reader needs no lock, since the
-# store writes every record atomically. Of the rest, those a lane may name
-# (`--unit`) take the lane's lock instead of the run's.
-READ_ONLY = (cmd_status, cmd_context, cmd_tool_schema)
-LANE_COMMANDS = (cmd_act, cmd_tdd_step, cmd_resume)
+LOCKLESS_COMMANDS = (cmd_status, cmd_context, cmd_tool_schema)
+LANE_LOCKED_COMMANDS = (cmd_act, cmd_tdd_step, cmd_resume)
 
 
 def _integration_green_pending(run):
@@ -1794,12 +1793,10 @@ def main(argv=None):
                 raise StateError(
                     f"refusing: this t12 ({PROJECT_ROOT}) runs from inside the state home; "
                     "a candidate never certifies itself, run the installed factory instead")
-        if getattr(args, "task_id", None) is None or args.func in READ_ONLY:
+        if getattr(args, "task_id", None) is None or args.func in LOCKLESS_COMMANDS:
             return args.func(args)
         unit = getattr(args, "unit", None)
-        if unit is not None and args.func in LANE_COMMANDS:
-            # A lane command holds its lane's lock, not the run's: the run
-            # lock is taken inside, around each event append.
+        if unit is not None and args.func in LANE_LOCKED_COMMANDS:
             with model.lane_lock(_home(args), args.task_id, unit):
                 return args.func(args)
         if unit is None and args.func is cmd_act and _integration_green_pending(

@@ -87,7 +87,7 @@ class PolicyCase(unittest.TestCase):
         runner.t12 = lambda *args, **kw: (seen.append(args), subprocess.CompletedProcess(
             args, 0, "merged\n", ""))[1]
         self.addCleanup(setattr, runner, "t12", original)
-        row = {"task_id": "demo-1", "unit": "U2", "next": runner.INTEGRATE}
+        row = {"task_id": "demo-1", "unit": "U2", "next": runner.BOARD_NEXT_INTEGRATE_LANE}
         self.assertEqual(runner.step("/h", row, "/scratch").line, "merged")
         self.assertEqual(seen, [("tdd-step", "--home", "/h", "--task-id", "demo-1", "--unit", "U2")])
         self.assertEqual((runner.label(row), runner.key(row)), ("demo-1@U2", ("demo-1", "U2")))
@@ -480,10 +480,10 @@ class RunnerMisbehaviourTest(RunnerOmpCase):
 
     def test_a_step_the_provider_keeps_refusing_is_given_up_on_after_the_retry_cap(self):
         out = self.drive(omp_mode="rate-limit", extra=("--backoff-base", "0.01", "--backoff-max", "0.02"))
-        self.assertEqual(len(self.sessions()), runner.MAX_RATE_LIMIT_RETRIES + 1)
+        self.assertEqual(len(self.sessions()), runner.MAX_CONSECUTIVE_RATE_LIMIT_RETRIES + 1)
         self.assertEqual(self.calls(), [])
         self.assertNotEqual(self.run_record()["phase"], "local-verified")
-        self.assertIn(f"rate limited {runner.MAX_RATE_LIMIT_RETRIES + 1} times", "\n".join(self.lines(self.notes)))
+        self.assertIn(f"rate limited {runner.MAX_CONSECUTIVE_RATE_LIMIT_RETRIES + 1} times", "\n".join(self.lines(self.notes)))
 
     def test_a_restarted_runner_carries_on_from_the_run_record(self):
         self.drive(omp_mode="loop")
@@ -707,7 +707,7 @@ class SchedulerCase(unittest.TestCase):
         return row
 
     def lanes(self, *units, max_lanes=2):
-        self.row(nxt=runner.LANES_IN_FLIGHT, max_lanes=max_lanes)
+        self.row(nxt=runner.BOARD_NEXT_LANES_IN_FLIGHT, max_lanes=max_lanes)
         for unit in units:
             self.row(unit)
 
@@ -739,7 +739,7 @@ class SchedulerCase(unittest.TestCase):
         sched = self.sched()
         while sched.run_task(self.pool, "t"):
             pass
-        self.assertEqual(len(self.started), runner.MAX_RATE_LIMIT_RETRIES + 1)
+        self.assertEqual(len(self.started), runner.MAX_CONSECUTIVE_RATE_LIMIT_RETRIES + 1)
         self.assertIn("rate limited", sched.stuck[("t", None)])
         self.assertEqual(sched.stuck_reason("t"), sched.stuck[("t", None)])
 
@@ -793,8 +793,8 @@ class SchedulerCase(unittest.TestCase):
 
     def test_integration_goes_one_lane_at_a_time_and_alone_among_run_steps(self):
         self.lanes("U1", "U2", "U3", max_lanes=3)
-        self.rows[("t", "U1")].update(next=runner.INTEGRATE)
-        self.rows[("t", "U2")].update(next=runner.INTEGRATE)
+        self.rows[("t", "U1")].update(next=runner.BOARD_NEXT_INTEGRATE_LANE)
+        self.rows[("t", "U2")].update(next=runner.BOARD_NEXT_INTEGRATE_LANE)
         self.gate = threading.Event()
         self.addCleanup(self.gate.set)
         inflight = {}
@@ -895,12 +895,11 @@ else:
 
 class RunnerLaneTest(RunnerOmpCase):
     MAX_LANES = 2
-    # Unit U1's test runs take longer than the 2 s a command waits for a lock, so a lane that
-    # held the run lock while it ran tests would make U2's `act` fail as busy.
-    SLOW_TESTS = ["python3", "-c",
-                  "import os, sys, time; time.sleep(2.5 if '@U1' in os.getcwd() else 0); "
-                  "os.execvp(sys.executable, [sys.executable, '-m', 'unittest', 'discover', "
-                  "'-s', 'tests', '-q'])"]
+    U1_TESTS_OUTLASTING_THE_LOCK_WAIT = [
+        "python3", "-c",
+        "import os, sys, time; time.sleep(2.5 if '@U1' in os.getcwd() else 0); "
+        "os.execvp(sys.executable, [sys.executable, '-m', 'unittest', 'discover', "
+        "'-s', 'tests', '-q'])"]
 
     def setUp(self):
         super().setUp()
@@ -923,7 +922,8 @@ class RunnerLaneTest(RunnerOmpCase):
             task = json.load(fh)
         task.update(title="two modules", acceptance_criteria=["fa returns 1", "fb returns 1"],
                     touches=["a.py", "b.py", "tests"], op_limit=200, attempt_limit=20,
-                    max_lanes=self.MAX_LANES, test_command=self.SLOW_TESTS)
+                    max_lanes=self.MAX_LANES,
+                    test_command=self.U1_TESTS_OUTLASTING_THE_LOCK_WAIT)
         with open(path, "w") as fh:
             json.dump(task, fh)
 
@@ -975,7 +975,7 @@ class RunnerLaneTest(RunnerOmpCase):
                                  "U2": {"b.py", "tests/test_b.py"}})
         self.assertNotEqual(rows["U1"]["tip"], rows["U2"]["tip"])
 
-    def test_lane_steps_are_logged_by_unit_and_a_sibling_running_slow_tests_is_not_busy(self):
+    def test_lane_steps_are_logged_by_unit_and_a_sibling_whose_tests_outlast_the_lock_wait_does_not_make_acts_busy(self):
         out = self.drive_lanes()
         self.assertIn("demo-1: analyzer: analyze ->", out)
         self.assertIn("demo-1@U1: red: red ->", out)
@@ -1002,7 +1002,7 @@ class RunnerLaneTest(RunnerOmpCase):
             self.assertTrue(os.path.exists(os.path.join(record["worktree"], "tests", f"test_{name}.py")))
         self.assertEqual(model.verify_chain(self.home, record), [])
 
-    def test_a_rate_limit_lowers_the_pool_so_the_lanes_stop_overlapping(self):
+    def test_a_rate_limited_analyzer_is_retried_and_the_lanes_stop_overlapping_after_the_pool_is_lowered(self):
         self.extra_env.update(FAKE_OMP_RATE_LIMITS="1", FAKE_OMP_STATE=self.fake_state)
         out = self.drive_lanes(omp_mode="rate-limit")
         self.assertIn("analyzer rate-limited", out)

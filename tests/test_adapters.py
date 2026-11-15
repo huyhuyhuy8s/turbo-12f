@@ -488,9 +488,7 @@ class GitHubAdapterCase(AdapterCase):
         data, _ = self.github(home, {"readback_status": 500})
         self.assertEqual(data["outcome"], "uncertain")
 
-    def test_list_forbidden_is_uncertain_not_denied(self):
-        # The Turbo lesson: a 403 on a READ means the state is unknown,
-        # not that the delivery was denied.
+    def test_a_403_on_a_read_leaves_delivery_state_unknown_rather_than_denied(self):
         home = make_verified_home(self.tmp.name, {"github_repo": "o/r"})
         data, _ = self.github(home, {"list_status": 403})
         self.assertEqual(data["outcome"], "uncertain")

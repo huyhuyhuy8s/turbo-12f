@@ -322,6 +322,14 @@ def review_roles(roles):
     return sorted(name for name, spec in roles.items() if spec["kind"] == "review")
 
 
+def _allow_no_deps_unless_listed(data):
+    data.setdefault("verify_deps", [])
+
+
+def _protected_paths_and_their_folders(protected_paths):
+    return set(protected_paths) | {os.path.dirname(p) for p in protected_paths if os.path.dirname(p)}
+
+
 def parse(text):
     """The profile as stored on the trunk commit; None means no profile."""
     if text is None:
@@ -344,7 +352,7 @@ def parse(text):
     for key in SCOPE_KEYS:
         data[key] = _paths(key, data.get(key, []))
     if text is not None:
-        data.setdefault("verify_deps", [])
+        _allow_no_deps_unless_listed(data)
     data["roles"] = _roles(data.get("roles", {}))
     if "intake" in data:
         data["intake"] = _intake(data["intake"])
@@ -422,12 +430,7 @@ def apply(profile, task):
         if key not in profile:
             continue
         merged[key] = merge(profile[key], task[key]) if key in task else profile[key]
-    # A dep beside a protected file can shadow it too, as a __pycache__
-    # next to a protected test does, so each protected path's folder
-    # counts. Root-level files are the exception: their folder is the
-    # whole repo.
-    roots = set(profile["protected_paths"])
-    roots |= {os.path.dirname(p) for p in profile["protected_paths"] if os.path.dirname(p)}
+    roots = _protected_paths_and_their_folders(profile["protected_paths"])
     for dep in merged.get("verify_deps", []):
         dep_path = os.path.normpath(dep)
         for root in sorted(roots):

@@ -269,14 +269,14 @@ class LaneStateTest(unittest.TestCase):
 
     def test_a_held_lane_lock_fails_as_busy(self):
         model.save_lane(self.home, model.new_lane(self.home, self.run, SPEC, "active"), "demo-1")
-        original, model.LOCK_WAIT_S = model.LOCK_WAIT_S, 0.1
+        original, model.LOCK_BUSY_TIMEOUT_S = model.LOCK_BUSY_TIMEOUT_S, 0.1
         try:
             with model.lane_lock(self.home, "demo-1", "U1"):
                 with self.assertRaisesRegex(StateError, "busy"):
                     with model.lane_lock(self.home, "demo-1", "U1"):
                         pass
         finally:
-            model.LOCK_WAIT_S = original
+            model.LOCK_BUSY_TIMEOUT_S = original
 
     def test_a_lane_lock_needs_a_lane(self):
         with self.assertRaises(StateError):

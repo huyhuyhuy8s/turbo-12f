@@ -388,10 +388,7 @@ class CliCase(TddFlow, unittest.TestCase):
         result = self.red(text=source, line=6, expect=1)
         self.assertIn("assertion_pattern", result.stderr)
 
-    def test_a_setup_that_loads_code_not_written_yet_is_not_a_valid_red(self):
-        # Upstream's old flow accepted these. Here a red must fail at its
-        # named last assertion; code that does not exist yet is made to
-        # exist with a red stub (red_stub_max_lines), not excused.
+    def test_a_red_that_fails_in_setup_not_at_the_named_assertion_is_refused_and_asks_for_a_stub(self):
         self.analyze()
         for exc in ("FileNotFoundError('adapters/new.py')", "ImportError('no module new')"):
             source = (
@@ -426,7 +423,7 @@ class CliCase(TddFlow, unittest.TestCase):
         self.red(test_file="tests/unit/test_greet.py")
         self.assertEqual(self.run_record()["tdd"]["step"], "green")
 
-    def test_red_runs_on_the_commit_not_the_worktree(self):
+    def test_red_runs_on_the_commit_which_does_not_carry_an_ignored_package_that_the_worktree_has(self):
         self.analyze()
         with open(os.path.join(self.repo, ".git", "info", "exclude"), "a") as fh:
             fh.write("app/\n")
@@ -1259,7 +1256,7 @@ class CliCase(TddFlow, unittest.TestCase):
         result = self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=1)
         self.assertIn("gate requires phase 'gates'", result.stderr)
 
-    def test_green_checks_the_commit_not_the_worktree(self):
+    def test_green_fails_when_the_commit_under_test_does_not_carry_an_ignored_module_the_worktree_has(self):
         self.analyze()
         self.red()
         with open(os.path.join(self.repo, ".git", "info", "exclude"), "a") as fh:
