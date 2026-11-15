@@ -340,6 +340,25 @@ class CubicJobTest(unittest.TestCase):
         self.assertEqual(cleanup, [["git", "branch", "-D", "t12-job/cubic-base"],
                                    ["git", "worktree", "remove", "--force", review_cwd]])
 
+    def test_failed_git_branch_still_removes_the_detached_checkout(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append((argv, cwd))
+            if argv[:2] == ["git", "branch"]:
+                return 128, "", "fatal"
+            return 0, "", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+        checkout = [a[4] for a, _ in calls if a[:3] == ["git", "worktree", "add"]][0]
+        removals = [a for a, _ in calls if a[:3] == ["git", "worktree", "remove"]]
+        self.assertEqual(removals, [["git", "worktree", "remove", "--force", checkout]])
+
 
 if __name__ == "__main__":
     unittest.main()
