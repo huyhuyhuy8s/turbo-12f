@@ -15,7 +15,7 @@ def _next_url(headers):
 def _default_fetch(url, token):
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(req) as resp:
-        return resp.status, json.loads(resp.read()), {}, None
+        return resp.status, json.loads(resp.read()), dict(resp.headers), None
 
 
 
