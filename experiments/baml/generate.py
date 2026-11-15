@@ -51,6 +51,15 @@ def class_block(name, fields):
     return f"class {name} {{\n" + body + "}\n"
 
 
+def class_name(tool):
+    return tool.title().replace("_", "")
+
+
+def analyzer_answer():
+    union = " | ".join(class_name(tool) for tool in tools.TOOLS["analyzer"])
+    return f"function AnalyzerAnswer(input: string) -> {union} {{\n}}\n"
+
+
 def render():
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
     item = class_block("TestItem", {
@@ -60,4 +69,4 @@ def render():
     unit_item = class_block("UnitTestItem", {"unit": "string?"})
     finding = class_block("Finding", {f: tools.STR for f in tools.FINDING_FIELDS})
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
-            + "\n" + unit_item + "\n" + finding)
+            + "\n" + unit_item + "\n" + finding + "\n" + analyzer_answer())
