@@ -129,8 +129,10 @@ def run_command(job, repo, commit):
     try:
         adapter, image = sandbox.resolve_adapter(prof)
     except StateError as exc:
-        print("job %r: %s" % (job["name"], exc), file=sys.stderr)
-        raise SystemExit(2)
+        if prof.get("sandbox_adapter") != "landlock":
+            print("job %r: %s" % (job["name"], exc), file=sys.stderr)
+            raise SystemExit(2)
+        adapter, image = "landlock", None
     if adapter == "none":
         print("job %r: no sandbox available on this host (need Landlock or docker)" % job["name"], file=sys.stderr)
         raise SystemExit(2)

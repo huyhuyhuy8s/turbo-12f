@@ -703,3 +703,31 @@ class UnknownSandboxAdapterTest(unittest.TestCase):
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
+class LandlockUnavailableTest(unittest.TestCase):
+    def test_a_landlock_profile_on_a_host_without_landlock_exits_2_and_writes_no_findings_file(self):
+        import contextlib
+        import io
+        import runpy
+        from unittest import mock
+        if ROOT not in sys.path:
+            sys.path.insert(0, ROOT)
+        from t12 import sandbox
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, ".t12", "project.json"), "w") as fh:
+                json.dump({"version": 1, "sandbox_adapter": "landlock",
+                           "jobs": [{"name": "check", "command": ["python3", "-c", "pass"]}]}, fh)
+            git(repo, "commit", "-qam", "sandbox profile")
+            code = None
+            with mock.patch.object(sandbox, "landlock_abi", return_value=0), \
+                    mock.patch.object(sys, "argv", [JOB, "--home", home, "--name", "check"]), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    runpy.run_path(JOB, run_name="__main__")
+                except SystemExit as exc:
+                    code = exc.code
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((code, os.path.exists(path)), (2, False))
