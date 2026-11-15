@@ -56,6 +56,13 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         skipped = [e["detail"].get("gate") for e in events if e["type"] == "gate-skipped"]
         self.assertEqual(skipped, ["unit"])
 
+    def test_gate_whose_globs_match_the_diff_runs_its_command(self):
+        self.prepare(self.passing_gate(when={"files": ["src/**"]}))
+        self.run_tdd(files={"app.py": APP_V2, "src/a.py": "x = 1\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        gate = self.flow_record()["gates"][0]
+        self.assertEqual(gate["status"], "passed")
+
 
 if __name__ == "__main__":
     unittest.main()
