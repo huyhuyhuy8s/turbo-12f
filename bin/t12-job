@@ -121,8 +121,11 @@ def run_command(job, repo, commit):
         raise SystemExit(2)
     failures = []
     checkout = tempfile.TemporaryDirectory()
-    archive = subprocess.run(["git", "-C", repo, "archive", commit], check=True, capture_output=True).stdout
-    subprocess.run(["tar", "-x", "-C", checkout.name], input=archive, check=True)
+    with tempfile.TemporaryDirectory() as index_dir:
+        index_env = {**os.environ, "GIT_INDEX_FILE": os.path.join(index_dir, "index")}
+        subprocess.run(["git", "-C", repo, "read-tree", commit], check=True, env=index_env)
+        subprocess.run(["git", "-C", repo, "checkout-index", "-a", "--prefix", os.path.join(checkout.name, "")],
+                       check=True, env=index_env)
     verify_env = sandbox.verification_env(home, "job-" + job["name"])
     cage = {}
     if sandbox.landlock_available():
