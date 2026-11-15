@@ -319,6 +319,7 @@ def _delivery(value):
 
 
 JOB_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*\Z")
+JOB_KEYS = {"name", "command", "adapter", "timeout_s", "config", "label"}
 
 
 def _jobs(value):
@@ -329,7 +330,7 @@ def _jobs(value):
     from . import sandbox
     for job in value:
         where = f"{PATH}: job {job.get('name')!r}"
-        unknown = sorted(set(job) - {"name", "command", "adapter", "timeout_s", "config", "label"})
+        unknown = sorted(set(job) - JOB_KEYS)
         if unknown:
             raise StateError(f"{where} has unknown keys {unknown}")
         if "label" in job and (not isinstance(job["label"], str) or not job["label"].strip()):
