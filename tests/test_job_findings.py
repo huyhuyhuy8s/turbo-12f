@@ -103,6 +103,31 @@ class JobFindingsTest(unittest.TestCase):
             [(m, u, "Gamma broke" in p and "Alpha broke" not in p) for m, u, p in posts],
             [("POST", CREATE_URL, True)])
 
+    def test_finding_whose_issue_was_closed_is_filed_again_and_restored_in_store(self):
+        adapter = load_adapter()
+
+        def fake(method, url, token, payload=None):
+            if method == "GET" and url == CREATE_URL + "/7":
+                return 200, {"number": 7, "state": "closed"}, None
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            store_path = os.path.join(home, "jobs", "nightly", "fingerprints.json")
+            with open(store_path, "w") as fh:
+                json.dump({"a": 7}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke")]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                adapter.main(["file", "--home", home, "--findings", findings_path,
+                              "--repo", "o/r"], fetch=fake)
+            with open(store_path) as fh:
+                stored = json.load(fh)
+        self.assertEqual(stored, {"a": 9})
+
 
 if __name__ == "__main__":
     unittest.main()

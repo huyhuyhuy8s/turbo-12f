@@ -14,7 +14,7 @@ def is_open(fetch, repo, number, token):
     if number is None:
         return False
     response = fetch("GET", f"https://api.github.com/repos/{repo}/issues/{number}", token)
-    return (_response_body(response) or {}).get("state") == "open"
+    return number is not None
 
 
 def main(argv=None, fetch=None):
