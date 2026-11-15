@@ -196,6 +196,29 @@ class JobFindingsTest(unittest.TestCase):
                                      "--repo", "o/r", "--label", "factory"], fetch=fake)
         self.assertEqual((code, calls), (2, []))
 
+    def test_failed_create_exits_1_and_leaves_the_store_unchanged(self):
+        adapter = load_adapter()
+
+        def fake(method, url, token, payload=None):
+            return 500, None, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            store_path = os.path.join(home, "jobs", "nightly", "fingerprints.json")
+            with open(store_path, "w") as fh:
+                json.dump({}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke")]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = adapter.main(["file", "--home", home, "--findings", findings_path,
+                                     "--repo", "o/r"], fetch=fake)
+            with open(store_path) as fh:
+                stored = json.load(fh)
+        self.assertEqual((code, stored), (1, {}))
+
 
 if __name__ == "__main__":
     unittest.main()
