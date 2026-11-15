@@ -123,6 +123,31 @@ def _execute(argv):
     return subprocess.run(argv).returncode
 
 
+def _t12_act(argv, raw, run):
+    def act(call):
+        call_file = raw + ".call.json"
+        with open(call_file, "w") as handle:
+            handle.write(json.dumps(call))
+        command = [
+            str(Path(__file__).resolve().parents[2] / "bin" / "t12"),
+            "act",
+            "--home", _option(argv, "--home"),
+            "--task-id", _option(argv, "--task-id"),
+            "--role", _option(argv, "--role"),
+            "--session", _option(argv, "--session"),
+            "--input", call_file,
+            "--raw", raw,
+            "--parsed-by", "extracted",
+        ]
+        for flag in ("--unit", "--run-id"):
+            if _option(argv, flag) is not None:
+                command += [flag, _option(argv, flag)]
+        code = run(command)
+        return code == 0, "" if code == 0 else f"t12 act exited {code}"
+
+    return act
+
+
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
         raw = _option(argv, "--reply-file")
@@ -131,28 +156,7 @@ def main(argv, parse=None, act=None, run=None):
                 return True, "ok"
 
         if act is None:
-            run = run or _execute
-
-            def act(call):
-                call_file = raw + ".call.json"
-                with open(call_file, "w") as handle:
-                    handle.write(json.dumps(call))
-                command = [
-                    str(Path(__file__).resolve().parents[2] / "bin" / "t12"),
-                    "act",
-                    "--home", _option(argv, "--home"),
-                    "--task-id", _option(argv, "--task-id"),
-                    "--role", _option(argv, "--role"),
-                    "--session", _option(argv, "--session"),
-                    "--input", call_file,
-                    "--raw", raw,
-                    "--parsed-by", "extracted",
-                ]
-                for flag in ("--unit", "--run-id"):
-                    if _option(argv, flag) is not None:
-                        command += [flag, _option(argv, flag)]
-                code = run(command)
-                return code == 0, "" if code == 0 else f"t12 act exited {code}"
+            act = _t12_act(argv, raw, run or _execute)
 
         def forward(call):
             result = act(call)
