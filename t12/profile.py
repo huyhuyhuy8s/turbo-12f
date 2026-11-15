@@ -131,7 +131,7 @@ TASK_KEYS = {
     "max_lanes": (int, _task_wins),
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
-PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery")
+PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery", "jobs")
 OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery", "jobs")
 DELIVERY_ADAPTERS = ("github", "gitlab", "bitbucket")
 
