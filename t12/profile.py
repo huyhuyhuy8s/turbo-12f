@@ -318,7 +318,14 @@ def _delivery(value):
     return {"adapter": value["adapter"]}
 
 
+JOB_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
 def _jobs(value):
+    for job in value:
+        name = job.get("name")
+        if not isinstance(name, str) or not JOB_NAME_RE.match(name):
+            raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
     for job in value:
         if "command" in job and "adapter" in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} has both command and adapter; "
