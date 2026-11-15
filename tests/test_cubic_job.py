@@ -261,6 +261,22 @@ class CubicJobTest(unittest.TestCase):
         removals = [a for a, _ in after_review if a[:4] == ["git", "worktree", "remove", "--force"]]
         self.assertEqual(removals, [["git", "worktree", "remove", "--force", review_cwd]])
 
+    def test_cubic_exit_two_fails_the_run_and_records_no_commit(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+
+        def fake(argv, cwd, env):
+            if argv[0] == "git":
+                return 0, "", ""
+            return 2, json.dumps({"issues": []}), "boom"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            code = load_cubic().main(argv, run=fake)
+            recorded = os.path.exists(os.path.join(tmp, "jobs", "cubic", "cubic-last.json"))
+        self.assertEqual((code != 0, recorded), (True, False))
+
 
 if __name__ == "__main__":
     unittest.main()
