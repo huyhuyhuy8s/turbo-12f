@@ -143,6 +143,20 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         expected = {repr(v): (1, True, False) for v in (None, False, 0, "")}
         self.assertEqual(outcomes, expected)
 
+    def test_repair_pinning_a_new_candidate_resets_a_skipped_gate_and_checks_the_new_diff(self):
+        self.prepare(self.passing_gate(when={"files": ["src/**"]}))
+        self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.do_review(verdict="changes-requested")
+        self.analyze(items=[], directives=["F1: add the src module"])
+        self.refactor(files={"app.py": APP_V2 + "# addressed review\n", "src/a.py": "x = 1\n"})
+        self.no_cheat()
+        self.tdd_step()
+        after_pin = self.flow_record()["gates"][0]["status"]
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        after_gate = self.flow_record()["gates"][0]["status"]
+        self.assertEqual((after_pin, after_gate), ("pending", "passed"))
+
 
 if __name__ == "__main__":
     unittest.main()
