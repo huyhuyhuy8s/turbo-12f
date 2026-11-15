@@ -142,6 +142,30 @@ class CubicJobTest(unittest.TestCase):
         self.assertEqual(branches, [["git", "branch", "t12-job/cubic-base", "abc"],
                                     ["git", "branch", "t12-job/cubic-base", "first"]])
 
+    def test_issues_with_the_same_file_and_title_share_one_fingerprint(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [
+            {"priority": "P1", "file": "src/a.py", "line": 3,
+             "title": "Null deref", "description": "x is None"},
+            {"priority": "P1", "file": "src/a.py", "line": 40,
+             "title": "Null deref", "description": "y is None"}]}
+
+        def fake(argv, cwd, env):
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps(report), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+            distinct = None
+            if os.path.exists(out):
+                with open(out) as handle:
+                    distinct = len({f["fingerprint"] for f in json.load(handle)["findings"]})
+        self.assertEqual(distinct, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
