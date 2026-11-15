@@ -17,9 +17,6 @@ ALIASES = {
 }
 
 
-KNOWN_TOOLS = {name for kind in tools.TOOLS.values() for name in kind}
-
-
 def classes():
     return {
         class_name(name): {
@@ -28,7 +25,6 @@ def classes():
         }
         for kind in tools.TOOLS.values()
         for name, args in kind.items()
-        if name in KNOWN_TOOLS
     }
 
 
