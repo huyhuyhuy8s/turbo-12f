@@ -152,6 +152,30 @@ class JobFindingsTest(unittest.TestCase):
         outside_fences = re.sub(r"```.*?```", "", bodies[0], flags=re.S)
         self.assertNotIn("#12", outside_fences)
 
+    def test_html_comment_opener_in_detail_only_appears_inside_a_code_fence(self):
+        adapter = load_adapter()
+        bodies = []
+
+        def fake(method, url, token, payload=None):
+            if method == "POST":
+                bodies.append(payload["body"])
+            return 201, {"number": 9}, None
+
+        opener = "<" + "!" + "--"
+        hostile = dict(finding("a", "Alpha broke"), detail=f"before {opener} hidden")
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [hostile]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                adapter.main(["file", "--home", home, "--findings", findings_path,
+                              "--repo", "o/r"], fetch=fake)
+        outside_fences = re.sub(r"```.*?```", "", bodies[0], flags=re.S)
+        self.assertNotIn(opener, outside_fences)
+
 
 if __name__ == "__main__":
     unittest.main()
