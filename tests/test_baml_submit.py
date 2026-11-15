@@ -239,5 +239,20 @@ class NestedExtraArg(unittest.TestCase):
             (act.call_args_list, lines))
 
 
+class ExtraKeyBesideArgsWrapper(unittest.TestCase):
+    def test_key_missing_from_parse_result_next_to_an_args_wrapper_is_refused_by_script(self):
+        reply = ('{"tool": "test_list_ready", "args": {"items": [], "gaps": ["g"], '
+                 '"directives": ["d"]}, "bonus": 1}')
+        parsed = SimpleNamespace(tool="test_list_ready", items=[], gaps=["g"],
+                                 directives=["d"], units=None)
+        act = mock.Mock()
+        lines = []
+        run.submit(reply, "analyzer", lambda text: parsed, act, record=lines.append)
+        message = "unexpected arg 'bonus'"
+        self.assertEqual(
+            ([], [{"ok": False, "refused_by": "script", "message": message}]),
+            (act.call_args_list, lines))
+
+
 if __name__ == "__main__":
     unittest.main()
