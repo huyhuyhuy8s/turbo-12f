@@ -94,6 +94,16 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("risky", message)
 
+    def test_apply_refuses_a_task_file_that_sets_jobs(self):
+        base = profile.parse(json.dumps({"version": 1}))
+        task = {"test_command": ["true"], "jobs": JOBS}
+        message = ""
+        try:
+            profile.apply(base, task)
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("jobs belongs in", message)
+
 
 if __name__ == "__main__":
     unittest.main()
