@@ -49,12 +49,13 @@ def main(argv=None, run=None):
     config = job.get("config", {})
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
     repo = tempfile.mkdtemp()
-    add_code, _out, _err = run(["git", "worktree", "add", "--detach", repo, commit], option("--repo"), env)
+    source_repo = option("--repo")
+    add_code, _out, _err = run(["git", "worktree", "add", "--detach", repo, commit], source_repo, env)
     if add_code != 0:
         return 1
     branch_code, _out, _err = run(["git", "branch", BASE_BRANCH, recorded or config.get("since")], repo, env)
     if branch_code != 0:
-        run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
+        run(["git", "worktree", "remove", "--force", repo], source_repo, env)
         return 1
     code, stdout, _stderr = run(
         [config.get("cubic", "cubic"), "review", "--base", BASE_BRANCH, "--json"],
@@ -62,7 +63,7 @@ def main(argv=None, run=None):
         env,
     )
     run(["git", "branch", "-D", BASE_BRANCH], repo, env)
-    run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
+    run(["git", "worktree", "remove", "--force", repo], source_repo, env)
     if code not in (0, 1):
         return 1
     try:
