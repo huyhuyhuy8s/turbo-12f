@@ -23,10 +23,14 @@ home = os.path.abspath(args.home)
 job_dir = os.path.join(home, "jobs", args.name)
 with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
     config = json.load(fh)
-commit = subprocess.run(
+rev = subprocess.run(
     ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
-    check=True, capture_output=True, text=True,
-).stdout.strip()
+    capture_output=True, text=True,
+)
+if rev.returncode != 0:
+    print("trunk branch %r does not exist" % config.get("trunk", "main"), file=sys.stderr)
+    raise SystemExit(2)
+commit = rev.stdout.strip()
 shown = subprocess.run(
     ["git", "-C", config["repo"], "show", commit + ":.t12/project.json"],
     capture_output=True, text=True,
