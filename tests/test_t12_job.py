@@ -552,3 +552,22 @@ class CommandHomeTest(unittest.TestCase):
             with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
                 details = [f["detail"] for f in json.load(fh)["findings"]]
             self.assertEqual((result.returncode, len(details), "ghp_SECRET123" in "".join(details)), (1, 1, False))
+
+
+class CommandCageTest(unittest.TestCase):
+    def test_a_command_job_cannot_read_a_file_outside_its_checkout_where_the_cage_is_available(self):
+        sys.path.insert(0, ROOT)
+        from t12 import sandbox
+        if not sandbox.landlock_available():
+            self.skipTest("no landlock cage on this kernel")
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            secret_path = os.path.join(outside, "notes.txt")
+            with open(secret_path, "w") as fh:
+                fh.write("CAGE-ESCAPE-4711\n")
+            script = "import sys; print(open(%r).read()); sys.exit(1)" % secret_path
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", script]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            with open(os.path.join(home, "jobs", "check", "findings-1.json"), encoding="utf-8") as fh:
+                details = [f["detail"] for f in json.load(fh)["findings"]]
+            self.assertEqual((result.returncode, len(details), "CAGE-ESCAPE-4711" in "".join(details)), (1, 1, False))
