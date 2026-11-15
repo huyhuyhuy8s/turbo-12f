@@ -13,6 +13,9 @@ def main(argv=None, fetch=None):
         return 1
     severities = ",".join(config.get("severities", ["HIGH", "BLOCKER"]))
     token = os.environ.get("SONAR_TOKEN")
+    if not token:
+        print("sonarqube: SONAR_TOKEN is not set", file=sys.stderr)
+        return 1
     issues = []
     page = 1
     while True:
