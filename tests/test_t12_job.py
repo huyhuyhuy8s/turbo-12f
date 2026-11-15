@@ -117,6 +117,15 @@ class CommandJobTest(unittest.TestCase):
             fingerprints = [f.get("fingerprint") for f in written or []]
             self.assertEqual((result.returncode, fingerprints), (1, ["check:command"]))
 
+    def test_a_command_job_prints_the_findings_file_path_on_the_last_stdout_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = ["python3", "-c", "import sys; print('boom'); sys.exit(3)"]
+            home = make_home(tmp, [{"name": "check", "command": command}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            lines = result.stdout.strip().splitlines()
+            self.assertEqual(lines[-1] if lines else "", os.path.join(home, "jobs", "check", "findings-1.json"))
+
 
 FAKE_ADAPTER = """import argparse, json
 p = argparse.ArgumentParser()
