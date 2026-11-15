@@ -99,5 +99,31 @@ class CommandJobTest(unittest.TestCase):
                              (1, 1, True))
 
 
+FAKE_ADAPTER = """import argparse, json
+p = argparse.ArgumentParser()
+p.add_argument("mode")
+for flag in ("--job", "--repo", "--commit", "--home", "--out"):
+    p.add_argument(flag)
+a = p.parse_args()
+with open(a.out, "w") as fh:
+    json.dump({"findings": [{"fingerprint": "f1", "title": "t", "detail": "", "url": None}]}, fh)
+"""
+
+
+class AdapterJobTest(unittest.TestCase):
+    def test_an_adapter_job_exits_1_and_records_the_adapter_finding_with_kind_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "fake", "adapter": "fake"}])
+            os.makedirs(os.path.join(home, "adapters"))
+            with open(os.path.join(home, "adapters", "fake.py"), "w") as fh:
+                fh.write(FAKE_ADAPTER)
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "fake", "findings-1.json")
+            written = json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+            self.assertEqual((result.returncode, written.get("kind"), written.get("findings")),
+                             (1, "adapter", [{"fingerprint": "f1", "title": "t", "detail": "", "url": None}]))
+
+
 if __name__ == "__main__":
     unittest.main()
