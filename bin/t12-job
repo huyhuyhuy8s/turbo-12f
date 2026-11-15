@@ -137,7 +137,7 @@ def run_command(job, repo, commit):
         cage["preexec_fn"] = sandbox.landlock_preexec(checkout.name, verify_env["HOME"])
     try:
         result = subprocess.run(job["command"], cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                                errors="replace", timeout=job.get("timeout_s"),
+                                errors="replace", timeout=None if timeout is None else min(timeout, 10**6),
                                 env={**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")}, **verify_env},
                                 **cage)
     except subprocess.TimeoutExpired:
