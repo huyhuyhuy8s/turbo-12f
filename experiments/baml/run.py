@@ -17,8 +17,7 @@ def plain(value):
         fields = vars(value)
     else:
         return value
-    return {k.removesuffix("_"): (v if isinstance(v, enum.Enum) and k != "verdict" else plain(v))
-            for k, v in fields.items() if v is not None}
+    return {k.removesuffix("_"): plain(v) for k, v in fields.items() if v is not None}
 
 
 def submit(reply, kind, parse, act):
