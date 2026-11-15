@@ -15,9 +15,9 @@ def main(argv=None, fetch=None):
     while True:
         url = (f"{base_url}/api/issues/search?componentKeys={project_key}"
                f"&issueStatuses=OPEN,CONFIRMED&impactSeverities={severities}&ps=100&p={page}")
-        _status, body, _error = fetch("GET", url, token)
-        if _status != 200:
-            print(f"sonarqube: request returned status {_status}", file=sys.stderr)
+        status, body, _error = fetch("GET", url, token)
+        if status != 200:
+            print(f"sonarqube: request returned status {status}", file=sys.stderr)
             return 1
         issues.extend(body["issues"])
         if page * 100 >= body.get("paging", {}).get("total", 0) or page >= 10:
