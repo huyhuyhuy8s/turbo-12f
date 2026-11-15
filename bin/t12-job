@@ -127,7 +127,7 @@ def run_command(job, repo, commit):
         print("job %r: timeout_s must be a number" % job["name"], file=sys.stderr)
         raise SystemExit(2)
     try:
-        if prof.get("sandbox_adapter") == "docker" and sandbox.shutil.which("docker"):
+        if prof.get("sandbox_adapter") == "docker" and sandbox.docker_available():
             adapter, image = "docker", prof.get("sandbox_image") or sandbox.DEFAULT_DOCKER_IMAGE
         else:
             adapter, image = sandbox.resolve_adapter(prof)
