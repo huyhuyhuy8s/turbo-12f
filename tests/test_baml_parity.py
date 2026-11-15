@@ -60,6 +60,14 @@ class EnumRendering(unittest.TestCase):
         expected = sorted(tools.TOOLS["review"]["review"]["verdict"])
         self.assertEqual(expected, sorted(aliases, key=str))
 
+    def test_item_kind_enum_has_one_aliased_member_per_item_kind(self):
+        block = re.search(r"enum ItemKind\s*\{(.*?)\}", generate.render(), re.S)
+        lines = [ln.strip() for ln in (block.group(1) if block else "").splitlines()
+                 if ln.strip()]
+        aliases = [(re.search(r'@alias\("([^"]*)"\)', ln) or [None, None])[1]
+                   for ln in lines]
+        self.assertEqual(sorted(tools.ITEM_KINDS), sorted(aliases, key=str))
+
 
 if __name__ == "__main__":
     unittest.main()
