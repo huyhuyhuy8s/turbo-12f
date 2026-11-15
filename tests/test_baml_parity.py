@@ -27,6 +27,12 @@ class ToolClassNames(unittest.TestCase):
         found = sorted(set(expected) & set(generate.classes()))
         self.assertEqual(expected, found)
 
+    def test_every_tool_class_has_a_tool_field(self):
+        classes = generate.classes()
+        missing = sorted(pascal(name) for name in tools.ALL_TOOLS
+                         if "tool" not in classes.get(pascal(name), {}))
+        self.assertEqual([], missing)
+
 
 if __name__ == "__main__":
     unittest.main()
