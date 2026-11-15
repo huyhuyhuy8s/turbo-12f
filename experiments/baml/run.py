@@ -120,7 +120,7 @@ def main(argv, parse=None, act=None, run=None):
                     "arm": "B",
                     "kind": "review",
                     "ok": outcome["ok"],
-                    "refused_by": None,
+                    "refused_by": outcome.get("refused_by"),
                     "error": outcome.get("message"),
                 }
                 with open(argv[-1], "a") as evidence:
