@@ -23,7 +23,9 @@ def plain(value):
 def submit(reply, kind, parse, act, record=None):
     try:
         call = plain(parse(reply))
-    except Exception:
-        return None
+    except Exception as exc:
+        if record is not None:
+            record({"ok": False, "refused_by": "baml", "message": str(exc)})
+        return False, str(exc)
     tool = call.pop("tool")
     return act({"tool": tool, "args": call})
