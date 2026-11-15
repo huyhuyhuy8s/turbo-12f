@@ -66,6 +66,16 @@ class CommandJobTest(unittest.TestCase):
             self.assertEqual((second.returncode, sorted(os.listdir(jobs_dir))),
                              (0, ["findings-1.json", "findings-2.json"]))
 
+    def test_a_failing_command_exits_1_with_one_check_command_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = ["python3", "-c", "import sys; print('boom'); sys.exit(3)"]
+            home = make_home(tmp, [{"name": "check", "command": command}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
+            fingerprints = [f.get("fingerprint") for f in written or []]
+            self.assertEqual((result.returncode, fingerprints), (1, ["check:command"]))
+
 
 if __name__ == "__main__":
     unittest.main()
