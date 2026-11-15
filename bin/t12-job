@@ -19,8 +19,21 @@ commit = subprocess.run(
     ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
     check=True, capture_output=True, text=True,
 ).stdout.strip()
+shown = subprocess.run(
+    ["git", "-C", config["repo"], "show", commit + ":.t12/project.json"],
+    capture_output=True, text=True,
+)
+jobs = json.loads(shown.stdout).get("jobs", []) if shown.returncode == 0 else []
+job = next((j for j in jobs if j.get("name") == args.name), {})
+findings = []
+if "command" in job:
+    result = subprocess.run(job["command"], cwd=config["repo"])
+    if result.returncode != 0:
+        findings.append({"fingerprint": "check:command"})
 seq = 1
 while os.path.exists(os.path.join(job_dir, "findings-%d.json" % seq)):
     seq += 1
 with open(os.path.join(job_dir, "findings-%d.json" % seq), "w", encoding="utf-8") as fh:
-    json.dump({"commit": commit, "findings": []}, fh)
+    json.dump({"commit": commit, "findings": findings}, fh)
+if findings:
+    raise SystemExit(1)
