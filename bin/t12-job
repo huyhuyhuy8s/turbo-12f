@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import subprocess
 
 parser = argparse.ArgumentParser(prog="t12-job", description=__doc__)
 parser.add_argument("--home", required=True)
@@ -12,5 +13,11 @@ args = parser.parse_args()
 
 job_dir = os.path.join(os.path.abspath(args.home), "jobs", args.name)
 os.makedirs(job_dir, exist_ok=True)
+with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
+    config = json.load(fh)
+commit = subprocess.run(
+    ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
+    check=True, capture_output=True, text=True,
+).stdout.strip()
 with open(os.path.join(job_dir, "findings-1.json"), "w", encoding="utf-8") as fh:
-    json.dump({"findings": []}, fh)
+    json.dump({"commit": commit, "findings": []}, fh)
