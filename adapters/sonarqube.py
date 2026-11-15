@@ -15,7 +15,7 @@ def main(argv=None, fetch=None):
     findings = [
         {
             "fingerprint": f"sonar:{issue['key']}",
-            "title": "",
+            "title": issue.get("message", ""),
             "detail": f"{issue.get('rule', '')}\n{issue.get('component', '')}\n{issue.get('line', '')}",
             "url": f"{base_url}/project/issues?id={project_key}&open={issue['key']}",
         }
