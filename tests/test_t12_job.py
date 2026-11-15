@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 JOB = os.path.join(ROOT, "bin", "t12-job")
 
@@ -400,6 +401,21 @@ class CommandTimeoutValueTest(unittest.TestCase):
     def test_a_timeout_s_that_is_not_a_number_exits_2_with_no_findings_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = make_home(tmp, [{"name": "check", "timeout_s": "soon", "command": ["python3", "-c", "pass"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
+class MissingTrunkTest(unittest.TestCase):
+    def test_a_home_whose_trunk_branch_does_not_exist_exits_2_not_1_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            with open(os.path.join(home, "config.json")) as fh:
+                config = json.load(fh)
+            config["trunk"] = "no-such-branch"
+            with open(os.path.join(home, "config.json"), "w") as fh:
+                json.dump(config, fh)
             result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
