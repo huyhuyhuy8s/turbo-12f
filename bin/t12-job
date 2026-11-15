@@ -127,9 +127,12 @@ def run_command(job, repo, commit):
         print("job %r: timeout_s must be a number" % job["name"], file=sys.stderr)
         raise SystemExit(2)
     try:
-        sandbox.resolve_adapter(prof)
+        adapter, image = sandbox.resolve_adapter(prof)
     except StateError as exc:
         print("job %r: %s" % (job["name"], exc), file=sys.stderr)
+        raise SystemExit(2)
+    if adapter == "none":
+        print("job %r: no sandbox available on this host (need Landlock or docker)" % job["name"], file=sys.stderr)
         raise SystemExit(2)
     failures = []
     checkout = tempfile.TemporaryDirectory()
@@ -147,11 +150,10 @@ def run_command(job, repo, commit):
     cage = {}
     argv = job["command"]
     run_env = {**{k: v for k, v in os.environ.items() if k in ("PATH", "LANG")}, **verify_env}
-    if prof.get("sandbox_adapter") == "docker":
-        argv = sandbox.docker_run_argv(prof.get("sandbox_image") or sandbox.DEFAULT_DOCKER_IMAGE,
-                                       checkout.name, verify_env["HOME"], runner.container_env(verify_env), argv)
+    if adapter == "docker":
+        argv = sandbox.docker_run_argv(image, checkout.name, verify_env["HOME"], runner.container_env(verify_env), argv)
         run_env = runner.sanitized_env()
-    elif sandbox.landlock_available():
+    else:
         cage["preexec_fn"] = sandbox.landlock_preexec(checkout.name, verify_env["HOME"])
     try:
         result = subprocess.run(argv, cwd=checkout.name, capture_output=True, text=True, stdin=subprocess.DEVNULL,
