@@ -56,6 +56,8 @@ def run_adapter(job, repo, commit, home, job_dir):
         for f in adapter_findings:
             if not isinstance(f.get("fingerprint"), str) or not f["fingerprint"]:
                 raise ValueError("finding without fingerprint")
+            if "title" in f and not isinstance(f["title"], str):
+                raise ValueError("finding title is not a string")
         return adapter_findings
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
         raise SystemExit(2)
