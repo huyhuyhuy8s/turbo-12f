@@ -103,9 +103,12 @@ def submit(reply, kind, parse, act, record=None):
         tools.parse(json.dumps({"tool": tool, "args": call}), kind)
     except StateError as exc:
         return _refuse(record, "core", str(exc))
-    if record is not None:
+    result = act({"tool": tool, "args": call})
+    if isinstance(result, tuple) and not result[0]:
+        _refuse(record, "act", result[1])
+    elif record is not None:
         record({"ok": True})
-    return act({"tool": tool, "args": call})
+    return result
 
 
 def main(argv, parse=None, act=None, run=None):
