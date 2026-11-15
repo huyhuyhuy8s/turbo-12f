@@ -76,6 +76,16 @@ class CommandJobTest(unittest.TestCase):
             fingerprints = [f.get("fingerprint") for f in written or []]
             self.assertEqual((result.returncode, fingerprints), (1, ["check:command"]))
 
+    def test_the_failing_command_finding_detail_contains_the_command_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = ["python3", "-c", "import sys; print('boom'); sys.exit(3)"]
+            home = make_home(tmp, [{"name": "check", "command": command}])
+            subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                           capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "check", "findings-1.json"))
+            details = [f.get("detail", "") for f in written or []]
+            self.assertIn("boom", "".join(details))
+
 
 if __name__ == "__main__":
     unittest.main()
