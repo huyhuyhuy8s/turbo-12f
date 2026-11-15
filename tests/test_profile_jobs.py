@@ -104,6 +104,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("jobs belongs in", message)
 
+    def test_job_name_with_a_trailing_newline_is_refused_naming_the_name(self):
+        jobs = [{"name": "fuzz\n", "command": ["python3", "a.py"]}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("fuzz", message)
+
 
 if __name__ == "__main__":
     unittest.main()
