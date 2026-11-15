@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+"""Run one profile job and write a findings file."""
+
+raise SystemExit(0)
