@@ -47,6 +47,8 @@ def main(argv=None, fetch=None):
     token = os.environ.get("GITHUB_TOKEN")
     findings = [finding for finding in findings
                 if not is_open(fetch, repo, store.get(finding["fingerprint"]), token)]
+    if not findings:
+        return 0
     payload = {
         "title": f"{len(findings)} findings",
         "body": "\n".join(f"- {finding['title']}\n{_detail(finding.get('detail', ''))}"
