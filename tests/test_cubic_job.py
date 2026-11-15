@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -189,6 +190,32 @@ class CubicJobTest(unittest.TestCase):
                 with open(out) as handle:
                     details = [f["detail"] for f in json.load(handle)["findings"]]
         self.assertEqual(details, ["src/b.py\n\ny unused"])
+
+    def test_without_an_injected_run_the_real_processes_on_path_are_started(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P1", "file": "src/a.py", "line": 3,
+                              "title": "Null deref", "description": "x is None"}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = os.path.join(tmp, "bin")
+            os.makedirs(bin_dir)
+            repo = os.path.join(tmp, "repo")
+            os.makedirs(repo)
+            for name, body in (("git", "exit 0"),
+                               ("cubic", "echo '" + json.dumps(report) + "'\nexit 1")):
+                path = os.path.join(bin_dir, name)
+                with open(path, "w") as handle:
+                    handle.write("#!/bin/sh\n" + body + "\n")
+                os.chmod(path, 0o755)
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", repo, "--commit", "def",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"PATH": bin_dir + os.pathsep + os.environ["PATH"]}):
+                code = load_cubic().main(argv)
+            titles = None
+            if os.path.exists(out):
+                with open(out) as handle:
+                    titles = [f["title"] for f in json.load(handle)["findings"]]
+        self.assertEqual((code, titles), (0, ["[P1] Null deref"]))
 
 
 if __name__ == "__main__":
