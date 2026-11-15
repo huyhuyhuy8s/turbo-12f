@@ -53,8 +53,8 @@ class RefactorDone {
 
 class Review {
   tool string
-  verdict ('merge-ready', 'blocked', 'human-gated', 'unverified')
-  findings list of findings
+  verdict Verdict
+  findings Finding[]
   verification string
 }
 

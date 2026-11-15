@@ -8,6 +8,8 @@ BAML_TYPES = {
     tools.BOOL: "bool",
     tools.TEXT: "string",
     tools.INT_LIST: "int[]",
+    tools.FINDINGS: "Finding[]",
+    tools.TOOLS["review"]["review"]["verdict"]: "Verdict",
 }
 
 
