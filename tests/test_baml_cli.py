@@ -58,6 +58,29 @@ class SubmitAccepted(unittest.TestCase):
                     act=act)
             self.assertEqual([{"tool": "escalate", "args": {"question": "q"}}], calls)
 
+    def test_valid_review_call_appends_one_evidence_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write('{"tool": "escalate", "question": "q"}')
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    act=lambda call: (True, "ok"))
+            lines = []
+            if os.path.exists(evidence):
+                with open(evidence) as fh:
+                    lines = fh.read().splitlines()
+            self.assertEqual(
+                ['{"arm": "B", "kind": "review", "ok": true, "refused_by": null, "error": null}'],
+                lines)
+
 
 if __name__ == "__main__":
     unittest.main()
