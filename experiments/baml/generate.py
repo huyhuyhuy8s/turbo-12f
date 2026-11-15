@@ -1,7 +1,12 @@
 from t12 import tools
 
 
-BAML_TYPES = {tools.STR_LIST: "string[]", tools.UNITS: "Unit[]?"}
+BAML_TYPES = {
+    tools.STR_LIST: "string[]",
+    tools.UNITS: "Unit[]?",
+    tools.INT: "int",
+    tools.BOOL: "bool",
+}
 
 
 def member_name(value):

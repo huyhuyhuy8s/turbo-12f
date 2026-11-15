@@ -30,7 +30,7 @@ class RedTestReady {
   item_id string
   test_file string
   test_name string
-  last_assertion_line integer
+  last_assertion_line int
   defeats string
   add_items list of test items
 }
@@ -48,7 +48,7 @@ class GreenReady {
 class RefactorDone {
   tool string
   summary string
-  changed boolean
+  changed bool
 }
 
 class Review {
