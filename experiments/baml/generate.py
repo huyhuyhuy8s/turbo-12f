@@ -43,7 +43,10 @@ def item_kind_enum():
 
 
 def class_block(name, fields):
-    body = "".join(f"  {arg} {shape}\n" for arg, shape in fields.items())
+    body = "".join(
+        f'  class_ {shape} @alias("class")\n' if arg == "class" else f"  {arg} {shape}\n"
+        for arg, shape in fields.items()
+    )
     return f"class {name} {{\n" + body + "}\n"
 
 
@@ -54,5 +57,6 @@ def render():
         for arg, shape in tools.ITEM_FIELDS.items()
     })
     unit_item = class_block("UnitTestItem", {"unit": "string?"})
+    finding = class_block("Finding", {f: tools.STR for f in tools.FINDING_FIELDS})
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
-            + "\n" + unit_item)
+            + "\n" + unit_item + "\n" + finding)
