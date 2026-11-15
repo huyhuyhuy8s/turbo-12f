@@ -271,6 +271,23 @@ class SubmitWithoutBamlPy(unittest.TestCase):
                      "--evidence", evidence])
             self.assertEqual([False, False], [os.path.exists(evidence), os.path.exists(reply + ".call.json")])
 
+class SubmitMissingReplyFile(unittest.TestCase):
+    def test_missing_reply_file_returns_2_names_the_path_and_writes_no_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "absent-reply.txt")
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                code = run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply,
+                     "--home", tmp, "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    act=lambda call: (True, "ok"))
+            shown = out.getvalue()
+            self.assertEqual((2, True, False), (code, reply in shown, os.path.exists(evidence)))
+
+
 
 if __name__ == "__main__":
     unittest.main()
