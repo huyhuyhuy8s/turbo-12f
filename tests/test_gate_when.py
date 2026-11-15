@@ -122,6 +122,14 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         self.assertEqual((refused.returncode, "--dangerously-skip-permissions" in refused.stderr),
                          (1, True), refused.stderr)
 
+    def test_prepare_refuses_a_gate_without_command_with_the_argv_message_and_no_traceback(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[{"name": "unit"}]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((refused.returncode, "must have a non-empty argv command" in refused.stderr,
+                          "Traceback" in refused.stderr), (1, True, False), refused.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

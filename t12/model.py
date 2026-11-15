@@ -672,7 +672,7 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
     gates = []
     for g in task.get("gates", []):
         if not isinstance(g.get("command"), list) or not g["command"]:
-            raise StateError(f"gate {g.get('name')!r} must have a non-empty argv command")
+            raise StateError(f"gate {g.get('name')!r} has no command")
         gates.append(
             {"name": g["name"], "command": list(g["command"]), "status": "pending",
              "observation": None, "commit": None, "when": g.get("when")}
