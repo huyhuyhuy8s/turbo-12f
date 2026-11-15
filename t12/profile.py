@@ -459,6 +459,14 @@ def _check_type(where, key, value, kind):
     _check_value(where, key, value)
 
 
+def _reject_deps_overlapping_protected(deps, roots):
+    for dep in deps:
+        dep_path = os.path.normpath(dep)
+        for root in sorted(roots):
+            if dep_path == root or dep_path.startswith(root + os.sep) or root.startswith(dep_path + os.sep):
+                raise StateError(f"verify_deps entry {dep!r} overlaps protected path {root!r}")
+
+
 def apply(profile, task):
     """The task as the run sees it: profile defaults merged under the
     rules in this module's docstring."""
@@ -472,12 +480,9 @@ def apply(profile, task):
         if key not in profile:
             continue
         merged[key] = merge(profile[key], task[key]) if key in task else profile[key]
-    roots = _protected_paths_and_their_folders(profile["protected_paths"])
-    for dep in merged.get("verify_deps", []):
-        dep_path = os.path.normpath(dep)
-        for root in sorted(roots):
-            if dep_path == root or dep_path.startswith(root + os.sep) or root.startswith(dep_path + os.sep):
-                raise StateError(f"verify_deps entry {dep!r} overlaps protected path {root!r}")
+    _reject_deps_overlapping_protected(
+        merged.get("verify_deps", []),
+        _protected_paths_and_their_folders(profile["protected_paths"]))
     merged.setdefault("test_globs", list(DEFAULT_TEST_GLOBS))
     merged.setdefault("lint_command", None)
     merged.setdefault("assertion_pattern", DEFAULT_ASSERTION_PATTERN)
