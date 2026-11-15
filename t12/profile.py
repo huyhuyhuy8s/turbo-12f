@@ -351,6 +351,8 @@ def _check_job(job):
             if isinstance(command, str):
                 command = shlex.split(command)
             sandbox.check_command(command)
+            if isinstance(job["command"], str):
+                raise StateError(f"{where}: command must be a list, not a string")
         except (RunnerError, ValueError) as exc:
             raise StateError(f"{where}: {exc}") from exc
 
