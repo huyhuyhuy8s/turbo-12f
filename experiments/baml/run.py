@@ -162,6 +162,8 @@ def main(argv, parse=None, act=None, run=None):
         if act is None:
             act = _t12_act(argv, raw, run or _execute)
 
+        kind = _option(argv, "--kind") or "review"
+
         def forward(call):
             result = act(call)
             return result if isinstance(result, tuple) else (True, "ok")
@@ -178,8 +180,6 @@ def main(argv, parse=None, act=None, run=None):
                 }
                 with open(path, "a") as evidence:
                     evidence.write(json.dumps(line) + "\n")
-
-        kind = _option(argv, "--kind") or "review"
 
         reply = Path(raw).read_text() if raw is not None else ""
         ok, message = submit(reply, kind, parse, forward, record)
