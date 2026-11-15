@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -666,3 +667,24 @@ class SandboxAdapterTest(unittest.TestCase):
                     logged = [json.loads(line) for line in fh if line.strip()]
             runs = [(a[1:4], a[-4:]) for a in logged if a[:1] == ["run"]]
             self.assertEqual(runs, [(["--rm", "--network", "none"], ["img:1", "python3", "-c", "pass"])])
+
+
+class SandboxAdapterUnavailableTest(unittest.TestCase):
+    def test_a_docker_profile_without_docker_on_path_exits_2_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, ".t12", "project.json"), "w") as fh:
+                json.dump({"version": 1, "sandbox_adapter": "docker",
+                           "jobs": [{"name": "check", "command": ["python3", "-c", "pass"]}]}, fh)
+            git(repo, "commit", "-qam", "sandbox profile")
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            for tool in ("git", "python3"):
+                real = shutil.which(tool)
+                os.symlink(real, os.path.join(bindir, tool))
+            env = {**os.environ, "PATH": bindir}
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True, env=env)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
