@@ -219,5 +219,25 @@ class RecordOnSuccess(unittest.TestCase):
         self.assertEqual(1, len(lines), lines)
 
 
+class NestedExtraArg(unittest.TestCase):
+    def test_key_missing_from_parse_result_inside_a_nested_item_is_refused_by_script(self):
+        reply = ('{"tool": "red_test_ready", "item_id": "new", "test_file": "tests/a.py", '
+                 '"test_name": "test_a", "last_assertion_line": 7, "defeats": "d", '
+                 '"add_items": [{"text": "t", "kind": "example", "source": "s", '
+                 '"needed": "n", "criteria": [0], "bonus": 1}]}')
+        item = SimpleNamespace(text="t", kind="example", source="s", needed="n",
+                               criteria=[0])
+        parsed = SimpleNamespace(tool="red_test_ready", item_id="new",
+                                 test_file="tests/a.py", test_name="test_a",
+                                 last_assertion_line=7, defeats="d", add_items=[item])
+        act = mock.Mock()
+        lines = []
+        run.submit(reply, "red", lambda text: parsed, act, record=lines.append)
+        message = "unexpected arg 'bonus'"
+        self.assertEqual(
+            ([], [{"ok": False, "refused_by": "script", "message": message}]),
+            (act.call_args_list, lines))
+
+
 if __name__ == "__main__":
     unittest.main()
