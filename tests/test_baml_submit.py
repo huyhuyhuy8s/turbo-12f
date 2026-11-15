@@ -116,5 +116,15 @@ class TwoCalls(unittest.TestCase):
             (act.call_args_list, lines))
 
 
+class BraceInsideString(unittest.TestCase):
+    def test_reply_with_braces_inside_a_string_is_one_group_and_acts_once(self):
+        reply = '{"tool": "test_list_ready", "items": [], "gaps": ["}{"], "directives": ["d"]}'
+        parsed = SimpleNamespace(tool="test_list_ready", items=[], gaps=["}{"],
+                                 directives=["d"], units=None)
+        act = mock.Mock()
+        run.submit(reply, "analyzer", lambda text: parsed, act)
+        self.assertEqual(1, act.call_count)
+
+
 if __name__ == "__main__":
     unittest.main()
