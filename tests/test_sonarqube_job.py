@@ -1,3 +1,5 @@
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -98,6 +100,24 @@ class SonarqubeJobTest(unittest.TestCase):
         self.assertEqual(urls[0], "https://sq.example/api/issues/search?componentKeys=web"
                          "&issueStatuses=OPEN,CONFIRMED&impactSeverities=BLOCKER&ps=100&p=1")
 
+
+    def test_forbidden_status_exits_one_and_names_the_status_on_stderr(self):
+        job = {"name": "sonar", "adapter": "sonarqube",
+               "config": {"base_url": "https://sq.example", "project_key": "web"}}
+
+        def fake(method, url, token):
+            return 403, {"errors": [{"msg": "forbidden"}]}, None
+
+        stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "acme/web", "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SONAR_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(stderr):
+                code = load_sonarqube().main(argv, fetch=fake)
+        self.assertEqual(code, 1)
+        self.assertIn("403", stderr.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

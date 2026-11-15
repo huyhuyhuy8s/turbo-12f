@@ -15,6 +15,8 @@ def main(argv=None, fetch=None):
         url = (f"{base_url}/api/issues/search?componentKeys={project_key}"
                f"&issueStatuses=OPEN,CONFIRMED&impactSeverities={severities}&ps=100&p={page}")
         _status, body, _error = fetch("GET", url, token)
+        if _status != 200:
+            return 1
         issues.extend(body["issues"])
         if page * 100 >= body.get("paging", {}).get("total", 0) or page >= 10:
             break
