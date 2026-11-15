@@ -51,6 +51,30 @@ class JobFindingsTest(unittest.TestCase):
             [(m, u, "Alpha broke" in p and "Beta broke" in p) for m, u, p in posts],
             [("POST", CREATE_URL, True)])
 
+    def test_filed_fingerprints_are_stored_with_the_created_issue_number(self):
+        adapter = load_adapter()
+
+        def fake(method, url, token, payload=None):
+            return 201, {"number": 9}, None
+
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, "jobs", "nightly"))
+            store_path = os.path.join(home, "jobs", "nightly", "fingerprints.json")
+            with open(store_path, "w") as fh:
+                json.dump({}, fh)
+            findings_path = os.path.join(home, "findings.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"job": "nightly", "kind": "command", "commit": "0123456789abcdef",
+                           "at": 0, "findings": [finding("a", "Alpha broke"),
+                                                 finding("b", "Beta broke")]}, fh)
+            with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                adapter.main(["file", "--home", home, "--findings", findings_path,
+                              "--repo", "o/r"], fetch=fake)
+            with open(store_path) as fh:
+                stored = json.load(fh)
+        self.assertEqual(stored, {"a": 9, "b": 9})
+
 
 if __name__ == "__main__":
     unittest.main()
