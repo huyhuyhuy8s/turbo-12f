@@ -113,6 +113,15 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
         self.assertEqual((refused.returncode, "docs-lint" in refused.stderr), (1, True), refused.stderr)
 
+    def test_prepare_names_the_forbidden_flag_even_when_the_gate_also_has_an_unknown_key(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[{"name": "unit", "order": 1,
+                                        "command": ["agy", "--dangerously-skip-permissions"]}]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((refused.returncode, "--dangerously-skip-permissions" in refused.stderr),
+                         (1, True), refused.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
