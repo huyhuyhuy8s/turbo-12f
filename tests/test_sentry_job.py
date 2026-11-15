@@ -108,6 +108,28 @@ class SentryJobTest(unittest.TestCase):
             wrote = os.path.exists(out)
         self.assertEqual((code, "401" in stderr.getvalue(), wrote), (1, True, False))
 
+    def test_config_without_org_exits_1_before_any_request(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"project_id": 42, "min_events": 3}}
+        calls = []
+
+        def fake(url, token):
+            calls.append(url)
+            return 200, [], {}, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            code = None
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok"}), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    code = load_sentry().main(argv, fetch=fake)
+                except KeyError:
+                    pass
+        self.assertEqual((code, calls), (1, []))
+
 
 
 if __name__ == "__main__":
