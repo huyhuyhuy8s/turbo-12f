@@ -37,6 +37,18 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("hollow", message)
 
+    def test_two_jobs_with_the_same_name_are_refused_naming_the_name(self):
+        jobs = [
+            {"name": "fuzz", "command": ["python3", "a.py"]},
+            {"name": "fuzz", "command": ["python3", "b.py"]},
+        ]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("fuzz", message)
+
 
 if __name__ == "__main__":
     unittest.main()
