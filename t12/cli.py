@@ -474,7 +474,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
     for gate in task.get("gates", []):
         command = gate.get("command")
-        if command is None:
+        if not command:
             raise StateError(f"gate {gate.get('name')!r}: must have a non-empty argv command")
         try:
             sandbox.check_command(gate.get("command") or [])
