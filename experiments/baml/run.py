@@ -110,7 +110,7 @@ def submit(reply, kind, parse, act, record=None):
 
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
-        _, message = submit("", "review", parse, act)
+        _, message = submit("", "review", parse, lambda call: (True, "ok"))
         print(message)
         return 0
     try:

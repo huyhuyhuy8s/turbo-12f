@@ -36,6 +36,28 @@ class SubmitAccepted(unittest.TestCase):
                     act=lambda call: (True, "ok"))
             self.assertEqual((0, "ok"), (code, out.getvalue().strip()))
 
+    def test_valid_review_call_hands_the_parsed_call_to_act_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write('{"tool": "escalate", "question": "q"}')
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            calls = []
+
+            def act(call):
+                calls.append(call)
+                return True, "ok"
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    act=act)
+            self.assertEqual([{"tool": "escalate", "args": {"question": "q"}}], calls)
+
 
 if __name__ == "__main__":
     unittest.main()
