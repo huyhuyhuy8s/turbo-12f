@@ -217,6 +217,28 @@ class CubicJobTest(unittest.TestCase):
                     titles = [f["title"] for f in json.load(handle)["findings"]]
         self.assertEqual((code, titles), (0, ["[P1] Null deref"]))
 
+    def test_base_branch_is_deleted_after_the_cubic_review(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P1", "file": "src/a.py", "line": 3,
+                              "title": "Null deref", "description": "x is None"}]}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append(argv)
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps(report), ""
+
+        delete = ["git", "branch", "-D", "t12-job/cubic-base"]
+        review = ["cubic", "review", "--base", "t12-job/cubic-base", "--json"]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+        relevant = [c for c in calls if c in (delete, review)]
+        self.assertEqual(relevant, [review, delete])
+
 
 if __name__ == "__main__":
     unittest.main()
