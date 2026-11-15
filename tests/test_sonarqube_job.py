@@ -60,6 +60,25 @@ class SonarqubeJobTest(unittest.TestCase):
                 findings = json.load(handle)["findings"]
         self.assertEqual([f["title"] for f in findings], ["Message AX1", "Message AX2"])
 
+    def test_total_of_150_requests_page_one_and_page_two_and_no_page_three(self):
+        job = {"name": "sonar", "adapter": "sonarqube",
+               "config": {"base_url": "https://sq.example", "project_key": "web"}}
+        pages = []
+
+        def fake(method, url, token):
+            pages.append(int(url.rsplit("&p=", 1)[1]))
+            body = {"issues": [issue(f"AX{len(pages)}")],
+                    "paging": {"pageIndex": len(pages), "pageSize": 100, "total": 150}}
+            return 200, body, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "acme/web", "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SONAR_TOKEN": "tok"}):
+                load_sonarqube().main(argv, fetch=fake)
+        self.assertEqual(pages, [1, 2])
+
 
 if __name__ == "__main__":
     unittest.main()
