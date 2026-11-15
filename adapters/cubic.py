@@ -65,7 +65,11 @@ def main(argv=None, run=None):
     run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
     if code not in (0, 1):
         return 1
-    findings = [_finding(issue) for issue in json.loads(stdout)["issues"]]
+    try:
+        issues = json.loads(stdout)["issues"]
+    except ValueError:
+        return 1
+    findings = [_finding(issue) for issue in issues]
     _write_findings(option("--out"), findings)
     os.makedirs(os.path.dirname(last), exist_ok=True)
     with open(last, "w") as handle:
