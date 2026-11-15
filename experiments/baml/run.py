@@ -80,7 +80,6 @@ def submit(reply, kind, parse, act, record=None):
 
 
 def main(argv):
-    Path(argv[argv.index("--evidence") + 1]).touch()
     try:
         import baml_py  # noqa: F401
     except ImportError:
