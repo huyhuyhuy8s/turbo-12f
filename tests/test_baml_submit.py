@@ -208,5 +208,16 @@ class ExtraArgBeforeStrayBrace(unittest.TestCase):
             (act.call_args_list, lines))
 
 
+class RecordOnSuccess(unittest.TestCase):
+    def test_accepted_reply_records_exactly_one_evidence_line(self):
+        reply = ('{"tool": "test_list_ready", "items": [], "gaps": ["g"], '
+                 '"directives": ["d"]}')
+        parsed = SimpleNamespace(tool="test_list_ready", items=[], gaps=["g"],
+                                 directives=["d"], units=None)
+        lines = []
+        run.submit(reply, "analyzer", lambda text: parsed, mock.Mock(), record=lines.append)
+        self.assertEqual(1, len(lines), lines)
+
+
 if __name__ == "__main__":
     unittest.main()
