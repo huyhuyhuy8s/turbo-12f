@@ -3,6 +3,14 @@ import json
 import os
 
 
+def _next_url(headers):
+    link = next((v for k, v in (headers or {}).items() if k.lower() == "link"), "")
+    for part in link.split(","):
+        if 'rel="next"' in part and 'results="true"' in part:
+            return part[part.index("<") + 1:part.index(">")]
+    return None
+
+
 def main(argv=None, fetch=None):
     args = argv[1:]
     job = json.loads(args[args.index("--job") + 1])
@@ -11,7 +19,12 @@ def main(argv=None, fetch=None):
     url = (f"https://sentry.io/api/0/organizations/{config['org']}/issues/"
            f"?project={config['project_id']}&query=is:unresolved"
            f"&statsPeriod={config.get('period', '14d')}&limit=100")
-    _status, body, _headers, _error = fetch(url, os.environ["SENTRY_TOKEN"])
+    token = os.environ["SENTRY_TOKEN"]
+    issues = []
+    while url:
+        _status, body, headers, _error = fetch(url, token)
+        issues.extend(body)
+        url = _next_url(headers)
     findings = [
         {
             "fingerprint": f"sentry:{issue['id']}",
@@ -19,7 +32,7 @@ def main(argv=None, fetch=None):
             "detail": f"{issue['count']} events",
             "url": issue["permalink"],
         }
-        for issue in body
+        for issue in issues
         if int(issue["count"]) >= config["min_events"]
     ]
     with open(out, "w") as handle:
