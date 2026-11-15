@@ -33,7 +33,7 @@ except ValueError:
 if not isinstance(config, dict):
     print("config.json in %s is not an object" % args.home, file=sys.stderr)
     raise SystemExit(2)
-if "repo" not in config:
+if not isinstance(config.get("repo"), str):
     print("config.json in %s has no repo" % args.home, file=sys.stderr)
     raise SystemExit(2)
 rev = subprocess.run(
