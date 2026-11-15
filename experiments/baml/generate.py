@@ -1,7 +1,7 @@
 from t12 import tools
 
 
-BAML_TYPES = {tools.STR_LIST: "string[]"}
+BAML_TYPES = {tools.STR_LIST: "string[]", tools.UNITS: "Unit[]?"}
 
 
 def member_name(value):
@@ -42,5 +42,11 @@ def item_kind_enum():
     return enum("ItemKind", tools.ITEM_KINDS)
 
 
+def class_block(name, fields):
+    body = "".join(f"  {arg} {shape}\n" for arg, shape in fields.items())
+    return f"class {name} {{\n" + body + "}\n"
+
+
 def render():
-    return verdict_enum() + "\n" + item_kind_enum()
+    blocks = "\n".join(class_block(n, f) for n, f in classes().items())
+    return verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks
