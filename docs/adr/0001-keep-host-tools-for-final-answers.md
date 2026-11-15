@@ -45,5 +45,5 @@ Schema enforcement in the host tool already produced clean calls in every arm A 
 ## Consequences
 
 - `t12/`, `adapters/runner.py` and the guard stay free of BAML.
-- Nothing new depends on `baml-py`. The merged `experiments/baml/` (the generator, the committed `tools.baml`, `submit`, and the command line) stays as experiment code, which only works with `baml-py` installed and a generated client. Removing it is a separate decision.
+- Nothing depends on `baml-py`. The experiment code (the generator, the committed `tools.baml`, `submit`, the command line and their tests) is removed from `main` and kept on the `experiments/baml` branch, at the commit that merged #104. It only works with `baml-py` installed and a generated client (`baml-cli generate --from experiments/baml/baml_src`).
 - The question comes back if a role moves to a model that fails the schema often. Then the check is the refused-call count per session on that role, the number the runner already records.
