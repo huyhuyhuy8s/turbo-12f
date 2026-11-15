@@ -525,3 +525,14 @@ class ConfigTrunkNotAStringTest(unittest.TestCase):
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
+class CommandFingerprintNameTest(unittest.TestCase):
+    def test_a_failing_command_job_named_lint_reports_a_lint_command_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "lint", "command": ["python3", "-c", "import sys; sys.exit(3)"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "lint"],
+                                    capture_output=True, text=True)
+            written = findings_of(os.path.join(home, "jobs", "lint", "findings-1.json"))
+            fingerprints = [f.get("fingerprint") for f in written or []]
+            self.assertEqual((result.returncode, fingerprints), (1, ["lint:command"]))
