@@ -47,13 +47,15 @@ def main(argv=None, run=None):
     repo = tempfile.mkdtemp()
     run(["git", "worktree", "add", "--detach", repo, commit], option("--repo"), env)
     run(["git", "branch", BASE_BRANCH, recorded or config.get("since")], repo, env)
-    _code, stdout, _stderr = run(
+    code, stdout, _stderr = run(
         [config.get("cubic", "cubic"), "review", "--base", BASE_BRANCH, "--json"],
         repo,
         env,
     )
     run(["git", "branch", "-D", BASE_BRANCH], repo, env)
     run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
+    if code not in (0, 1):
+        return 1
     findings = [_finding(issue) for issue in json.loads(stdout)["issues"]]
     with open(option("--out"), "w") as handle:
         json.dump({"findings": findings}, handle)
