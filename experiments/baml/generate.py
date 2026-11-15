@@ -13,3 +13,7 @@ def classes():
         for kind in tools.TOOLS.values()
         for name, args in kind.items()
     }
+
+
+def render():
+    return ""

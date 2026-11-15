@@ -3,6 +3,7 @@ the two in step."""
 
 import importlib.util
 import os
+import re
 import sys
 import unittest
 
@@ -47,6 +48,17 @@ class ToolClassNames(unittest.TestCase):
         found = {"gaps": classes["TestListReady"]["gaps"],
                  "reason": classes["NoCheatLeft"]["reason"]}
         self.assertEqual({"gaps": "string[]", "reason": "string"}, found)
+
+
+class EnumRendering(unittest.TestCase):
+    def test_verdict_enum_has_one_aliased_member_per_review_verdict(self):
+        block = re.search(r"enum Verdict\s*\{(.*?)\}", generate.render(), re.S)
+        lines = [ln.strip() for ln in (block.group(1) if block else "").splitlines()
+                 if ln.strip()]
+        aliases = [(re.search(r'@alias\("([^"]*)"\)', ln) or [None, None])[1]
+                   for ln in lines]
+        expected = sorted(tools.TOOLS["review"]["review"]["verdict"])
+        self.assertEqual(expected, sorted(aliases, key=str))
 
 
 if __name__ == "__main__":
