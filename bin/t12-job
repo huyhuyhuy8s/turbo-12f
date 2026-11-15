@@ -116,7 +116,7 @@ if "adapter" in job:
     findings = run_adapter(job, config["repo"], commit, home, job_dir)
 if "command" in job:
     timeout = job.get("timeout_s")
-    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))):
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout != timeout):
         print("job %r: timeout_s must be a number" % args.name, file=sys.stderr)
         raise SystemExit(2)
     kind = "command"
