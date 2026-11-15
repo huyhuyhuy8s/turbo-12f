@@ -277,6 +277,27 @@ class CubicJobTest(unittest.TestCase):
             recorded = os.path.exists(os.path.join(tmp, "jobs", "cubic", "cubic-last.json"))
         self.assertEqual((code != 0, recorded), (True, False))
 
+    def test_failed_git_branch_fails_the_run_without_cubic_and_records_no_commit(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append(argv)
+            if argv[:2] == ["git", "branch"]:
+                return 128, "", "fatal"
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps({"issues": []}), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            code = load_cubic().main(argv, run=fake)
+            recorded = os.path.exists(os.path.join(tmp, "jobs", "cubic", "cubic-last.json"))
+        cubic_called = any(c[0] == "cubic" for c in calls)
+        self.assertEqual((code != 0, cubic_called, recorded), (True, False, False))
+
 
 if __name__ == "__main__":
     unittest.main()
