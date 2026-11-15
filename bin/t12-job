@@ -24,7 +24,7 @@ job_dir = os.path.join(home, "jobs", args.name)
 try:
     with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
         config = json.load(fh)
-except FileNotFoundError:
+except OSError:
     print("no config.json in %s" % args.home, file=sys.stderr)
     raise SystemExit(2)
 except ValueError:
