@@ -77,6 +77,16 @@ def _unexpected(raw, call):
     return None
 
 
+def _raw_args(reply, call):
+    try:
+        raw, _ = json.JSONDecoder().raw_decode(reply, reply.index("{"))
+    except ValueError:
+        raw = {}
+    if "args" not in call and isinstance(raw.get("args"), dict):
+        return {**raw["args"], **{k: v for k, v in raw.items() if k != "args"}}
+    return raw
+
+
 def submit(reply, kind, parse, act, record=None):
     found = _groups(reply)
     if found > 1:
@@ -87,14 +97,7 @@ def submit(reply, kind, parse, act, record=None):
         shape = plain(parsed, True)
     except Exception as exc:
         return _refuse(record, "baml", str(exc))
-    try:
-        raw, _ = json.JSONDecoder().raw_decode(reply, reply.index("{"))
-    except ValueError:
-        raw = {}
-    if "args" not in call and isinstance(raw.get("args"), dict):
-        args = {**raw["args"], **{k: v for k, v in raw.items() if k != "args"}}
-    else:
-        args = raw
+    args = _raw_args(reply, call)
     key = _unexpected({k: v for k, v in args.items() if k != "tool"}, shape)
     if key is not None:
         return _refuse(record, "script", f"unexpected arg '{key}'")
