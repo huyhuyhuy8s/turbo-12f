@@ -4,6 +4,7 @@ the two in step."""
 import importlib.util
 import os
 import re
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -180,6 +181,21 @@ class Drift(unittest.TestCase):
         with mock.patch.dict(tools.TOOLS["green"], {"extra_tool": {"note": tools.STR}}):
             patched = generate.render()
         self.assertNotEqual(committed, patched)
+
+    def test_running_generate_as_a_script_rewrites_the_committed_file_with_render(self):
+        path = os.path.join(ROOT, "experiments", "baml", "baml_src", "tools.baml")
+        original = open(path).read()
+        try:
+            with open(path, "w") as handle:
+                handle.write("stale\n")
+            proc = subprocess.run(
+                [sys.executable, "experiments/baml/generate.py"],
+                cwd=ROOT, capture_output=True, text=True)
+            written = open(path).read()
+        finally:
+            with open(path, "w") as handle:
+                handle.write(original)
+        self.assertEqual((0, generate.render()), (proc.returncode, written), proc.stderr)
 
 
 if __name__ == "__main__":
