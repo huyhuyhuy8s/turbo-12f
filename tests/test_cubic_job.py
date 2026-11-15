@@ -239,6 +239,28 @@ class CubicJobTest(unittest.TestCase):
         relevant = [c for c in calls if c in (delete, review)]
         self.assertEqual(relevant, [review, delete])
 
+    def test_detached_checkout_is_removed_after_the_cubic_review(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        report = {"issues": [{"priority": "P1", "file": "src/a.py", "line": 3,
+                              "title": "Null deref", "description": "x is None"}]}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append((argv, cwd))
+            if argv[0] == "git":
+                return 0, "", ""
+            return 1, json.dumps(report), ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+        review_cwd = [cwd for a, cwd in calls if a[0] == "cubic"][0]
+        after_review = calls[[a[0] for a, _ in calls].index("cubic") + 1:]
+        removals = [a for a, _ in after_review if a[:4] == ["git", "worktree", "remove", "--force"]]
+        self.assertEqual(removals, [["git", "worktree", "remove", "--force", review_cwd]])
+
 
 if __name__ == "__main__":
     unittest.main()
