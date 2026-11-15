@@ -3,9 +3,14 @@ from t12 import tools
 
 BAML_TYPES = {tools.STR_LIST: "string[]"}
 
+
+def member_name(value):
+    return value.title().replace("-", "")
+
+
 ALIASES = {
     "enums": {
-        value.title().replace("-", ""): value
+        member_name(value): value
         for value in [*tools.TOOLS["review"]["review"]["verdict"], *tools.ITEM_KINDS]
     }
 }
@@ -24,7 +29,7 @@ def classes():
 
 def enum(name, values):
     members = "".join(
-        f'  {value.title().replace("-", "")} @alias("{value}")\n' for value in values
+        f'  {member_name(value)} @alias("{value}")\n' for value in values
     )
     return f"enum {name} {{\n" + members + "}\n"
 
