@@ -26,6 +26,11 @@ def _finding(issue):
     }
 
 
+def _write_findings(path, findings):
+    with open(path, "w") as handle:
+        json.dump({"findings": findings}, handle)
+
+
 def main(argv=None, run=None):
     run = run or _default_run
     def option(flag):
@@ -39,8 +44,7 @@ def main(argv=None, run=None):
         with open(last) as handle:
             recorded = json.load(handle).get("commit")
         if recorded == commit:
-            with open(option("--out"), "w") as handle:
-                json.dump({"findings": []}, handle)
+            _write_findings(option("--out"), [])
             return 0
     config = job.get("config", {})
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
@@ -61,8 +65,7 @@ def main(argv=None, run=None):
     if code not in (0, 1):
         return 1
     findings = [_finding(issue) for issue in json.loads(stdout)["issues"]]
-    with open(option("--out"), "w") as handle:
-        json.dump({"findings": findings}, handle)
+    _write_findings(option("--out"), findings)
     os.makedirs(os.path.dirname(last), exist_ok=True)
     with open(last, "w") as handle:
         json.dump({"commit": commit}, handle)
