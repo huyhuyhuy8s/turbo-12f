@@ -90,6 +90,11 @@ class OptionalAndEdgeRendering(unittest.TestCase):
         names = re.findall(r"^\s*(\w+)\s", block.group(1) if block else "", re.M)
         self.assertEqual((True, False), (block is not None, "unit" in names))
 
+    def test_finding_class_field_renders_with_a_keyword_safe_name_and_alias(self):
+        block = re.search(r"class Finding\s*\{(.*?)\}", generate.render(), re.S)
+        lines = [ln.strip() for ln in (block.group(1) if block else "").splitlines()]
+        self.assertIn('class_ string @alias("class")', lines)
+
 
 if __name__ == "__main__":
     unittest.main()
