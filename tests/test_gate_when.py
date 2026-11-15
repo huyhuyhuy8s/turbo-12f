@@ -26,8 +26,9 @@ class GateWhenCase(TddFlow, unittest.TestCase):
     def t12(self, *args, expect=0, extra_env=None):
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run([BIN, *args], capture_output=True, text=True, timeout=120, env=env)
-        self.assertEqual(result.returncode, expect,
-                         f"t12 {' '.join(args)} -> {result.returncode}: {result.stdout} {result.stderr}")
+        if expect is not None:
+            self.assertEqual(result.returncode, expect,
+                             f"t12 {' '.join(args)} -> {result.returncode}: {result.stdout} {result.stderr}")
         return result
 
     def prepare(self, gate):
@@ -75,6 +76,20 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
         self.t12("gate", "--home", self.home, "--task-id", "demo-1")
         self.assertEqual(self.flow_record()["phase"], "review")
+
+    def test_check_certifies_a_run_whose_gate_was_skipped_and_the_manifest_lists_it(self):
+        self.prepare(self.passing_gate(when={"files": ["src/**"]}))
+        self.run_tdd(files={"app.py": APP_V2, "docs/a.md": "notes\n"})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.do_review()
+        checked = self.t12("check", "--home", self.home, "--task-id", "demo-1", expect=None)
+        manifest = os.path.join(self.home, "evidence", "demo-1", "manifest.txt")
+        text = ""
+        if os.path.exists(manifest):
+            with open(manifest) as fh:
+                text = fh.read()
+        self.assertEqual((self.flow_record()["phase"], "unit: skipped" in text),
+                         ("local-verified", True), checked.stderr)
 
 
 if __name__ == "__main__":
