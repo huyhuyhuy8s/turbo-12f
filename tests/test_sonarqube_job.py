@@ -79,6 +79,25 @@ class SonarqubeJobTest(unittest.TestCase):
                 load_sonarqube().main(argv, fetch=fake)
         self.assertEqual(pages, [1, 2])
 
+    def test_configured_severities_shape_the_first_requested_url(self):
+        job = {"name": "sonar", "adapter": "sonarqube",
+               "config": {"base_url": "https://sq.example", "project_key": "web",
+                          "severities": ["BLOCKER"]}}
+        urls = []
+
+        def fake(method, url, token):
+            urls.append(url)
+            return 200, {"issues": [], "paging": {"pageIndex": 1, "pageSize": 100, "total": 0}}, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "acme/web", "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SONAR_TOKEN": "tok"}):
+                load_sonarqube().main(argv, fetch=fake)
+        self.assertEqual(urls[0], "https://sq.example/api/issues/search?componentKeys=web"
+                         "&issueStatuses=OPEN,CONFIRMED&impactSeverities=BLOCKER&ps=100&p=1")
+
 
 if __name__ == "__main__":
     unittest.main()
