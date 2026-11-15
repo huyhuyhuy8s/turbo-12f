@@ -60,6 +60,8 @@ def run_adapter(job, repo, commit, home, job_dir):
                 raise ValueError("finding title is not a string")
             if "detail" in f and not isinstance(f["detail"], str):
                 raise ValueError("finding detail is not a string")
+            if f.get("url") is not None and not isinstance(f["url"], str):
+                raise ValueError("finding url is not a string or null")
         return adapter_findings
     except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError, AttributeError):
         raise SystemExit(2)
