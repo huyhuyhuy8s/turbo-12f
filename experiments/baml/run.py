@@ -178,7 +178,8 @@ def main(argv, parse=None, act=None, run=None):
                 with open(argv[-1], "a") as evidence:
                     evidence.write(json.dumps(line) + "\n")
 
-        ok, message = submit("", "review", parse, forward, record)
+        reply = Path(raw).read_text() if raw is not None else ""
+        ok, message = submit(reply, "review", parse, forward, record)
         print(message)
         return 0 if ok else 1
     try:
