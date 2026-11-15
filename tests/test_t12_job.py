@@ -124,6 +124,17 @@ class AdapterJobTest(unittest.TestCase):
             self.assertEqual((result.returncode, written.get("kind"), written.get("findings")),
                              (1, "adapter", [{"fingerprint": "f1", "title": "t", "detail": "", "url": None}]))
 
+    def test_an_adapter_that_exits_1_makes_the_job_exit_2_and_write_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "fake", "adapter": "fake"}])
+            os.makedirs(os.path.join(home, "adapters"))
+            with open(os.path.join(home, "adapters", "fake.py"), "w") as fh:
+                fh.write(FAKE_ADAPTER + "import sys\nsys.exit(1)\n")
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "fake", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
 
 if __name__ == "__main__":
     unittest.main()
