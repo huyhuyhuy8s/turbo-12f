@@ -176,6 +176,15 @@ class ProfileJobsTest(unittest.TestCase):
             caught = exc
         self.assertIsInstance(caught, StateError)
 
+    def test_command_given_as_a_plain_string_is_refused_naming_the_job(self):
+        jobs = [{"name": "plain", "command": "python3 x.py"}]
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": jobs}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("plain", message)
+
 
 if __name__ == "__main__":
     unittest.main()
