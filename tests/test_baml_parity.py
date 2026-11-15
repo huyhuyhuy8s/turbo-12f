@@ -74,5 +74,12 @@ class EnumRendering(unittest.TestCase):
         self.assertEqual(dict(members), generate.ALIASES["enums"])
 
 
+class OptionalAndEdgeRendering(unittest.TestCase):
+    def test_units_arg_of_test_list_ready_renders_as_optional_unit_list(self):
+        block = re.search(r"class TestListReady\s*\{(.*?)\}", generate.render(), re.S)
+        field = re.search(r"^\s*units\s+(.*?)\s*$", block.group(1) if block else "", re.M)
+        self.assertEqual("Unit[]?", field.group(1) if field else None)
+
+
 if __name__ == "__main__":
     unittest.main()
