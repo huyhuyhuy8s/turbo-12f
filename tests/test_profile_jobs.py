@@ -28,6 +28,15 @@ class ProfileJobsTest(unittest.TestCase):
             message = str(exc)
         self.assertIn("mixed", message)
 
+    def test_job_with_neither_command_nor_adapter_is_refused_naming_the_job(self):
+        job = {"name": "hollow", "timeout_s": 5}
+        message = ""
+        try:
+            profile.parse(json.dumps({"version": 1, "jobs": [job]}))
+        except StateError as exc:
+            message = str(exc)
+        self.assertIn("hollow", message)
+
 
 if __name__ == "__main__":
     unittest.main()
