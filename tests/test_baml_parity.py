@@ -217,5 +217,16 @@ class OptionalArgsFollowRegistry(unittest.TestCase):
         self.assertEqual("Unit[]", found)
 
 
+class ClientBlock(unittest.TestCase):
+    def test_render_has_a_worker_client_with_openai_provider_and_multiline_options(self):
+        block = re.search(r"^client<llm>\s+Worker\s*\{\n(.*?)^\}", generate.render(),
+                          re.M | re.S)
+        body = block.group(1) if block else ""
+        provider = re.search(r"^\s*provider\s+(\S+)\s*$", body, re.M)
+        options = re.search(r"^\s*options\s*\{\s*$", body, re.M)
+        self.assertEqual(("openai", True),
+                         (provider.group(1) if provider else None, options is not None))
+
+
 if __name__ == "__main__":
     unittest.main()
