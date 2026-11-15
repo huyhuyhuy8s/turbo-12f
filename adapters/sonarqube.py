@@ -7,7 +7,10 @@ def main(argv=None, fetch=None):
     job = json.loads(argv[argv.index("--job") + 1])
     config = job["config"]
     base_url = config["base_url"]
-    project_key = config["project_key"]
+    project_key = config.get("project_key")
+    if not project_key:
+        print("sonarqube: config has no project_key", file=sys.stderr)
+        return 1
     severities = ",".join(config.get("severities", ["HIGH", "BLOCKER"]))
     token = os.environ.get("SONAR_TOKEN")
     issues = []
