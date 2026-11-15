@@ -116,6 +116,7 @@ def submit(reply, kind, parse, act, record=None):
 
 def main(argv, parse=None, act=None, run=None):
     if parse is not None:
+        act = act or (lambda call: (True, "ok"))
         def forward(call):
             result = act(call)
             return result if isinstance(result, tuple) else (True, "ok")

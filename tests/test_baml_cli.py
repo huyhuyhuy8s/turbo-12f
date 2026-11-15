@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import sys
 import tempfile
@@ -175,6 +176,28 @@ class SubmitActFailure(unittest.TestCase):
             self.assertEqual(
                 ['{"arm": "B", "kind": "review", "ok": false, "refused_by": "act", "error": "refused: bad"}'],
                 lines)
+
+
+class SubmitDefaultAct(unittest.TestCase):
+    def test_default_act_writes_the_parsed_call_beside_the_reply_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write("a call")
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "review", "--reply-file", reply, "--home", home,
+                     "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", os.path.join(tmp, "evidence.jsonl")],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    run=lambda argv: 0)
+            written = None
+            if os.path.exists(reply + ".call.json"):
+                with open(reply + ".call.json") as fh:
+                    written = json.load(fh)
+            self.assertEqual({"tool": "escalate", "args": {"question": "q"}}, written)
 
 
 if __name__ == "__main__":
