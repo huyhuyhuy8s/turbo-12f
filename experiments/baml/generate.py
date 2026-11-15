@@ -90,7 +90,7 @@ def review_answer():
 
 
 def render():
-    blocks = "\n".join(class_block(n, {**f, "tool": "string"} if n == "Review" else f) for n, f in classes().items())
+    blocks = "\n".join(class_block(n, f) for n, f in classes().items())
     item_fields = {
         arg: "ItemKind" if shape == tools.ITEM_KINDS else BAML_TYPES.get(shape, shape)
         for arg, shape in tools.ITEM_FIELDS.items()
