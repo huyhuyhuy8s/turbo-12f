@@ -64,7 +64,7 @@ def submit(reply, kind, parse, act, record=None):
     except Exception as exc:
         return _refuse(record, "baml", str(exc))
     try:
-        raw = json.loads(reply[reply.index("{") : reply.rindex("}") + 1])
+        raw, _ = json.JSONDecoder().raw_decode(reply, reply.index("{"))
     except ValueError:
         raw = {}
     args = raw.get("args") if "args" not in call and isinstance(raw.get("args"), dict) else raw
