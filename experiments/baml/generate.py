@@ -55,9 +55,17 @@ def class_name(tool):
     return tool.title().replace("_", "")
 
 
+def answer_function(function, kind):
+    union = " | ".join(class_name(tool) for tool in tools.TOOLS[kind])
+    return f"function {function}(input: string) -> {union} {{\n}}\n"
+
+
 def analyzer_answer():
-    union = " | ".join(class_name(tool) for tool in tools.TOOLS["analyzer"])
-    return f"function AnalyzerAnswer(input: string) -> {union} {{\n}}\n"
+    return answer_function("AnalyzerAnswer", "analyzer")
+
+
+def red_answer():
+    return answer_function("RedAnswer", "red")
 
 
 def render():
@@ -69,4 +77,5 @@ def render():
     unit_item = class_block("UnitTestItem", {"unit": "string?"})
     finding = class_block("Finding", {f: tools.STR for f in tools.FINDING_FIELDS})
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
-            + "\n" + unit_item + "\n" + finding + "\n" + analyzer_answer())
+            + "\n" + unit_item + "\n" + finding + "\n" + analyzer_answer()
+            + "\n" + red_answer())
