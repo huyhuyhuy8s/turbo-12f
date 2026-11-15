@@ -16,8 +16,13 @@ BAML_TYPES = {
     tools.ITEMS: "TestItem[]",
     tools.UNIT_ITEMS: "UnitTestItem[]",
     tools.FINDINGS: "Finding[]",
-    tools.TOOLS["review"]["review"]["verdict"]: "Verdict",
 }
+
+
+def baml_type(shape):
+    if shape == tools.TOOLS["review"]["review"]["verdict"]:
+        return "Verdict"
+    return BAML_TYPES.get(shape, shape)
 
 
 def member_name(value):
@@ -38,7 +43,7 @@ def classes():
         class_name(name): {
             "tool": f'"{name}"',
             **{
-                arg: BAML_TYPES.get(shape, shape)
+                arg: baml_type(shape)
                 + ("?" if arg in tools.OPTIONAL_ARGS.get(name, ()) else "")
                 for arg, shape in args.items()
             },
