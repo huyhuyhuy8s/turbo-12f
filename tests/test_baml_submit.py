@@ -126,5 +126,19 @@ class BraceInsideString(unittest.TestCase):
         self.assertEqual(1, act.call_count)
 
 
+class ExtraArg(unittest.TestCase):
+    def test_reply_key_missing_from_parse_result_is_refused_by_script_and_act_is_not_called(self):
+        reply = ('{"tool": "test_list_ready", "items": [], "gaps": ["g"], '
+                 '"directives": ["d"], "bonus": 1}')
+        parsed = SimpleNamespace(tool="test_list_ready", items=[], gaps=["g"],
+                                 directives=["d"], units=None)
+        act = mock.Mock()
+        lines = []
+        run.submit(reply, "analyzer", lambda text: parsed, act, record=lines.append)
+        message = "unexpected arg 'bonus'"
+        self.assertEqual(
+            ([], [{"ok": False, "refused_by": "script", "message": message}]),
+            (act.call_args_list, lines))
+
 if __name__ == "__main__":
     unittest.main()
