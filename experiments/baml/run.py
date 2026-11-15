@@ -85,7 +85,10 @@ def submit(reply, kind, parse, act, record=None):
         raw, _ = json.JSONDecoder().raw_decode(reply, reply.index("{"))
     except ValueError:
         raw = {}
-    args = raw.get("args") if "args" not in call and isinstance(raw.get("args"), dict) else raw
+    if "args" not in call and isinstance(raw.get("args"), dict):
+        args = {**raw["args"], **{k: v for k, v in raw.items() if k != "args"}}
+    else:
+        args = raw
     key = _unexpected({k: v for k, v in args.items() if k != "tool"}, call)
     if key is not None:
         return _refuse(record, "script", f"unexpected arg '{key}'")
