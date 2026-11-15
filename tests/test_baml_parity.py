@@ -42,6 +42,12 @@ class ToolClassNames(unittest.TestCase):
                  for cls in expected}
         self.assertEqual(expected, found)
 
+    def test_arg_field_types_follow_the_type_mapping(self):
+        classes = generate.classes()
+        found = {"gaps": classes["TestListReady"]["gaps"],
+                 "reason": classes["NoCheatLeft"]["reason"]}
+        self.assertEqual({"gaps": "string[]", "reason": "string"}, found)
+
 
 if __name__ == "__main__":
     unittest.main()
