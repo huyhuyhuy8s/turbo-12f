@@ -18,7 +18,7 @@ def main(argv=None, fetch=None):
     config = job["config"]
     url = (f"https://sentry.io/api/0/organizations/{config['org']}/issues/"
            f"?project={config['project_id']}&query=is:unresolved"
-           f"&statsPeriod={config.get('period', '14d')}&limit=100")
+           f"&statsPeriod=14d&limit=100")
     token = os.environ["SENTRY_TOKEN"]
     issues = []
     while url:

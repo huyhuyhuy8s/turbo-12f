@@ -69,6 +69,25 @@ class SentryJobTest(unittest.TestCase):
                 findings = json.load(handle)["findings"]
         self.assertEqual([f["fingerprint"] for f in findings], ["sentry:101", "sentry:201"])
 
+    def test_first_url_requested_is_built_from_org_project_and_period(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"org": "acme", "project_id": 42, "period": "7d"}}
+        calls = []
+
+        def fake(url, token):
+            calls.append(url)
+            return 200, [], {}, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok"}):
+                load_sentry().main(argv, fetch=fake)
+        self.assertEqual(calls[:1], [
+            "https://sentry.io/api/0/organizations/acme/issues/"
+            "?project=42&query=is:unresolved&statsPeriod=7d&limit=100"])
+
 
 if __name__ == "__main__":
     unittest.main()
