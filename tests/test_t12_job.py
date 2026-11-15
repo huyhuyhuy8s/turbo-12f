@@ -196,6 +196,17 @@ class AdapterJobTest(unittest.TestCase):
             path = os.path.join(home, "jobs", "fake", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
 
+    def test_an_adapter_finding_with_an_empty_fingerprint_makes_the_job_exit_2_and_write_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "fake", "adapter": "fake"}])
+            os.makedirs(os.path.join(home, "adapters"))
+            with open(os.path.join(home, "adapters", "fake.py"), "w") as fh:
+                fh.write(FAKE_ADAPTER.replace('"fingerprint": "f1"', '"fingerprint": ""'))
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "fake"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "fake", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
 
 class UnknownJobTest(unittest.TestCase):
     def test_an_unknown_job_name_exits_2_and_lists_the_profile_job_names(self):
