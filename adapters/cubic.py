@@ -56,10 +56,10 @@ def main(argv=None, run=None):
         repo,
         env,
     )
-    run(["git", "branch", "-D", BASE_BRANCH], repo, env)
-    run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
     if code not in (0, 1):
         return 1
+    run(["git", "branch", "-D", BASE_BRANCH], repo, env)
+    run(["git", "worktree", "remove", "--force", repo], option("--repo"), env)
     findings = [_finding(issue) for issue in json.loads(stdout)["issues"]]
     with open(option("--out"), "w") as handle:
         json.dump({"findings": findings}, handle)

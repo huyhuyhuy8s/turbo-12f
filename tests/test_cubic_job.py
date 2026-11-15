@@ -319,6 +319,27 @@ class CubicJobTest(unittest.TestCase):
         later = [c for c in calls if c[:2] == ["git", "branch"] or c[0] == "cubic"]
         self.assertEqual((code != 0, later, recorded), (True, [], False))
 
+    def test_failed_cubic_review_still_deletes_the_base_branch_and_removes_the_checkout(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append((argv, cwd))
+            if argv[0] == "git":
+                return 0, "", ""
+            return 2, "", "boom"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            load_cubic().main(argv, run=fake)
+        review_cwd = [cwd for a, cwd in calls if a[0] == "cubic"][0]
+        cleanup = [a for a, _ in calls if a[:2] in (["git", "branch"], ["git", "worktree"]) and
+                   (a[2:3] == ["-D"] or a[2:3] == ["remove"])]
+        self.assertEqual(cleanup, [["git", "branch", "-D", "t12-job/cubic-base"],
+                                   ["git", "worktree", "remove", "--force", review_cwd]])
+
 
 if __name__ == "__main__":
     unittest.main()
