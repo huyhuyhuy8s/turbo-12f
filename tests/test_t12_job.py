@@ -637,3 +637,32 @@ class UnreadableConfigTest(unittest.TestCase):
                                     capture_output=True, text=True)
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
+
+
+class SandboxAdapterTest(unittest.TestCase):
+    def test_a_command_job_runs_through_docker_run_with_the_profile_image_and_no_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["python3", "-c", "pass"]}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, ".t12", "project.json"), "w") as fh:
+                json.dump({"version": 1, "sandbox_adapter": "docker", "sandbox_image": "img:1",
+                           "jobs": [{"name": "check", "command": ["python3", "-c", "pass"]}]}, fh)
+            git(repo, "commit", "-qam", "sandbox profile")
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            stub = os.path.join(bindir, "docker")
+            with open(os.path.join(ROOT, "tests", "fake_docker.py"), "rb") as src:
+                with open(stub, "wb") as dst:
+                    dst.write(src.read())
+            os.chmod(stub, 0o755)
+            log_path = os.path.join(tmp, "docker.log")
+            env = {**os.environ, "PATH": bindir + ":" + os.environ["PATH"],
+                   "FAKE_DOCKER_ROOT": ROOT, "FAKE_DOCKER_LOG": log_path}
+            subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                           capture_output=True, text=True, env=env)
+            logged = []
+            if os.path.exists(log_path):
+                with open(log_path) as fh:
+                    logged = [json.loads(line) for line in fh if line.strip()]
+            runs = [(a[1:4], a[-4:]) for a in logged if a[:1] == ["run"]]
+            self.assertEqual(runs, [(["--rm", "--network", "none"], ["img:1", "python3", "-c", "pass"])])
