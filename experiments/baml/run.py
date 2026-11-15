@@ -171,7 +171,7 @@ def main(argv, parse=None, act=None, run=None):
             if path is not None:
                 line = {
                     "arm": "B",
-                    "kind": "review",
+                    "kind": kind,
                     "ok": outcome["ok"],
                     "refused_by": outcome.get("refused_by"),
                     "error": outcome.get("message"),
@@ -179,8 +179,10 @@ def main(argv, parse=None, act=None, run=None):
                 with open(path, "a") as evidence:
                     evidence.write(json.dumps(line) + "\n")
 
+        kind = _option(argv, "--kind") or "review"
+
         reply = Path(raw).read_text() if raw is not None else ""
-        ok, message = submit(reply, "review", parse, forward, record)
+        ok, message = submit(reply, kind, parse, forward, record)
         print(message)
         return 0 if ok else 1
     try:
