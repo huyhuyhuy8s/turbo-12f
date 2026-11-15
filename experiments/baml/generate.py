@@ -77,7 +77,7 @@ def class_name(tool):
 
 def answer_function(function, kind):
     union = " | ".join(class_name(tool) for tool in tools.TOOLS[kind])
-    prompt = '  prompt #"\n    {{ ctx.output_format }}\n  "#\n'
+    prompt = '  prompt #"\n    {{ task }}\n    {{ ctx.output_format }}\n  "#\n'
     return f"function {function}(task: string) -> {union} {{\n  client Worker\n{prompt}}}\n"
 
 

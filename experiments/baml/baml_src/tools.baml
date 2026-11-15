@@ -95,6 +95,7 @@ class Finding {
 function AnalyzerAnswer(task: string) -> TestListReady | Escalate {
   client Worker
   prompt #"
+    {{ task }}
     {{ ctx.output_format }}
   "#
 }
@@ -102,6 +103,7 @@ function AnalyzerAnswer(task: string) -> TestListReady | Escalate {
 function RedAnswer(task: string) -> RedTestReady | NoCheatLeft | Escalate {
   client Worker
   prompt #"
+    {{ task }}
     {{ ctx.output_format }}
   "#
 }
@@ -109,6 +111,7 @@ function RedAnswer(task: string) -> RedTestReady | NoCheatLeft | Escalate {
 function ReviewAnswer(task: string) -> Review | Escalate {
   client Worker
   prompt #"
+    {{ task }}
     {{ ctx.output_format }}
   "#
 }
