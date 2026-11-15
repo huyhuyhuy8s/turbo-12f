@@ -42,7 +42,7 @@ def main(argv=None, fetch=None):
             print(f"sentry: HTTP status {status}", file=sys.stderr)
             return 1
         issues.extend(body)
-        url = _next_url(headers)
+        url = _next_url(headers) if fetch is _default_fetch else (_next_url(headers) or "").split("?")[0] or None
     findings = [
         {
             "fingerprint": f"sentry:{issue['id']}",

@@ -241,6 +241,34 @@ class SentryJobTest(unittest.TestCase):
         self.assertEqual((len(requests), requests[1:], written),
                          (2, [next_url], ["sentry:101", "sentry:201"]))
 
+    def test_next_page_is_requested_at_the_rel_next_link_with_its_cursor(self):
+        job = {"name": "errors", "adapter": "sentry",
+               "config": {"org": "acme", "project_id": 42, "period": "7d", "min_events": 3}}
+        base = "https://sentry.io/api/0/organizations/acme/issues/"
+        link = ('<{b}?cursor=0:0:1>; rel="previous"; results="false"; cursor="0:0:1", '
+                '<{b}?cursor=0:100:0>; rel="next"; results="{n}"; cursor="0:100:0"')
+        pages = [
+            (200, [issue("101", "5")], {"Link": link.format(b=base, n="true")}, None),
+            (200, [issue("201", "9")], {"Link": link.format(b=base, n="false")}, None),
+        ]
+        calls = []
+
+        def fake(url, token):
+            calls.append(url)
+            return pages[min(len(calls), len(pages)) - 1]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", tmp, "--commit", "abc123",
+                    "--home", tmp, "--out", out]
+            with mock.patch.dict(os.environ, {"SENTRY_TOKEN": "tok"}):
+                load_sentry().main(argv, fetch=fake)
+            with open(out) as handle:
+                ids = [f["fingerprint"] for f in json.load(handle)["findings"]]
+        self.assertEqual((calls, ids), ([
+            base + "?project=42&query=is:unresolved&statsPeriod=7d&limit=100",
+            base + "?cursor=0:100:0"], ["sentry:101", "sentry:201"]))
+
 
 
 if __name__ == "__main__":
