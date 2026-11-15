@@ -114,7 +114,19 @@ def main(argv, parse=None, act=None, run=None):
             act(call)
             return True, "ok"
 
-        _, message = submit("", "review", parse, forward)
+        def record(outcome):
+            if argv:
+                line = {
+                    "arm": "B",
+                    "kind": "review",
+                    "ok": outcome["ok"],
+                    "refused_by": outcome.get("refused_by"),
+                    "error": outcome.get("message"),
+                }
+                with open(argv[-1], "a") as evidence:
+                    evidence.write(json.dumps(line) + "\n")
+
+        _, message = submit("", "review", parse, forward, record)
         print(message)
         return 0
     try:
