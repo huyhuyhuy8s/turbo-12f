@@ -210,5 +210,18 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         self.assertEqual((row["phase"], row["gates_passed"]), ("gates", 1))
 
 
+class NewRunGateCommandCase(unittest.TestCase):
+    def test_new_run_refuses_a_gate_without_command_with_the_argv_message_naming_the_gate(self):
+        from t12 import model, profile
+        from t12.errors import StateError
+        task = {"id": "t1", "acceptance_criteria": ["it works"],
+                "gates": [{"name": "unit"}]}
+        with self.assertRaises(StateError) as caught:
+            model.new_run(task, "/repo", "/home", "abc", profile.parse(None)["roles"])
+        self.assertEqual(
+            ("must have a non-empty argv command" in str(caught.exception),
+             "unit" in str(caught.exception)), (True, True), str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
