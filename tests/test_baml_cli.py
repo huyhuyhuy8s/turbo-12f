@@ -309,6 +309,28 @@ class SubmitReadsReply(unittest.TestCase):
             self.assertEqual(['{"tool": "escalate", "question": "q"}'], seen)
 
 
+class SubmitEvidenceOption(unittest.TestCase):
+    def test_evidence_line_goes_to_the_evidence_option_wherever_it_sits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write('{"tool": "escalate", "question": "q"}')
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--evidence", evidence, "--kind", "review", "--reply-file", reply,
+                     "--home", tmp, "--task-id", "T", "--role", "R",
+                     "--session", os.path.join(tmp, "last-argument")],
+                    parse=lambda text: SimpleNamespace(tool="escalate", question="q"),
+                    act=lambda call: (True, "ok"))
+            lines = []
+            if os.path.exists(evidence):
+                with open(evidence) as fh:
+                    lines = fh.read().splitlines()
+            self.assertEqual(
+                ['{"arm": "B", "kind": "review", "ok": true, "refused_by": null, "error": null}'],
+                lines)
+
 
 if __name__ == "__main__":
     unittest.main()
