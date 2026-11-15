@@ -183,6 +183,19 @@ class GateWhenCase(TddFlow, unittest.TestCase):
         expected = {repr(v): (1, True, False) for v in (False, 0, ["files"])}
         self.assertEqual(outcomes, expected)
 
+    def test_prepare_refuses_a_gate_whose_command_is_not_a_list_of_strings_without_a_traceback(self):
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        outcomes = {}
+        for value in (True, 5, "pytest", [1]):
+            with open(self.task_path, "w") as fh:
+                json.dump(task_dict(gates=[{"name": "unit", "command": value}]), fh)
+            refused = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+            outcomes[repr(value)] = (refused.returncode,
+                                     "must have a non-empty argv command" in refused.stderr,
+                                     "Traceback" in refused.stderr)
+        expected = {repr(v): (1, True, False) for v in (True, 5, "pytest", [1])}
+        self.assertEqual(outcomes, expected)
+
 
 if __name__ == "__main__":
     unittest.main()
