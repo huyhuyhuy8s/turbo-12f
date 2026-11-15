@@ -144,6 +144,13 @@ class Drift(unittest.TestCase):
             patched = generate.render()
         self.assertNotEqual(committed, patched)
 
+    def test_render_differs_from_committed_when_a_tool_is_added(self):
+        path = os.path.join(ROOT, "experiments", "baml", "baml_src", "tools.baml")
+        committed = open(path).read()
+        with mock.patch.dict(tools.TOOLS["green"], {"extra_tool": {"note": tools.STR}}):
+            patched = generate.render()
+        self.assertNotEqual(committed, patched)
+
 
 if __name__ == "__main__":
     unittest.main()
