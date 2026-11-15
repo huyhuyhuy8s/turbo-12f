@@ -332,5 +332,27 @@ class SubmitEvidenceOption(unittest.TestCase):
                 lines)
 
 
+class SubmitKindOption(unittest.TestCase):
+    def test_kind_option_selects_the_tool_set_and_is_recorded_in_the_evidence_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reply = os.path.join(tmp, "reply.txt")
+            with open(reply, "w") as fh:
+                fh.write('{"tool": "green_ready", "summary": "s"}')
+            evidence = os.path.join(tmp, "evidence.jsonl")
+            with contextlib.redirect_stdout(io.StringIO()):
+                run.main(
+                    ["submit", "--kind", "green", "--reply-file", reply,
+                     "--home", tmp, "--task-id", "T", "--role", "R", "--session", "S",
+                     "--evidence", evidence],
+                    parse=lambda text: SimpleNamespace(tool="green_ready", summary="s"),
+                    act=lambda call: (True, "ok"))
+            lines = []
+            if os.path.exists(evidence):
+                with open(evidence) as fh:
+                    lines = fh.read().splitlines()
+            self.assertEqual(
+                ['{"arm": "B", "kind": "green", "ok": true, "refused_by": null, "error": null}'],
+                lines)
+
 if __name__ == "__main__":
     unittest.main()
