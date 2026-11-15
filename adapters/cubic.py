@@ -48,6 +48,7 @@ def main(argv=None, run=None):
         repo,
         env,
     )
+    run(["git", "branch", "-D", "t12-job/cubic-base"], repo, env)
     findings = [_finding(issue) for issue in json.loads(stdout)["issues"]]
     with open(option("--out"), "w") as handle:
         json.dump({"findings": findings}, handle)
