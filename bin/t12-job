@@ -21,8 +21,12 @@ args = parser.parse_args()
 
 home = os.path.abspath(args.home)
 job_dir = os.path.join(home, "jobs", args.name)
-with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
-    config = json.load(fh)
+try:
+    with open(os.path.join(args.home, "config.json"), encoding="utf-8") as fh:
+        config = json.load(fh)
+except FileNotFoundError:
+    print("no config.json in %s" % args.home, file=sys.stderr)
+    raise SystemExit(2)
 rev = subprocess.run(
     ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
     capture_output=True, text=True,
