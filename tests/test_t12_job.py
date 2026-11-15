@@ -239,5 +239,12 @@ class UnknownJobTest(unittest.TestCase):
             output = result.stdout + result.stderr
             self.assertEqual((result.returncode, "check" in output, "fake" in output), (2, True, True))
 
+    def test_an_unknown_job_name_creates_no_job_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "command": ["true"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "nope"],
+                                    capture_output=True, text=True)
+            self.assertEqual((result.returncode, os.path.exists(os.path.join(home, "jobs", "nope"))), (2, False))
+
 if __name__ == "__main__":
     unittest.main()
