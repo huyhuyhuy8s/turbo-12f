@@ -19,7 +19,7 @@ ALIASES = {
 
 def classes():
     return {
-        name.title().replace("_", ""): {
+        class_name(name): {
             "tool": tools.STR,
             **{arg: BAML_TYPES.get(shape, shape) for arg, shape in args.items()},
         }
