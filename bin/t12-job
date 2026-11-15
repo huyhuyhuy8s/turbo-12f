@@ -39,12 +39,13 @@ if not isinstance(config.get("repo"), str):
 if not isinstance(config.get("trunk", "main"), str):
     print("config.json in %s has a trunk that is not a string" % args.home, file=sys.stderr)
     raise SystemExit(2)
+trunk = config.get("trunk", "main")
 rev = subprocess.run(
-    ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
+    ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + trunk],
     capture_output=True, text=True,
 )
 if rev.returncode != 0:
-    print("trunk branch %r does not exist" % config.get("trunk", "main"), file=sys.stderr)
+    print("trunk branch %r does not exist" % trunk, file=sys.stderr)
     raise SystemExit(2)
 commit = rev.stdout.strip()
 shown = subprocess.run(
