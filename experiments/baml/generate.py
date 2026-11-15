@@ -74,9 +74,6 @@ def review_answer():
 
 
 def render():
-    import os
-    with open(os.path.join(os.path.dirname(__file__), "baml_src", "tools.baml")) as f:
-        return f.read()
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
     item = class_block("TestItem", {
         arg: "ItemKind" if shape == tools.ITEM_KINDS else BAML_TYPES.get(shape, shape)
