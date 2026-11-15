@@ -473,6 +473,9 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for role in profile["roles"]:
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
     for gate in task.get("gates", []):
+        when = gate.get("when")
+        if when is not None and not when["files"]:
+            raise StateError(f"gate {gate.get('name')!r}: when.files must be a non-empty list of globs")
         try:
             sandbox.check_command(gate.get("command") or [])
         except T12Error as exc:
