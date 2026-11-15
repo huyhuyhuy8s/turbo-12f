@@ -731,3 +731,28 @@ class LandlockUnavailableTest(unittest.TestCase):
                     code = exc.code
             path = os.path.join(home, "jobs", "check", "findings-1.json")
             self.assertEqual((code, os.path.exists(path)), (2, False))
+
+
+class DockerDaemonDownTest(unittest.TestCase):
+    def test_a_docker_profile_whose_daemon_is_down_exits_2_and_writes_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            command = ["python3", "-c", "import sys; sys.exit(3)"]
+            home = make_home(tmp, [{"name": "check", "command": command}])
+            repo = os.path.join(tmp, "product")
+            with open(os.path.join(repo, ".t12", "project.json"), "w") as fh:
+                json.dump({"version": 1, "sandbox_adapter": "docker", "sandbox_image": "img:1",
+                           "jobs": [{"name": "check", "command": command}]}, fh)
+            git(repo, "commit", "-qam", "sandbox profile")
+            bindir = os.path.join(tmp, "bin")
+            os.makedirs(bindir)
+            stub = os.path.join(bindir, "docker")
+            with open(os.path.join(ROOT, "tests", "fake_docker.py"), "rb") as src:
+                with open(stub, "wb") as dst:
+                    dst.write(src.read())
+            os.chmod(stub, 0o755)
+            env = {**os.environ, "PATH": bindir + ":" + os.environ["PATH"], "FAKE_DOCKER_ROOT": ROOT,
+                   "FAKE_DOCKER_LOG": os.path.join(tmp, "docker.log"), "FAKE_DOCKER_INFO_OK": "0"}
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True, env=env)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
