@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import sys
 
 
 def _next_url(headers):
@@ -22,7 +23,10 @@ def main(argv=None, fetch=None):
     token = os.environ["SENTRY_TOKEN"]
     issues = []
     while url:
-        _status, body, headers, _error = fetch(url, token)
+        status, body, headers, _error = fetch(url, token)
+        if status != 200:
+            print(f"sentry: HTTP status {status}", file=sys.stderr)
+            return 1
         issues.extend(body)
         url = _next_url(headers)
     findings = [
