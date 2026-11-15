@@ -13,7 +13,7 @@ ALIASES = {
         member_name(value): value
         for value in [*tools.TOOLS["review"]["review"]["verdict"], *tools.ITEM_KINDS]
     },
-    "fields": {},
+    "fields": {"class_": "class"},
 }
 
 
