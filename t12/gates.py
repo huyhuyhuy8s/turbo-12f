@@ -43,8 +43,6 @@ def check_order(run, gate):
 def reset_for_new_candidate(run):
     """A newly pinned candidate invalidates gate observations bound to the old one."""
     for gate in run["gates"]:
-        if gate["status"] == "skipped":
-            continue
         gate["status"] = "pending"
         gate["observation"] = None
         gate["commit"] = None
