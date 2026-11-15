@@ -18,8 +18,6 @@ def main(argv=None, fetch=None):
         _status, body, _error = fetch("GET", url, token)
         if _status != 200:
             print(f"sonarqube: request returned status {_status}", file=sys.stderr)
-            with open(argv[argv.index("--out") + 1], "w") as handle:
-                json.dump({"findings": []}, handle)
             return 1
         issues.extend(body["issues"])
         if page * 100 >= body.get("paging", {}).get("total", 0) or page >= 10:
