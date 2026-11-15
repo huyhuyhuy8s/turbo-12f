@@ -329,8 +329,11 @@ def _jobs(value):
     from . import sandbox
     for job in value:
         where = f"{PATH}: job {job.get('name')!r}"
-        if "schedule" in job:
-            raise StateError(f"{where} has unknown keys ['schedule']")
+        unknown = sorted(set(job) - {"name", "command", "adapter", "timeout_s", "config", "label"})
+        if unknown:
+            raise StateError(f"{where} has unknown keys {unknown}")
+        if "label" in job and (not isinstance(job["label"], str) or not job["label"].strip()):
+            raise StateError(f"{where}: label must be a non-empty string")
         if "command" in job and "adapter" in job:
             raise StateError(f"{where} has both command and adapter; "
                              "a job is one or the other")
