@@ -15,13 +15,20 @@ def classes():
     }
 
 
-def verdict_enum():
+def enum(name, values):
     members = "".join(
-        f'  {value.title().replace("-", "")} @alias("{value}")\n'
-        for value in tools.TOOLS["review"]["review"]["verdict"]
+        f'  {value.title().replace("-", "")} @alias("{value}")\n' for value in values
     )
-    return "enum Verdict {\n" + members + "}\n"
+    return f"enum {name} {{\n" + members + "}\n"
+
+
+def verdict_enum():
+    return enum("Verdict", tools.TOOLS["review"]["review"]["verdict"])
+
+
+def item_kind_enum():
+    return enum("ItemKind", tools.ITEM_KINDS)
 
 
 def render():
-    return verdict_enum()
+    return verdict_enum() + "\n" + item_kind_enum()
