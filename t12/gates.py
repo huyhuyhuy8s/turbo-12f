@@ -8,15 +8,19 @@ next pending one by default.
 from .errors import StateError
 
 
+def _is_cleared(gate):
+    return gate["status"] in ("passed", "skipped")
+
+
 def next_gate(run):
     for gate in run["gates"]:
-        if gate["status"] not in ("passed", "skipped"):
+        if not _is_cleared(gate):
             return gate
     return None
 
 
 def all_passed(run):
-    return all(g["status"] in ("passed", "skipped") for g in run["gates"])
+    return all(_is_cleared(g) for g in run["gates"])
 
 
 def find_gate(run, name):
@@ -30,7 +34,7 @@ def check_order(run, gate):
     for prior in run["gates"]:
         if prior is gate:
             break
-        if prior["status"] not in ("passed", "skipped"):
+        if not _is_cleared(prior):
             raise StateError(
                 f"gate {gate['name']!r} cannot run before gate {prior['name']!r} passes"
             )
