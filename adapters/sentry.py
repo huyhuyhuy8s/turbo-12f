@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 
 
@@ -14,8 +15,11 @@ def _next_url(headers):
 
 def _default_fetch(url, token):
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    with urllib.request.urlopen(req) as resp:
-        return resp.status, json.loads(resp.read()), dict(resp.headers), None
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, json.loads(resp.read()), dict(resp.headers), None
+    except urllib.error.HTTPError as exc:
+        return exc.code, None, dict(exc.headers), str(exc)
 
 
 
