@@ -471,3 +471,13 @@ class ConfigNotAnObjectTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CommandTimeoutNotFiniteTest(unittest.TestCase):
+    def test_a_timeout_s_of_nan_exits_2_with_no_findings_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = make_home(tmp, [{"name": "check", "timeout_s": float("nan"), "command": ["python3", "-c", "pass"]}])
+            result = subprocess.run([sys.executable, JOB, "--home", home, "--name", "check"],
+                                    capture_output=True, text=True)
+            path = os.path.join(home, "jobs", "check", "findings-1.json")
+            self.assertEqual((result.returncode, os.path.exists(path)), (2, False))
