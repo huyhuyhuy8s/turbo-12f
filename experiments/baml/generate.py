@@ -68,6 +68,10 @@ def red_answer():
     return answer_function("RedAnswer", "red")
 
 
+def review_answer():
+    return answer_function("ReviewAnswer", "review")
+
+
 def render():
     blocks = "\n".join(class_block(n, f) for n, f in classes().items())
     item = class_block("TestItem", {
@@ -78,4 +82,4 @@ def render():
     finding = class_block("Finding", {f: tools.STR for f in tools.FINDING_FIELDS})
     return (verdict_enum() + "\n" + item_kind_enum() + "\n" + blocks + "\n" + item
             + "\n" + unit_item + "\n" + finding + "\n" + analyzer_answer()
-            + "\n" + red_answer())
+            + "\n" + red_answer() + "\n" + review_answer())
