@@ -57,7 +57,8 @@ def class_name(tool):
 
 def answer_function(function, kind):
     union = " | ".join(class_name(tool) for tool in tools.TOOLS[kind])
-    return f"function {function}(input: string) -> {union} {{\n}}\n"
+    prompt = '  prompt #"\n    {{ ctx.output_format }}\n  "#\n'
+    return f"function {function}(input: string) -> {union} {{\n{prompt}}}\n"
 
 
 def analyzer_answer():
