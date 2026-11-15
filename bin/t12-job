@@ -19,5 +19,8 @@ commit = subprocess.run(
     ["git", "-C", config["repo"], "rev-parse", "refs/heads/" + config.get("trunk", "main")],
     check=True, capture_output=True, text=True,
 ).stdout.strip()
-with open(os.path.join(job_dir, "findings-1.json"), "w", encoding="utf-8") as fh:
+seq = 1
+while os.path.exists(os.path.join(job_dir, "findings-%d.json" % seq)):
+    seq += 1
+with open(os.path.join(job_dir, "findings-%d.json" % seq), "w", encoding="utf-8") as fh:
     json.dump({"commit": commit, "findings": []}, fh)
