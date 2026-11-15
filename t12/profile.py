@@ -326,6 +326,10 @@ def _jobs(value):
         if "command" not in job and "adapter" not in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} has neither command nor adapter; "
                              "a job is one or the other")
+    names = [job.get("name") for job in value]
+    for name in names:
+        if names.count(name) > 1:
+            raise StateError(f"{PATH}: job name {name!r} is used twice")
     return value
 
 
