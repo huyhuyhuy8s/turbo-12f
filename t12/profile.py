@@ -327,6 +327,8 @@ def _jobs(value):
         if not isinstance(name, str) or not JOB_NAME_RE.match(name):
             raise StateError(f"{PATH}: job name {name!r} must match {JOB_NAME_RE.pattern}")
     for job in value:
+        if "schedule" in job:
+            raise StateError(f"{PATH}: job {job.get('name')!r} has unknown keys ['schedule']")
         if "command" in job and "adapter" in job:
             raise StateError(f"{PATH}: job {job.get('name')!r} has both command and adapter; "
                              "a job is one or the other")
