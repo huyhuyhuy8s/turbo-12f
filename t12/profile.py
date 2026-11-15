@@ -349,7 +349,7 @@ def _check_job(job):
             if isinstance(command, str):
                 command = shlex.split(command)
             sandbox.check_command(command)
-        except RunnerError as exc:
+        except (RunnerError, ValueError) as exc:
             raise StateError(f"{where}: {exc}") from exc
 
 
