@@ -241,6 +241,13 @@ class ClientBlock(unittest.TestCase):
         self.assertEqual([("AnalyzerAnswer", "task: string"), ("RedAnswer", "task: string"),
                           ("ReviewAnswer", "task: string")], found)
 
+    def test_each_answer_prompt_has_the_task_before_the_output_format(self):
+        functions = re.findall(r"function\s+(\w+)\s*\([^)]*\)\s*->[^{]*\{(.*?)\n\}",
+                               generate.render(), re.DOTALL)
+        found = sorted(name for name, body in functions
+                       if 0 <= body.find("{{ task }}") < body.find("{{ ctx.output_format }}"))
+        self.assertEqual(["AnalyzerAnswer", "RedAnswer", "ReviewAnswer"], found)
+
 
 if __name__ == "__main__":
     unittest.main()
