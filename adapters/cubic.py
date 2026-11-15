@@ -33,7 +33,7 @@ def main(argv=None, run=None):
         findings.append({
             "fingerprint": "cubic:" + hashlib.sha256(key.encode()).hexdigest()[:16],
             "title": f"[{issue['priority']}] {issue['title']}",
-            "detail": f"{issue['description'][:4000]}",
+            "detail": f"{issue['file']}:{issue['line']}\n\n{issue['description'][:4000]}",
             "url": None,
         })
     with open(option("--out"), "w") as handle:
