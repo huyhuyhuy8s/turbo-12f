@@ -53,5 +53,26 @@ class ParseReviewReply(unittest.TestCase):
         self.assertEqual([mock.call(expected)], act.call_args_list)
 
 
+class ParseRedReply(unittest.TestCase):
+    def test_red_reply_converts_enum_kind_inside_add_items(self):
+        class ItemKind(enum.Enum):
+            Example = "Example"
+
+        reply = '{"tool": "red_test_ready", "item_id": "T1"}'
+        item = SimpleNamespace(text="t", kind=ItemKind.Example, source="s",
+                               needed="n", criteria=[0])
+        parsed = SimpleNamespace(tool="red_test_ready", item_id="new",
+                                 test_file="tests/a.py", test_name="test_a",
+                                 last_assertion_line=7, defeats="d",
+                                 add_items=[item])
+        act = mock.Mock()
+        run.submit(reply, "red", lambda text: parsed, act)
+        expected = {"tool": "red_test_ready", "args": {
+            "item_id": "new", "test_file": "tests/a.py", "test_name": "test_a",
+            "last_assertion_line": 7, "defeats": "d",
+            "add_items": [{"text": "t", "kind": "example", "source": "s",
+                           "needed": "n", "criteria": [0]}]}}
+        self.assertEqual([mock.call(expected)], act.call_args_list)
+
 if __name__ == "__main__":
     unittest.main()
