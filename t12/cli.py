@@ -72,6 +72,12 @@ def _lane_run(home, run):
     return run
 
 
+def _gates_cleared(run):
+    return all(
+        g["status"] in ("passed", "skipped") or (g["status"] == "failed" and g.get("advisory"))
+        for g in run["gates"])
+
+
 def _check_worktree(run, lane=None):
     wt, branch = (run["worktree"], run["branch"]) if lane is None \
         else (lane["worktree"], lane["branch"])
@@ -769,6 +775,8 @@ def cmd_gate(args):
     model.bump_op(run)
     if failed and gate.get("advisory"):
         gate["status"] = "failed"
+        if _gates_cleared(run):
+            model.transition(run, "review")
         _save(home, run, "gate-failed", {
             "step": gate["name"], "exit_code": obs["exit_code"],
             "duration_s": obs["duration_s"], "advisory": True,
@@ -845,7 +853,7 @@ def cmd_review(args):
         raise StateError(f"{role!r} is a {kind} role; only review roles record reviews")
     if run["phase"] != "review":
         raise StateError(f"review requires phase 'review', run is {run['phase']!r}")
-    if not gate_mod.all_passed(run):
+    if not _gates_cleared(run):
         raise StateError("review requires all gates to pass first")
     model.check_budgets(run)
     _require_probes(run)
@@ -978,7 +986,9 @@ def cmd_check(args):
     for gate in run["gates"]:
         if gate["status"] == "skipped" and gate.get("commit") != run["candidate"]["commit"]:
             raise StateError(f"refusing check: gate {gate['name']!r} was not skipped on the candidate")
-    evidence.verify_check(home, {**run, "gates": [g for g in run["gates"] if g["status"] != "skipped"]})
+    evidence.verify_check(home, {**run, "gates": [
+        g for g in run["gates"]
+        if g["status"] != "skipped" and not (g["status"] == "failed" and g.get("advisory"))]})
     model.check_reviews(run)
     model.bump_op(run)
     model.transition(run, "local-verified")
