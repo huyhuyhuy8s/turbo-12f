@@ -1628,6 +1628,9 @@ def _criteria_entry_problems(run, entry):
         problems.append("result is missing")
     elif entry["result"] not in ("pass", "fail"):
         problems.append(f"result must be \"pass\" or \"fail\", got \"{entry['result']}\"")
+    for key in entry:
+        if key not in ("index", "result"):
+            problems.append(f"unexpected key \"{key}\"")
     return problems
 
 
