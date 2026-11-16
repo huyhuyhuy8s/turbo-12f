@@ -134,7 +134,7 @@ TASK_KEYS = {
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
 PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery", "jobs", "review_criteria")
 OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery", "jobs",
-              "review_criteria")
+              "review_criteria", "idle_after_s")
 DELIVERY_ADAPTERS = ("github", "gitlab", "bitbucket")
 
 
