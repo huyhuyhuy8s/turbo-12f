@@ -782,8 +782,11 @@ def cmd_gate(args):
         _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
         return 0
-    obs = _run_on_commit(home, run, wt, commit, gate["command"])
-    failed = obs["timed_out"] or obs["exit_code"] != 0
+    for _ in range(gate.get("reruns", 0) + 1):
+        obs = _run_on_commit(home, run, wt, commit, gate["command"])
+        failed = obs["timed_out"] or obs["exit_code"] != 0
+        if not failed:
+            break
     name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
             else f"gate-{gate['name']}-output.txt")
     ref = evidence.write_observation(home, run["task_id"], name, obs)
