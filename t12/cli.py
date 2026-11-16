@@ -1679,6 +1679,12 @@ def cmd_act(args):
                 if entry.get("result") == "fail":
                     raise StateError(f"merge-ready is refused: criteria[{position}]: "
                                      f"criterion {entry.get('index')} result is \"fail\"")
+        if tool == "review" and targs.get("criteria") is not None:
+            listed = [entry.get("index") for entry in targs["criteria"]]
+            for index in range(len(run["acceptance_criteria"])):
+                if index not in listed:
+                    raise StateError(f"{targs['verdict']} is refused: "
+                                     f"index {index} is missing from criteria")
         patch = _worker_patch(tool, args.patch)
         if patch is not None:
             detail["patch"] = evidence.write_evidence(
