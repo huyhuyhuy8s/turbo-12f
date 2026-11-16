@@ -410,6 +410,8 @@ def parse(text):
         raise StateError(f"{PATH}: unknown keys {unknown}")
     if data.get("version") != VERSION:
         raise StateError(f"{PATH}: version must be {VERSION}, got {data.get('version')!r}")
+    if "idle_after_s" in data and data["idle_after_s"] == 0:
+        raise StateError(f"{PATH}: idle_after_s must not be 0")
     for key, (kind, _) in TASK_KEYS.items():
         if key in data:
             _check_type(PATH, key, data[key], kind)
