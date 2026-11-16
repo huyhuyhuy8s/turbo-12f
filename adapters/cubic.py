@@ -47,6 +47,8 @@ def main(argv=None, run=None):
             _write_findings(option("--out"), [])
             return 0
     config = job.get("config", {})
+    if not recorded and not config.get("since"):
+        return 1
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
     repo = tempfile.mkdtemp()
     source_repo = option("--repo")
@@ -69,7 +71,10 @@ def main(argv=None, run=None):
     if code not in (0, 1):
         return 1
     try:
-        issues = json.loads(stdout)["issues"]
+        data = json.loads(stdout)
+        if "error" in data:
+            return 1
+        issues = data["issues"]
     except (ValueError, KeyError, TypeError):
         return 1
     if not isinstance(issues, list):
