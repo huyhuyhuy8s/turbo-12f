@@ -1628,7 +1628,7 @@ def _criteria_entry_problems(run, entry):
             problems.append(f"index {index} is not a criterion of this run")
     if "result" not in entry:
         problems.append("result is missing")
-    elif False:
+    elif entry["result"] not in ("pass", "fail"):
         problems.append(f"result must be \"pass\" or \"fail\", got \"{entry['result']}\"")
     return problems
 
