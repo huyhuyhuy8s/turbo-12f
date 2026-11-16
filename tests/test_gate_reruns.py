@@ -119,6 +119,13 @@ class GateRerunsCase(TddFlow, unittest.TestCase):
         result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
         self.assertRegex(result.stderr, r"gate 'unit'.*reruns")
 
+    def test_prepare_refuses_a_gate_with_negative_reruns_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[{"name": "unit", "command": ["python3", "-c", "pass"], "reruns": -1}]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertRegex(result.stderr, r"gate 'unit'.*reruns")
+
 
 if __name__ == "__main__":
     unittest.main()
