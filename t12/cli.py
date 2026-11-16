@@ -7,6 +7,7 @@ the worker did in the worktree.
 
 import argparse
 import copy
+import fcntl
 import json
 import os
 import sys
@@ -1461,6 +1462,18 @@ def _lane_rows(home, run, done):
     return rows
 
 
+def _runner_alive(home):
+    try:
+        with open(os.path.join(home, "runner.lock")) as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+    except OSError:
+        pass
+    return False
+
+
 def _idle_s(home, task_id):
     try:
         events = model.read_events(home, task_id)
@@ -1481,7 +1494,7 @@ def cmd_board(args):
         run = model.load_run(home, name[:-len(".json")])
         b = run["budgets"]
         done = run["phase"] in ("local-verified", "stopped")
-        idle_s = _idle_s(home, run["task_id"])
+        idle_s = None if _runner_alive(home) else _idle_s(home, run["task_id"])
         rows.append({
             "task_id": run["task_id"],
             "phase": run["phase"],
