@@ -932,6 +932,7 @@ def cmd_review(args):
         "commit": commit,
         "report": ref,
         "prior_review": prior["report"]["name"] if prior else None,
+        "criteria": getattr(args, "criteria", None),
         "voided": False,
         "voided_reason": None,
         "at": time.time(),
@@ -1709,7 +1710,8 @@ def cmd_act(args):
     step = dict(home=args.home, task_id=args.task_id, session=args.session, role=args.role)
     if tool == "review":
         return cmd_review(argparse.Namespace(
-            **step, verdict=REVIEW_VERDICTS[targs["verdict"]], report=args.input))
+            **step, verdict=REVIEW_VERDICTS[targs["verdict"]], report=args.input,
+            criteria=targs.get("criteria")))
     if tool == "escalate":
         if integrating:
             _pause_run(run, targs["question"])
