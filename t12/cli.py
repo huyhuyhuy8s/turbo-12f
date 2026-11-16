@@ -1001,8 +1001,11 @@ def cmd_check(args):
     if changed:
         raise StateError(f"refusing check: test files changed since the red commit: {changed}")
     for gate in run["gates"]:
-        if gate["status"] == "skipped" and gate.get("commit") != run["candidate"]["commit"]:
-            raise StateError(f"refusing check: gate {gate['name']!r} was not skipped on the candidate")
+        advisory_failed = gate["status"] == "failed" and gate.get("advisory")
+        if (gate["status"] == "skipped" or advisory_failed) \
+                and gate.get("commit") != run["candidate"]["commit"]:
+            raise StateError(f"refusing check: gate {gate['name']!r} was not "
+                             f"{'skipped' if gate['status'] == 'skipped' else 'run'} on the candidate")
     evidence.verify_check(home, {**run, "gates": [
         g for g in run["gates"]
         if g["status"] != "skipped" and not (g["status"] == "failed" and g.get("advisory"))]})
