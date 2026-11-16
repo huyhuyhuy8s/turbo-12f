@@ -68,7 +68,7 @@ def main(argv=None, run=None):
     finally:
         run(["git", "branch", "-D", BASE_BRANCH], repo, env)
         run(["git", "worktree", "remove", "--force", repo], source_repo, env)
-    if code not in (0, 1):
+    if code not in (0, 1, 2):
         return 1
     try:
         issues = json.loads(stdout)["issues"]
