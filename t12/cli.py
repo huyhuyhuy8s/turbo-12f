@@ -757,6 +757,7 @@ def cmd_gate(args):
     gate["observation"] = ref
     model.bump_op(run)
     if failed and gate.get("advisory"):
+        run["budgets"]["repairs_used"] += 1
         gate["status"] = "failed"
         _save(home, run, "gate-failed", {
             "step": gate["name"], "exit_code": obs["exit_code"],

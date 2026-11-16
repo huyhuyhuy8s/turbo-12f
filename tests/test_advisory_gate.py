@@ -50,6 +50,17 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
             (record["gates"][0]["status"], record["phase"], record["gates"][1]["status"]),
             ("failed", "gates", "pending"))
 
+    def test_failed_advisory_gate_leaves_the_repairs_used_unchanged(self):
+        self.prepare([
+            {"name": "lint", "command": ["python3", "-c", "import sys; sys.exit(1)"],
+             "advisory": True},
+            {"name": "unit", "command": ["python3", "-c", "pass"]},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        before = self.flow_record()["budgets"]["repairs_used"]
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.assertEqual(self.flow_record()["budgets"]["repairs_used"], before)
+
 
 if __name__ == "__main__":
     unittest.main()
