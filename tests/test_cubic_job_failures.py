@@ -52,6 +52,27 @@ class CubicJobFailuresTest(unittest.TestCase):
                 recorded = json.load(handle)
             self.assertEqual((code, os.path.exists(out), recorded), (1, False, {"commit": "abc"}))
 
+    def test_cubic_non_json_output_exits_1_without_out_file_or_record_update(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {}}
+
+        def fake(argv, cwd, env):
+            if argv[0] == "cubic":
+                return 0, "Review complete, no issues", ""
+            return 0, "", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            last = os.path.join(tmp, "jobs", "cubic", "cubic-last.json")
+            os.makedirs(os.path.dirname(last))
+            with open(last, "w") as handle:
+                json.dump({"commit": "abc"}, handle)
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            code = load_cubic().main(argv, run=fake)
+            with open(last) as handle:
+                recorded = json.load(handle)
+            self.assertEqual((code, os.path.exists(out), recorded), (1, False, {"commit": "abc"}))
+
 
 if __name__ == "__main__":
     unittest.main()
