@@ -156,6 +156,7 @@ and text outside it is not read. Put the detail in the call. Arguments:
 | `verdict` | `"merge-ready"`, `"blocked"`, `"human-gated"` or `"unverified"` |
 | `findings` | list of `{id, class, severity, where, finding, owner}`, all strings |
 | `verification` | str: the exact commands you ran and their results; what you could not check; `Future:` notes |
+| `criteria` | list of `{index, result}`, one per acceptance criterion: `index` is the int position of the criterion in `acceptance_criteria` (0-based), `result` is `"pass"` or `"fail"` |
 
 `findings` is `[]` for a clean `merge-ready`. Every finding carries exactly
 the six fields `id`, `class`, `severity`, `where`, `finding`, `owner`.
