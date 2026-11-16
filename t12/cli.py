@@ -72,10 +72,26 @@ def _lane_run(home, run):
     return run
 
 
+def _gate_cleared(g):
+    return g["status"] in ("passed", "skipped") or (g["status"] == "failed" and g.get("advisory"))
+
+
 def _gates_cleared(run):
-    return all(
-        g["status"] in ("passed", "skipped") or (g["status"] == "failed" and g.get("advisory"))
-        for g in run["gates"])
+    return all(_gate_cleared(g) for g in run["gates"])
+
+
+def _next_gate(run):
+    return next((g for g in run["gates"] if not _gate_cleared(g)), None)
+
+
+def _check_gate_order(run, gate):
+    for prior in run["gates"]:
+        if prior is gate:
+            break
+        if not _gate_cleared(prior):
+            raise StateError(
+                f"gate {gate['name']!r} cannot run before gate {prior['name']!r} passes"
+            )
 
 
 def _check_worktree(run, lane=None):
@@ -751,17 +767,17 @@ def cmd_gate(args):
     model.check_budgets(run)
     _require_probes(run)
     wt = _check_candidate_tree(run, "gate")
-    gate = gate_mod.find_gate(run, args.name) if args.name else gate_mod.next_gate(run)
+    gate = gate_mod.find_gate(run, args.name) if args.name else _next_gate(run)
     if gate is None:
         raise StateError("every gate has passed on this candidate")
-    gate_mod.check_order(run, gate)
+    _check_gate_order(run, gate)
     commit = run["candidate"]["commit"]
     when = gate.get("when")
     if when is not None and not any(globs.match(p, when["files"])
                                     for p in gitio.changed_paths(wt, run["base_commit"], commit)):
         gate["status"] = "skipped"
         gate["commit"] = commit
-        if gate_mod.all_passed(run):
+        if _gates_cleared(run):
             model.transition(run, "review")
         _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
@@ -803,13 +819,13 @@ def cmd_gate(args):
             f"gate {gate['name']!r} failed (exit={obs['exit_code']}); back to tdd at "
             f"green, repairs used {b['repairs_used']}/{b['repair_cap']}")
     gate["status"] = "passed"
-    if gate_mod.all_passed(run):
+    if _gates_cleared(run):
         model.transition(run, "review")
     _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
     if run["phase"] == "review":
         print(f"gate {gate['name']}: passed — all gates passed, review next")
     else:
-        print(f"gate {gate['name']}: passed — next gate: {gate_mod.next_gate(run)['name']}")
+        print(f"gate {gate['name']}: passed — next gate: {_next_gate(run)['name']}")
     return 0
 
 
