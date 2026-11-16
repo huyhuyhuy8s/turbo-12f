@@ -782,11 +782,13 @@ def cmd_gate(args):
         _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
         return 0
+    failed_runs = 0
     for _ in range(gate.get("reruns", 0) + 1):
         obs = _run_on_commit(home, run, wt, commit, gate["command"])
         failed = obs["timed_out"] or obs["exit_code"] != 0
         if not failed:
             break
+        failed_runs += 1
     name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
             else f"gate-{gate['name']}-output.txt")
     ref = evidence.write_observation(home, run["task_id"], name, obs)
@@ -825,6 +827,8 @@ def cmd_gate(args):
     if _gates_cleared(run):
         model.transition(run, "review")
     _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
+    if failed_runs:
+        model.append_event(home, run, "gate-flaky", {"gate": gate["name"], "failed_runs": failed_runs})
     if run["phase"] == "review":
         print(f"gate {gate['name']}: passed — all gates passed, review next")
     else:
