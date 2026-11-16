@@ -65,6 +65,15 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         self.assertEqual((run["phase"], run["tdd"]["step"], run["budgets"]["repairs_used"] - before),
                          ("tdd", "green", 1))
 
+    def test_a_gate_without_base_check_failing_on_both_commits_sends_back_to_green_without_a_base_run(self):
+        self.prepare({"name": "lint", "command": ["python3", "-c", ALWAYS_FAIL], "base_check": False})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        run = self.flow_record()
+        kinds = [e["kind"] for e in run.get("escalations") or []]
+        self.assertEqual((run["phase"], run["tdd"]["step"], kinds), ("tdd", "green", []))
+
+
 
 if __name__ == "__main__":
     unittest.main()
