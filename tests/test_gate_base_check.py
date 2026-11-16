@@ -55,6 +55,16 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         after = self.flow_record()["budgets"]["repairs_used"]
         self.assertEqual(after, before)
 
+    def test_a_base_check_gate_passing_on_base_but_failing_on_candidate_sends_back_to_green_and_spends_one_repair(self):
+        fails_on_candidate = "import sys\nsys.exit('{name}' in open('app.py').read())\n"
+        self.prepare({"name": "unit", "command": ["python3", "-c", fails_on_candidate], "base_check": True})
+        self.run_tdd(files={"app.py": APP_V2})
+        before = self.flow_record()["budgets"]["repairs_used"]
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        run = self.flow_record()
+        self.assertEqual((run["phase"], run["tdd"]["step"], run["budgets"]["repairs_used"] - before),
+                         ("tdd", "green", 1))
+
 
 if __name__ == "__main__":
     unittest.main()

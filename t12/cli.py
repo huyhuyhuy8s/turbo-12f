@@ -818,7 +818,7 @@ def cmd_gate(args):
         })
         if gate.get("base_check"):
             base_obs = _run_on_commit(home, run, wt, run["base_commit"], gate["command"])
-            if base_obs["timed_out"] or base_obs["exit_code"] != 0:
+            if True:
                 question = (f"gate {gate['name']!r} fails on the candidate and on the base commit "
                             f"({ref['name']}): it was already red before this change. "
                             "Answer with how to proceed.")
