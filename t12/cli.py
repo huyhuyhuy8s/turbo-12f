@@ -1460,6 +1460,16 @@ def _lane_rows(home, run, done):
     return rows
 
 
+def _idle_s(home, task_id):
+    try:
+        events = model.read_events(home, task_id)
+    except (OSError, StateError):
+        return None
+    if not events:
+        return None
+    return int(time.time() - events[-1]["ts"])
+
+
 def cmd_board(args):
     home = _home(args)
     _config(home)
@@ -1484,6 +1494,7 @@ def cmd_board(args):
             "busy": model.is_busy(home, run["task_id"]),
             "next": model.next_step(run),
             "unit": None,
+            "idle_s": _idle_s(home, run["task_id"]),
             "waiting": None,
             "max_lanes": (run.get("tdd") or {}).get("max_lanes"),
         })
