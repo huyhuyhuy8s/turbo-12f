@@ -1674,6 +1674,11 @@ def cmd_act(args):
     try:
         tool, targs = tools.parse(data.decode("utf-8", "replace"), kind)
         model.check_session(run, args.role, args.session)
+        if tool == "review" and targs["verdict"] == "merge-ready":
+            for position, entry in enumerate(targs.get("criteria") or []):
+                if entry.get("result") == "fail":
+                    raise StateError(f"merge-ready is refused: criteria[{position}]: "
+                                     f"criterion {entry.get('index')} result is \"fail\"")
         patch = _worker_patch(tool, args.patch)
         if patch is not None:
             detail["patch"] = evidence.write_evidence(
