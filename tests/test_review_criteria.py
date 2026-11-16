@@ -117,6 +117,15 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         self.assertEqual(outcome, {"rejected": True, "event": "worker-output-rejected",
                                    "names_repeated_index_0": True, "reviews": []})
 
+    def test_blocked_naming_an_index_outside_the_run_is_rejected_at_its_position(self):
+        self.review_call({"verdict": "blocked", "findings": [],
+                          "verification": "re-ran the unit gate",
+                          "criteria": [{"index": 9, "result": "pass"},
+                                       {"index": 1, "result": "fail"}]})
+        event = self.last_event()
+        error = (event.get("detail") or {}).get("error", "")
+        self.assertIn("criteria[0]: index 9 is not a criterion of this run", error)
+
 
 if __name__ == "__main__":
     unittest.main()
