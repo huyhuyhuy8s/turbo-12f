@@ -73,7 +73,6 @@ def main(argv=None, run=None):
     try:
         issues = json.loads(stdout)["issues"]
     except (ValueError, KeyError, TypeError):
-        _write_findings(option("--out"), [])
         return 1
     if not isinstance(issues, list):
         return 1
