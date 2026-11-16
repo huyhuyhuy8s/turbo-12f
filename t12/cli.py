@@ -1006,6 +1006,9 @@ def cmd_check(args):
     evidence.verify_check(home, {**run, "gates": [
         g for g in run["gates"]
         if g["status"] != "skipped" and not (g["status"] == "failed" and g.get("advisory"))]})
+    for gate in run["gates"]:
+        if gate["status"] == "failed" and gate.get("advisory"):
+            evidence.verify_ref(home, run["task_id"], gate.get("observation"))
     model.check_reviews(run)
     model.bump_op(run)
     model.transition(run, "local-verified")
