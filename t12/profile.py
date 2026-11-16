@@ -395,7 +395,7 @@ def _protected_paths_and_their_folders(protected_paths):
 
 
 def _check_idle_after_s(value):
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if isinstance(value, int) and (isinstance(value, bool) or value <= 0):
         raise StateError(f"{PATH}: idle_after_s must be an integer above 0, got {value!r}")
 
 
