@@ -73,6 +73,14 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         kinds = [e["kind"] for e in run.get("escalations") or []]
         self.assertEqual((run["phase"], run["tdd"]["step"], kinds), ("tdd", "green", []))
 
+    def test_resuming_a_known_red_pause_returns_to_gates_with_the_gate_pending(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", ALWAYS_FAIL], "base_check": True})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.t12("resume", "--home", self.home, "--task-id", "demo-1", "--answer", "known red, rerun", expect=None)
+        run = self.flow_record()
+        self.assertEqual((run["phase"], [g["status"] for g in run["gates"]]), ("gates", ["pending"]))
+
 
 
 if __name__ == "__main__":
