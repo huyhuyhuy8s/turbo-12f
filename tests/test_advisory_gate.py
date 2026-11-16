@@ -143,6 +143,27 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
             lines = [ln for ln in fh.read().splitlines() if "lint-soft:" in ln]
         self.assertEqual([ln.split(" exit=")[0] for ln in lines], ["  - lint-soft: advisory failed"])
 
+    def test_check_refuses_when_a_failed_advisory_gates_observation_was_modified(self):
+        self.prepare([
+            {"name": "unit", "command": ["python3", "-c", "pass"]},
+            {"name": "lint-soft", "command": ["python3", "-c", "import sys; sys.exit(3)"],
+             "advisory": True},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.t12("review", "--home", self.home, "--task-id", "demo-1", "--role", "reviewer",
+                 "--session", "sess-reviewer", "--verdict", "approve",
+                 "--report", self.review_report(), expect=None)
+        path = self.flow_record()["gates"][1]["observation"]["path"]
+        with open(path, "a") as fh:
+            fh.write("tampered")
+        result = self.t12("check", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.assertEqual(
+            (result.returncode != 0, "evidence changed" in result.stdout + result.stderr,
+             self.flow_record()["phase"]),
+            (True, True, "review"), f"{result.returncode}: {result.stdout} {result.stderr}")
+
     def test_gate_after_a_failed_advisory_gate_runs_the_next_gate_and_reaches_review(self):
         self.prepare([
             {"name": "lint-soft", "command": ["python3", "-c", "import sys; sys.exit(3)"],
