@@ -71,7 +71,10 @@ def main(argv=None, run=None):
     if code not in (0, 1):
         return 1
     try:
-        issues = json.loads(stdout)["issues"]
+        data = json.loads(stdout)
+        if "error" in data:
+            return 1
+        issues = data["issues"]
     except (ValueError, KeyError, TypeError):
         return 1
     if not isinstance(issues, list):
