@@ -9,7 +9,9 @@ from tests.test_t12 import APP_V1, BIN, TddFlow, task_dict
 BOTH_PASS = [{"index": 0, "result": "pass"}, {"index": 1, "result": "pass"}]
 
 
-class ReviewCriteria(TddFlow, unittest.TestCase):
+class ReviewCriteriaBase(TddFlow):
+    profile_fields = {}
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -23,6 +25,12 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         self.write(repo, "tests/__init__.py", "")
         self.git(repo, "add", ".")
         self.git(repo, "commit", "-m", "init")
+        if self.profile_fields:
+            os.makedirs(os.path.join(repo, ".t12"))
+            with open(os.path.join(repo, ".t12", "project.json"), "w") as fh:
+                json.dump(dict({"version": 1}, **self.profile_fields), fh)
+            self.git(repo, "add", ".")
+            self.git(repo, "commit", "-m", "profile")
         task_path = os.path.join(self.tmp.name, "task.json")
         with open(task_path, "w") as fh:
             json.dump(task_dict(), fh)
@@ -64,6 +72,14 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
             record = json.load(fh)
         return [(r["verdict"], r.get("criteria")) for r in record["reviews"]]
 
+    def last_event(self):
+        path = os.path.join(self.home, "runs", "demo-1.events.jsonl")
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()][-1]
+
+
+class ReviewCriteria(ReviewCriteriaBase, unittest.TestCase):
+
     def test_merge_ready_with_every_criterion_passing_is_recorded_as_approve_with_them(self):
         self.review_call({"verdict": "merge-ready", "findings": [],
                           "verification": "re-ran the unit gate", "criteria": BOTH_PASS})
@@ -74,11 +90,6 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         self.review_call({"verdict": "blocked", "findings": [],
                           "verification": "re-ran the unit gate", "criteria": one_fails})
         self.assertEqual(self.recorded_reviews(), [("changes-requested", one_fails)])
-
-    def last_event(self):
-        path = os.path.join(self.home, "runs", "demo-1.events.jsonl")
-        with open(path, encoding="utf-8") as fh:
-            return [json.loads(line) for line in fh if line.strip()][-1]
 
     def test_merge_ready_with_a_failing_criterion_is_rejected_naming_it_and_records_nothing(self):
         one_fails = [{"index": 0, "result": "pass"}, {"index": 1, "result": "fail"}]
@@ -157,6 +168,18 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         self.review_call({"verdict": "merge-ready", "findings": [],
                           "verification": "re-ran the unit gate"})
         self.assertEqual(self.recorded_reviews(), [("approve", None)])
+
+
+class ReviewCriteriaRequired(ReviewCriteriaBase, unittest.TestCase):
+    profile_fields = {"review_criteria": True}
+
+    def test_merge_ready_without_criteria_is_rejected_when_the_profile_asks_for_them(self):
+        done = self.review_call({"verdict": "merge-ready", "findings": [],
+                                 "verification": "re-ran the unit gate"})
+        outcome = {"rejected": done.returncode != 0, "event": self.last_event()["type"],
+                   "reviews": self.recorded_reviews()}
+        self.assertEqual(outcome, {"rejected": True, "event": "worker-output-rejected",
+                                   "reviews": []})
 
 
 if __name__ == "__main__":
