@@ -480,7 +480,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(
                 f"gate {gate.get('name')!r} rejected at admission: {exc}"
             ) from exc
-        extra = sorted(set(gate) - {"name", "command", "when"})
+        extra = sorted(set(gate) - {"name", "command", "when", "advisory"})
         if extra:
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
                              "a gate takes only name, command and when")
