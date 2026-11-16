@@ -103,6 +103,13 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         run = self.flow_record()
         self.assertEqual((lines, run["phase"], run["tdd"]["step"]), (1, "tdd", "green"))
 
+    def test_a_known_red_pause_writes_the_base_run_as_evidence(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", ALWAYS_FAIL], "base_check": True})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        path = os.path.join(self.home, "evidence", "demo-1", "gate-unit-base.txt")
+        self.assertTrue(os.path.exists(path), f"missing {path}")
+
 
 
 if __name__ == "__main__":
