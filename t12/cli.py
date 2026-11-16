@@ -1612,6 +1612,23 @@ REVIEW_VERDICTS = {"merge-ready": "approve", "blocked": "changes-requested",
                    "unverified": "changes-requested", "human-gated": "human-gated"}
 
 
+def _check_review_criteria(run, targs):
+    """Refuse a review whose criteria results contradict its verdict or
+    leave out a criterion of this run."""
+    criteria = targs.get("criteria")
+    if targs["verdict"] == "merge-ready":
+        for position, entry in enumerate(criteria or []):
+            if entry.get("result") == "fail":
+                raise StateError(f"merge-ready is refused: criteria[{position}]: "
+                                 f"criterion {entry.get('index')} result is \"fail\"")
+    if criteria is not None:
+        listed = [entry.get("index") for entry in criteria]
+        for index in range(len(run["acceptance_criteria"])):
+            if index not in listed:
+                raise StateError(f"{targs['verdict']} is refused: "
+                                 f"index {index} is missing from criteria")
+
+
 def _worker_patch(tool, path):
     if tool not in PATCH_TOOLS:
         if path is not None:
@@ -1674,17 +1691,8 @@ def cmd_act(args):
     try:
         tool, targs = tools.parse(data.decode("utf-8", "replace"), kind)
         model.check_session(run, args.role, args.session)
-        if tool == "review" and targs["verdict"] == "merge-ready":
-            for position, entry in enumerate(targs.get("criteria") or []):
-                if entry.get("result") == "fail":
-                    raise StateError(f"merge-ready is refused: criteria[{position}]: "
-                                     f"criterion {entry.get('index')} result is \"fail\"")
-        if tool == "review" and targs.get("criteria") is not None:
-            listed = [entry.get("index") for entry in targs["criteria"]]
-            for index in range(len(run["acceptance_criteria"])):
-                if index not in listed:
-                    raise StateError(f"{targs['verdict']} is refused: "
-                                     f"index {index} is missing from criteria")
+        if tool == "review":
+            _check_review_criteria(run, targs)
         patch = _worker_patch(tool, args.patch)
         if patch is not None:
             detail["patch"] = evidence.write_evidence(
