@@ -132,8 +132,9 @@ TASK_KEYS = {
     "max_lanes": (int, _task_wins),
 }
 SCOPE_KEYS = ("protected_paths", "security_review_paths")
-PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery", "jobs")
-OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery", "jobs")
+PROFILE_ONLY = SCOPE_KEYS + ("roles", "intake", "skills", "delivery", "jobs", "review_criteria")
+OTHER_KEYS = ("version", "name", "roles", "intake", "skills", "delivery", "jobs",
+              "review_criteria")
 DELIVERY_ADAPTERS = ("github", "gitlab", "bitbucket")
 
 
@@ -425,6 +426,8 @@ def parse(text):
         data["delivery"] = _delivery(data["delivery"])
     if "jobs" in data:
         data["jobs"] = _jobs(data["jobs"])
+    if "review_criteria" in data and not isinstance(data["review_criteria"], bool):
+        raise StateError(f"{PATH}: review_criteria must be a bool")
     reviewers = review_roles(data["roles"])
     unknown = [r for r in data.get("required_reviews", []) if r not in reviewers]
     if unknown:

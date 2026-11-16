@@ -565,6 +565,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
                         sandbox_adapter=adapter, sandbox_image=image)
     for key in profile_mod.SCOPE_KEYS:
         run[key] = profile[key]
+    run["review_criteria"] = profile.get("review_criteria", False)
     if profile.get("delivery"):
         run["delivery_adapter"] = profile["delivery"]["adapter"]
     run["trunk"] = trunk
@@ -1643,7 +1644,9 @@ def _check_review_criteria(run, targs):
     leave out a criterion of this run."""
     criteria = targs.get("criteria")
     if criteria is None:
-        raise _refusal(targs["verdict"], "criteria are required")
+        if run.get("review_criteria"):
+            raise _refusal(targs["verdict"], "criteria are required")
+        return
     verdict = targs["verdict"]
     for position, entry in enumerate(criteria):
         problems = _criteria_entry_problems(run, entry)
