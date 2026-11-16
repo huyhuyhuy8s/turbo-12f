@@ -394,6 +394,11 @@ def _protected_paths_and_their_folders(protected_paths):
     return set(protected_paths) | {os.path.dirname(p) for p in protected_paths if os.path.dirname(p)}
 
 
+def _check_idle_after_s(value):
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise StateError(f"{PATH}: idle_after_s must be an integer above 0, got {value!r}")
+
+
 def parse(text):
     """The profile as stored on the trunk commit; None means no profile."""
     if text is None:
@@ -411,9 +416,7 @@ def parse(text):
     if data.get("version") != VERSION:
         raise StateError(f"{PATH}: version must be {VERSION}, got {data.get('version')!r}")
     if "idle_after_s" in data:
-        value = data["idle_after_s"]
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise StateError(f"{PATH}: idle_after_s must be an integer above 0, got {value!r}")
+        _check_idle_after_s(data["idle_after_s"])
     for key, (kind, _) in TASK_KEYS.items():
         if key in data:
             _check_type(PATH, key, data[key], kind)
