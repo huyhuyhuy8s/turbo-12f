@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import subprocess
@@ -69,3 +70,12 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
         self.gates_run()
         self.age_last_event(30)
         self.assertIsNone(self.row().get("idle_s"))
+
+    def test_board_reports_no_idle_for_an_old_run_while_another_process_holds_the_runner_lock(self):
+        self.gates_run()
+        self.age_last_event(90)
+        with open(os.path.join(self.home, "runner.lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            row = self.row()
+        self.assertIsNone(row.get("idle_s"))
+
