@@ -1494,7 +1494,7 @@ def cmd_board(args):
         run = model.load_run(home, name[:-len(".json")])
         b = run["budgets"]
         done = run["phase"] in ("local-verified", "stopped")
-        idle_s = None if _runner_alive(home) else _idle_s(home, run["task_id"])
+        idle_s = None if run["phase"] != "gates" or _runner_alive(home) else _idle_s(home, run["task_id"])
         rows.append({
             "task_id": run["task_id"],
             "phase": run["phase"],
