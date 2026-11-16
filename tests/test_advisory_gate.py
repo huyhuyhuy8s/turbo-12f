@@ -61,6 +61,18 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
         self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
         self.assertEqual(self.flow_record()["budgets"]["repairs_used"], before)
 
+    def test_failed_gate_without_advisory_sends_the_run_back_to_green_and_spends_a_repair(self):
+        self.prepare([
+            {"name": "unit", "command": ["python3", "-c", "import sys; sys.exit(1)"]},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        before = self.flow_record()["budgets"]["repairs_used"]
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        record = self.flow_record()
+        self.assertEqual(
+            (record["phase"], record["tdd"]["step"], record["budgets"]["repairs_used"]),
+            ("tdd", "green", before + 1))
+
 
 if __name__ == "__main__":
     unittest.main()
