@@ -103,6 +103,28 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
              "style-marker-xyz" in json.dumps(listed)),
             (["lint-soft"], [3], True), f"advisory_gates: {listed!r}")
 
+    def review_report(self):
+        path = os.path.join(self.tmp.name, "review.md")
+        with open(path, "w") as fh:
+            fh.write("Verdict: approve\n\n## Findings\n\nNone. Hypotheses checked "
+                     "against the diff; verification re-run.\n")
+        return path
+
+    def test_check_certifies_local_verified_despite_a_failed_advisory_gate(self):
+        self.prepare([
+            {"name": "unit", "command": ["python3", "-c", "pass"]},
+            {"name": "lint-soft", "command": ["python3", "-c", "import sys; sys.exit(3)"],
+             "advisory": True},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.t12("review", "--home", self.home, "--task-id", "demo-1", "--role", "reviewer",
+                 "--session", "sess-reviewer", "--verdict", "approve",
+                 "--report", self.review_report(), expect=None)
+        self.t12("check", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.assertEqual(self.flow_record()["phase"], "local-verified")
+
 
 if __name__ == "__main__":
     unittest.main()
