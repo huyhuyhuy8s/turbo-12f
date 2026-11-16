@@ -565,6 +565,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
                         sandbox_adapter=adapter, sandbox_image=image)
     for key in profile_mod.SCOPE_KEYS:
         run[key] = profile[key]
+    run["review_criteria"] = profile.get("review_criteria", False)
     if profile.get("delivery"):
         run["delivery_adapter"] = profile["delivery"]["adapter"]
     run["trunk"] = trunk
@@ -932,6 +933,7 @@ def cmd_review(args):
         "commit": commit,
         "report": ref,
         "prior_review": prior["report"]["name"] if prior else None,
+        "criteria": getattr(args, "criteria", None),
         "voided": False,
         "voided_reason": None,
         "at": time.time(),
@@ -1611,6 +1613,59 @@ REVIEW_VERDICTS = {"merge-ready": "approve", "blocked": "changes-requested",
                    "unverified": "changes-requested", "human-gated": "human-gated"}
 
 
+def _criteria_entry_problems(run, entry):
+    """What is wrong with one criteria entry of a review call."""
+    if not isinstance(entry, dict):
+        return ["entry must be an object"]
+    problems = []
+    if "index" not in entry:
+        problems.append("index is missing")
+    else:
+        index = entry["index"]
+        if (not isinstance(index, int) or isinstance(index, bool)
+                or not 0 <= index < len(run["acceptance_criteria"])):
+            problems.append(f"index {index} is not a criterion of this run")
+    if "result" not in entry:
+        problems.append("result is missing")
+    elif entry["result"] not in ("pass", "fail"):
+        problems.append(f"result must be \"pass\" or \"fail\", got \"{entry['result']}\"")
+    for key in entry:
+        if key not in ("index", "result"):
+            problems.append(f"unexpected key \"{key}\"")
+    return problems
+
+
+def _refusal(verdict, detail):
+    return StateError(f"{verdict} is refused: {detail}")
+
+
+def _check_review_criteria(run, targs):
+    """Refuse a review whose criteria results contradict its verdict or
+    leave out a criterion of this run."""
+    criteria = targs.get("criteria")
+    if criteria is None:
+        if run.get("review_criteria"):
+            raise _refusal(targs["verdict"], "criteria are required")
+        return
+    verdict = targs["verdict"]
+    for position, entry in enumerate(criteria):
+        problems = _criteria_entry_problems(run, entry)
+        if problems:
+            raise _refusal(verdict, f"criteria[{position}]: {'; '.join(problems)}")
+    if verdict == "merge-ready":
+        for position, entry in enumerate(criteria):
+            if entry["result"] == "fail":
+                raise _refusal(verdict, f"criteria[{position}]: "
+                                        f"criterion {entry['index']} result is \"fail\"")
+    listed = [entry["index"] for entry in criteria]
+    for position, index in enumerate(listed):
+        if index in listed[:position]:
+            raise _refusal(verdict, f"criteria[{position}]: index {index} is repeated")
+    for index in range(len(run["acceptance_criteria"])):
+        if index not in listed:
+            raise _refusal(verdict, f"index {index} is missing from criteria")
+
+
 def _worker_patch(tool, path):
     if tool not in PATCH_TOOLS:
         if path is not None:
@@ -1673,6 +1728,8 @@ def cmd_act(args):
     try:
         tool, targs = tools.parse(data.decode("utf-8", "replace"), kind)
         model.check_session(run, args.role, args.session)
+        if tool == "review":
+            _check_review_criteria(run, targs)
         patch = _worker_patch(tool, args.patch)
         if patch is not None:
             detail["patch"] = evidence.write_evidence(
@@ -1709,7 +1766,8 @@ def cmd_act(args):
     step = dict(home=args.home, task_id=args.task_id, session=args.session, role=args.role)
     if tool == "review":
         return cmd_review(argparse.Namespace(
-            **step, verdict=REVIEW_VERDICTS[targs["verdict"]], report=args.input))
+            **step, verdict=REVIEW_VERDICTS[targs["verdict"]],
+            report=args.input, criteria=targs.get("criteria")))
     if tool == "escalate":
         if integrating:
             _pause_run(run, targs["question"])

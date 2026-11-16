@@ -15,6 +15,7 @@ INT = "integer"
 BOOL = "boolean"
 INT_LIST = "list of integers"
 FINDINGS = "list of findings"
+CRITERIA = "list of criterion results"
 FINDING_FIELDS = ("id", "class", "severity", "where", "finding", "owner")
 ITEMS = "list of test items"
 UNIT_ITEMS = "list of test items (unit: only with units)"
@@ -27,7 +28,7 @@ ITEM_SHAPES = {ITEMS: (ITEM_FIELDS, ITEM_FIELDS),
 UNIT_FIELDS = {"id": STR, "owns": STR_LIST, "tests": STR_LIST, "after": STR_LIST, "needed": TEXT}
 
 ESCALATE = {"escalate": {"question": STR}}
-OPTIONAL_ARGS = {"test_list_ready": ("units",)}
+OPTIONAL_ARGS = {"test_list_ready": ("units",), "review": ("criteria",)}
 
 TOOLS = {
     "analyzer": {
@@ -51,7 +52,7 @@ TOOLS = {
     },
     "review": {
         "review": {"verdict": ("merge-ready", "blocked", "human-gated", "unverified"),
-                   "findings": FINDINGS, "verification": STR},
+                   "findings": FINDINGS, "verification": STR, "criteria": CRITERIA},
         **ESCALATE,
     },
 }
@@ -183,6 +184,8 @@ def _arg_schema(shape):
                    "required": list(FINDING_FIELDS),
                    "properties": {f: {"type": "string"} for f in FINDING_FIELDS}}
         return {"type": "array", "items": finding}
+    if shape == CRITERIA:
+        return {"type": "array", "items": {"type": "object"}}
     return {"type": "array", "items": {"type": "string"}}
 
 
