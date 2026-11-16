@@ -824,8 +824,6 @@ def cmd_gate(args):
             f"gate {gate['name']!r} failed (exit={obs['exit_code']}); back to tdd at "
             f"green, repairs used {b['repairs_used']}/{b['repair_cap']}")
     gate["status"] = "passed"
-    if failed_runs:
-        run["budgets"]["repairs_used"] += failed_runs
     if _gates_cleared(run):
         model.transition(run, "review")
     _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
