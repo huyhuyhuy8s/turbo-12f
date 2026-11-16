@@ -63,6 +63,13 @@ class GateRerunsCase(TddFlow, unittest.TestCase):
         flaky = [e["detail"].get("failed_runs") for e in events if e["type"] == "gate-flaky"]
         self.assertEqual(flaky, [1])
 
+    def test_a_gate_that_passes_on_a_rerun_spends_no_repair(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", FAIL_THEN_PASS], "reruns": 1})
+        self.run_tdd(files={"app.py": APP_V2})
+        before = self.flow_record()["budgets"]["repairs_used"]
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.assertEqual(self.flow_record()["budgets"]["repairs_used"], before)
+
 
 if __name__ == "__main__":
     unittest.main()
