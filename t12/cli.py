@@ -372,7 +372,8 @@ def _manifest_text(run):
         extra = ""
         if obs:
             extra = f" exit={obs['observation']['exit_code']} sha256={obs['sha256'][:16]}"
-        lines.append(f"  - {gate['name']}: {gate['status']}{extra}")
+        status = "advisory failed" if gate.get("advisory") and gate["status"] == "failed" else gate["status"]
+        lines.append(f"  - {gate['name']}: {status}{extra}")
     lines.append("")
     b = run["budgets"]
     lines.append("")
