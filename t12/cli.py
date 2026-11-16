@@ -816,6 +816,22 @@ def cmd_gate(args):
             "duration_s": obs["duration_s"],
             "output": (obs["stdout"] + obs["stderr"])[-4000:],
         })
+        if gate.get("base_check"):
+            base_obs = _run_on_commit(home, run, wt, run["base_commit"], gate["command"])
+            if base_obs["timed_out"] or base_obs["exit_code"] != 0:
+                question = (f"gate {gate['name']!r} fails on the candidate and on the base commit "
+                            f"({ref['name']}): it was already red before this change. "
+                            "Answer with how to proceed.")
+                run["prior_phase"] = run["phase"]
+                run.setdefault("escalations", []).append({
+                    "question": question, "kind": "known-red", "gate": gate["name"],
+                    "asked_at": time.time(), "answer": None, "answered_at": None,
+                })
+                model.transition(run, "paused")
+                _save(home, run, "human-contact", {"question": question, "kind": "known-red"})
+                print(f"gate {gate['name']}: known red — fails on the base commit too; "
+                      "run paused for a human")
+                return 0
         phase = _send_back(home, run, model.REPAIR_FROM_GATE_FAILURE, ref, {"gate": gate["name"]})
         b = run["budgets"]
         if phase == "paused":
