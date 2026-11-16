@@ -47,6 +47,14 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         last = escalations[-1] if escalations else {"kind": None, "question": ""}
         self.assertEqual((last["kind"], "unit" in last["question"]), ("known-red", True))
 
+    def test_a_known_red_pause_spends_no_repair(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", ALWAYS_FAIL], "base_check": True})
+        self.run_tdd(files={"app.py": APP_V2})
+        before = self.flow_record()["budgets"]["repairs_used"]
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        after = self.flow_record()["budgets"]["repairs_used"]
+        self.assertEqual(after, before)
+
 
 if __name__ == "__main__":
     unittest.main()
