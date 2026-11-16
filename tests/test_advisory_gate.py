@@ -177,6 +177,29 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
         self.assertEqual(
             (record["gates"][1]["status"], record["phase"]), ("passed", "review"))
 
+    def test_check_refuses_when_a_failed_advisory_gate_was_not_run_on_the_candidate(self):
+        self.prepare([
+            {"name": "unit", "command": ["python3", "-c", "pass"]},
+            {"name": "lint-soft", "command": ["python3", "-c", "import sys; sys.exit(3)"],
+             "advisory": True},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.t12("review", "--home", self.home, "--task-id", "demo-1", "--role", "reviewer",
+                 "--session", "sess-reviewer", "--verdict", "approve",
+                 "--report", self.review_report(), expect=None)
+        run = self.flow_record()
+        run["gates"][1]["commit"] = "0" * 40
+        with open(os.path.join(self.home, "runs", "demo-1.json"), "w") as fh:
+            json.dump(run, fh)
+        self.t12("probe", "--home", self.home, "--task-id", "demo-1", expect=None)
+        result = self.t12("check", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.assertEqual(
+            (result.returncode != 0, "not run on the candidate" in result.stdout + result.stderr,
+             self.flow_record()["phase"]),
+            (True, True, "review"), f"{result.returncode}: {result.stdout} {result.stderr}")
+
 
 if __name__ == "__main__":
     unittest.main()
