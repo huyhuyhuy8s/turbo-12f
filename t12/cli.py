@@ -506,7 +506,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
         extra = sorted(set(gate) - {"name", "command", "when", "advisory", "reruns", "base_check"})
         if extra:
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
-                             "a gate takes only name, command and when")
+                             "a gate takes only name, command, when, advisory, reruns and base_check")
         if "advisory" in gate and not isinstance(gate["advisory"], bool):
             raise StateError(f"gate {gate.get('name')!r}: advisory must be a boolean")
         if "base_check" in gate and not isinstance(gate["base_check"], bool):
@@ -821,9 +821,11 @@ def cmd_gate(args):
         if gate.get("base_check"):
             base_obs = _run_on_commit(home, run, wt, run["base_commit"], gate["command"])
             if base_obs["timed_out"] or base_obs["exit_code"] != 0:
-                question = (f"gate {gate['name']!r} fails on the candidate and on the base commit "
-                            f"({ref['name']}): it was already red before this change. "
-                            "Answer with how to proceed.")
+                base_ref = evidence.write_observation(
+                    home, run["task_id"], f"gate-{gate['name']}-base.txt", base_obs)
+                question = (f"gate {gate['name']!r} fails on the candidate ({ref['name']}) and on "
+                            f"the base commit ({base_ref['name']}): it was already red before "
+                            "this change. Answer with how to proceed.")
                 run["prior_phase"] = run["phase"]
                 run.setdefault("escalations", []).append({
                     "question": question, "kind": "known-red", "gate": gate["name"],
