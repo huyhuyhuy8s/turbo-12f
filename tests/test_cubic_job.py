@@ -422,6 +422,29 @@ class CubicJobTest(unittest.TestCase):
         self.assertEqual(after, [["git", "branch", "-D", "t12-job/cubic-base"],
                                  ["git", "worktree", "remove", "--force", checkout]])
 
+    def test_cubic_call_raising_oserror_never_succeeds_and_records_no_commit(self):
+        job = {"name": "cubic", "adapter": "cubic", "config": {"since": "abc"}}
+        calls = []
+
+        def fake(argv, cwd, env):
+            calls.append(argv)
+            if argv[0] == "git":
+                return 0, "", ""
+            raise OSError("cubic missing")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "findings.json")
+            argv = ["job", "--job", json.dumps(job), "--repo", "/repo", "--commit", "def",
+                    "--home", tmp, "--out", out]
+            try:
+                code = load_cubic().main(argv, run=fake)
+            except OSError:
+                code = "raised"
+            recorded = os.path.exists(os.path.join(tmp, "jobs", "cubic", "cubic-last.json"))
+        cleanups = [a[:2] for a in calls[[a[0] for a in calls].index("cubic") + 1:]]
+        self.assertEqual((code != 0, recorded, cleanups),
+                         (True, False, [["git", "branch"], ["git", "worktree"]]))
+
 
 if __name__ == "__main__":
     unittest.main()
