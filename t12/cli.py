@@ -509,6 +509,9 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
                              "a gate takes only name, command and when")
         if "advisory" in gate and not isinstance(gate["advisory"], bool):
             raise StateError(f"gate {gate.get('name')!r}: advisory must be a boolean")
+        reruns = gate.get("reruns", 0)
+        if isinstance(reruns, bool) or not isinstance(reruns, int) or not 0 <= reruns <= 3:
+            raise StateError(f"gate {gate.get('name')!r}: reruns must be an integer from 0 to 3")
         when = gate.get("when")
         if when is not None and not isinstance(when, dict):
             raise StateError(f"gate {gate.get('name')!r}: when must be an object")
