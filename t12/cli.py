@@ -72,6 +72,28 @@ def _lane_run(home, run):
     return run
 
 
+def _gate_cleared(g):
+    return g["status"] in ("passed", "skipped") or (g["status"] == "failed" and g.get("advisory"))
+
+
+def _gates_cleared(run):
+    return all(_gate_cleared(g) for g in run["gates"])
+
+
+def _next_gate(run):
+    return next((g for g in run["gates"] if not _gate_cleared(g)), None)
+
+
+def _check_gate_order(run, gate):
+    for prior in run["gates"]:
+        if prior is gate:
+            break
+        if not _gate_cleared(prior):
+            raise StateError(
+                f"gate {gate['name']!r} cannot run before gate {prior['name']!r} passes"
+            )
+
+
 def _check_worktree(run, lane=None):
     wt, branch = (run["worktree"], run["branch"]) if lane is None \
         else (lane["worktree"], lane["branch"])
@@ -366,7 +388,8 @@ def _manifest_text(run):
         extra = ""
         if obs:
             extra = f" exit={obs['observation']['exit_code']} sha256={obs['sha256'][:16]}"
-        lines.append(f"  - {gate['name']}: {gate['status']}{extra}")
+        status = "advisory failed" if gate.get("advisory") and gate["status"] == "failed" else gate["status"]
+        lines.append(f"  - {gate['name']}: {status}{extra}")
     lines.append("")
     b = run["budgets"]
     lines.append("")
@@ -480,10 +503,12 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(
                 f"gate {gate.get('name')!r} rejected at admission: {exc}"
             ) from exc
-        extra = sorted(set(gate) - {"name", "command", "when"})
+        extra = sorted(set(gate) - {"name", "command", "when", "advisory"})
         if extra:
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
                              "a gate takes only name, command and when")
+        if "advisory" in gate and not isinstance(gate["advisory"], bool):
+            raise StateError(f"gate {gate.get('name')!r}: advisory must be a boolean")
         when = gate.get("when")
         if when is not None and not isinstance(when, dict):
             raise StateError(f"gate {gate.get('name')!r}: when must be an object")
@@ -635,6 +660,14 @@ def _review_context(home, run, role):
             entry.update(command=g["command"], commit=g["commit"],
                          exit_code=ref["observation"]["exit_code"], sha256=ref["sha256"])
         gates.append(entry)
+    advisory_gates = []
+    for g in run["gates"]:
+        ref = g.get("observation")
+        if g.get("advisory") and g["status"] == "failed" and ref:
+            with open(ref["path"], encoding="utf-8", errors="replace") as fh:
+                tail = fh.read()[-4000:]
+            advisory_gates.append({"name": g["name"], "exit_code": ref["observation"]["exit_code"],
+                                   "output_tail": tail})
     tdd = run["tdd"]
     final = tdd.get("final")
     summary = model.tdd_summary(run)
@@ -646,6 +679,7 @@ def _review_context(home, run, role):
         "base": run["base"],
         "touches": run.get("touches"),
         "candidate": candidate,
+        "advisory_gates": advisory_gates,
         "gates": gates,
         "tdd": {
             "cycles": summary["cycles"],
@@ -733,17 +767,17 @@ def cmd_gate(args):
     model.check_budgets(run)
     _require_probes(run)
     wt = _check_candidate_tree(run, "gate")
-    gate = gate_mod.find_gate(run, args.name) if args.name else gate_mod.next_gate(run)
+    gate = gate_mod.find_gate(run, args.name) if args.name else _next_gate(run)
     if gate is None:
         raise StateError("every gate has passed on this candidate")
-    gate_mod.check_order(run, gate)
+    _check_gate_order(run, gate)
     commit = run["candidate"]["commit"]
     when = gate.get("when")
     if when is not None and not any(globs.match(p, when["files"])
                                     for p in gitio.changed_paths(wt, run["base_commit"], commit)):
         gate["status"] = "skipped"
         gate["commit"] = commit
-        if gate_mod.all_passed(run):
+        if _gates_cleared(run):
             model.transition(run, "review")
         _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
@@ -756,6 +790,17 @@ def cmd_gate(args):
     gate["commit"] = commit
     gate["observation"] = ref
     model.bump_op(run)
+    if failed and gate.get("advisory"):
+        gate["status"] = "failed"
+        if _gates_cleared(run):
+            model.transition(run, "review")
+        _save(home, run, "gate-failed", {
+            "step": gate["name"], "exit_code": obs["exit_code"],
+            "duration_s": obs["duration_s"], "advisory": True,
+            "output": (obs["stdout"] + obs["stderr"])[-4000:],
+        })
+        print(f"gate {gate['name']}: failed (advisory) — exit={obs['exit_code']}")
+        return 0
     if failed:
         gate["status"] = "failed"
         _save(home, run, "gate-failed", {
@@ -774,13 +819,13 @@ def cmd_gate(args):
             f"gate {gate['name']!r} failed (exit={obs['exit_code']}); back to tdd at "
             f"green, repairs used {b['repairs_used']}/{b['repair_cap']}")
     gate["status"] = "passed"
-    if gate_mod.all_passed(run):
+    if _gates_cleared(run):
         model.transition(run, "review")
     _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
     if run["phase"] == "review":
         print(f"gate {gate['name']}: passed — all gates passed, review next")
     else:
-        print(f"gate {gate['name']}: passed — next gate: {gate_mod.next_gate(run)['name']}")
+        print(f"gate {gate['name']}: passed — next gate: {_next_gate(run)['name']}")
     return 0
 
 
@@ -825,7 +870,7 @@ def cmd_review(args):
         raise StateError(f"{role!r} is a {kind} role; only review roles record reviews")
     if run["phase"] != "review":
         raise StateError(f"review requires phase 'review', run is {run['phase']!r}")
-    if not gate_mod.all_passed(run):
+    if not _gates_cleared(run):
         raise StateError("review requires all gates to pass first")
     model.check_budgets(run)
     _require_probes(run)
@@ -956,9 +1001,17 @@ def cmd_check(args):
     if changed:
         raise StateError(f"refusing check: test files changed since the red commit: {changed}")
     for gate in run["gates"]:
-        if gate["status"] == "skipped" and gate.get("commit") != run["candidate"]["commit"]:
-            raise StateError(f"refusing check: gate {gate['name']!r} was not skipped on the candidate")
-    evidence.verify_check(home, {**run, "gates": [g for g in run["gates"] if g["status"] != "skipped"]})
+        advisory_failed = gate["status"] == "failed" and gate.get("advisory")
+        if (gate["status"] == "skipped" or advisory_failed) \
+                and gate.get("commit") != run["candidate"]["commit"]:
+            raise StateError(f"refusing check: gate {gate['name']!r} was not "
+                             f"{'skipped' if gate['status'] == 'skipped' else 'run'} on the candidate")
+    evidence.verify_check(home, {**run, "gates": [
+        g for g in run["gates"]
+        if g["status"] != "skipped" and not (g["status"] == "failed" and g.get("advisory"))]})
+    for gate in run["gates"]:
+        if gate["status"] == "failed" and gate.get("advisory"):
+            evidence.verify_ref(home, run["task_id"], gate.get("observation"))
     model.check_reviews(run)
     model.bump_op(run)
     model.transition(run, "local-verified")

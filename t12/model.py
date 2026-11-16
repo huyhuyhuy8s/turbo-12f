@@ -682,7 +682,8 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
         check_gate_command(g)
         gates.append(
             {"name": g["name"], "command": list(g["command"]), "status": "pending",
-             "observation": None, "commit": None, "when": g.get("when")}
+             "observation": None, "commit": None, "when": g.get("when"),
+             "advisory": bool(g.get("advisory", False))}
         )
     if not gates:
         raise StateError("task must declare at least one gate")
