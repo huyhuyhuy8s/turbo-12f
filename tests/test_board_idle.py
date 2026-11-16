@@ -79,3 +79,17 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
             row = self.row()
         self.assertIsNone(row.get("idle_s"))
 
+
+    def test_board_reports_no_idle_for_paused_local_verified_and_stopped_runs_with_an_old_last_event(self):
+        self.gates_run()
+        self.age_last_event(90)
+        run_file = os.path.join(self.home, "runs", "demo-1.json")
+        with open(run_file) as fh:
+            run = json.load(fh)
+        idle = {}
+        for phase in ("paused", "local-verified", "stopped"):
+            run["phase"] = phase
+            with open(run_file, "w") as fh:
+                json.dump(run, fh)
+            idle[phase] = self.row().get("idle_s")
+        self.assertEqual(idle, {"paused": None, "local-verified": None, "stopped": None})
