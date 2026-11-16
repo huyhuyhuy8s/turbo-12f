@@ -821,7 +821,8 @@ def cmd_gate(args):
         if gate.get("base_check"):
             base_obs = _run_on_commit(home, run, wt, run["base_commit"], gate["command"])
             if base_obs["timed_out"] or base_obs["exit_code"] != 0:
-                base_ref = {"name": f"gate-{gate['name']}-base.txt"}
+                base_ref = evidence.write_observation(
+                    home, run["task_id"], f"gate-{gate['name']}-base.txt", base_obs)
                 question = (f"gate {gate['name']!r} fails on the candidate ({ref['name']}) and on "
                             f"the base commit ({base_ref['name']}): it was already red before "
                             "this change. Answer with how to proceed.")
