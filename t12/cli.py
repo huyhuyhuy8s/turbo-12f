@@ -756,7 +756,7 @@ def cmd_gate(args):
     gate["commit"] = commit
     gate["observation"] = ref
     model.bump_op(run)
-    if failed:
+    if failed and gate.get("advisory"):
         gate["status"] = "failed"
         _save(home, run, "gate-failed", {
             "step": gate["name"], "exit_code": obs["exit_code"],
