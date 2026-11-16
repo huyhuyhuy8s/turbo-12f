@@ -1634,6 +1634,10 @@ def _criteria_entry_problems(run, entry):
     return problems
 
 
+def _refusal(verdict, detail):
+    return StateError(f"{verdict} is refused: {detail}")
+
+
 def _check_review_criteria(run, targs):
     """Refuse a review whose criteria results contradict its verdict or
     leave out a criterion of this run."""
@@ -1644,22 +1648,19 @@ def _check_review_criteria(run, targs):
     for position, entry in enumerate(criteria):
         problems = _criteria_entry_problems(run, entry)
         if problems:
-            raise StateError(f"{verdict} is refused: "
-                             f"criteria[{position}]: {'; '.join(problems)}")
+            raise _refusal(verdict, f"criteria[{position}]: {'; '.join(problems)}")
     if verdict == "merge-ready":
         for position, entry in enumerate(criteria):
             if entry["result"] == "fail":
-                raise StateError(f"merge-ready is refused: criteria[{position}]: "
-                                 f"criterion {entry['index']} result is \"fail\"")
+                raise _refusal(verdict, f"criteria[{position}]: "
+                                        f"criterion {entry['index']} result is \"fail\"")
     listed = [entry["index"] for entry in criteria]
     for position, index in enumerate(listed):
         if index in listed[:position]:
-            raise StateError(f"{verdict} is refused: "
-                             f"criteria[{position}]: index {index} is repeated")
+            raise _refusal(verdict, f"criteria[{position}]: index {index} is repeated")
     for index in range(len(run["acceptance_criteria"])):
         if index not in listed:
-            raise StateError(f"{verdict} is refused: "
-                             f"index {index} is missing from criteria")
+            raise _refusal(verdict, f"index {index} is missing from criteria")
 
 
 def _worker_patch(tool, path):
