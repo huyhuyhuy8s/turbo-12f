@@ -63,8 +63,6 @@ def main(argv=None, run=None):
             repo,
             env,
         )
-    except OSError:
-        code, stdout = 0, '{"issues": []}'
     finally:
         run(["git", "branch", "-D", BASE_BRANCH], repo, env)
         run(["git", "worktree", "remove", "--force", repo], source_repo, env)
