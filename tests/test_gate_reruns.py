@@ -54,6 +54,15 @@ class GateRerunsCase(TddFlow, unittest.TestCase):
         gate = self.flow_record()["gates"][0]
         self.assertEqual(gate["status"], "passed")
 
+    def test_a_gate_that_passes_on_a_rerun_logs_gate_flaky_with_the_failed_run_count(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", FAIL_THEN_PASS], "reruns": 1})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        with open(os.path.join(self.home, "runs", "demo-1.events.jsonl")) as fh:
+            events = [json.loads(line) for line in fh if line.strip()]
+        flaky = [e["detail"].get("failed_runs") for e in events if e["type"] == "gate-flaky"]
+        self.assertEqual(flaky, [1])
+
 
 if __name__ == "__main__":
     unittest.main()
