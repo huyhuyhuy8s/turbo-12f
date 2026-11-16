@@ -503,12 +503,15 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(
                 f"gate {gate.get('name')!r} rejected at admission: {exc}"
             ) from exc
-        extra = sorted(set(gate) - {"name", "command", "when", "advisory"})
+        extra = sorted(set(gate) - {"name", "command", "when", "advisory", "reruns"})
         if extra:
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
                              "a gate takes only name, command and when")
         if "advisory" in gate and not isinstance(gate["advisory"], bool):
             raise StateError(f"gate {gate.get('name')!r}: advisory must be a boolean")
+        reruns = gate.get("reruns", 0)
+        if isinstance(reruns, bool) or not isinstance(reruns, int) or not 0 <= reruns <= 3:
+            raise StateError(f"gate {gate.get('name')!r}: reruns must be an integer from 0 to 3")
         when = gate.get("when")
         if when is not None and not isinstance(when, dict):
             raise StateError(f"gate {gate.get('name')!r}: when must be an object")
@@ -782,8 +785,13 @@ def cmd_gate(args):
         _save(home, run, "gate-skipped", {"gate": gate["name"]})
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
         return 0
-    obs = _run_on_commit(home, run, wt, commit, gate["command"])
-    failed = obs["timed_out"] or obs["exit_code"] != 0
+    failed_runs = 0
+    for _ in range(gate.get("reruns", 0) + 1):
+        obs = _run_on_commit(home, run, wt, commit, gate["command"])
+        failed = obs["timed_out"] or obs["exit_code"] != 0
+        if not failed:
+            break
+        failed_runs += 1
     name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
             else f"gate-{gate['name']}-output.txt")
     ref = evidence.write_observation(home, run["task_id"], name, obs)
@@ -822,6 +830,8 @@ def cmd_gate(args):
     if _gates_cleared(run):
         model.transition(run, "review")
     _save(home, run, "gate-passed", {"gate": gate["name"], "duration_s": obs["duration_s"]})
+    if failed_runs:
+        model.append_event(home, run, "gate-flaky", {"gate": gate["name"], "failed_runs": failed_runs})
     if run["phase"] == "review":
         print(f"gate {gate['name']}: passed — all gates passed, review next")
     else:
