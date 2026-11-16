@@ -57,3 +57,10 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
         self.gates_run()
         self.age_last_event(90)
         self.assertIn(self.row().get("idle_s"), range(90, 96))
+
+    def test_board_table_row_shows_idle_for_an_old_run_with_no_runner(self):
+        self.gates_run()
+        self.age_last_event(90)
+        table = self.t12("board", "--home", self.home).stdout
+        line = [l for l in table.splitlines() if l.startswith("demo-1")][0]
+        self.assertIn("idle", line)
