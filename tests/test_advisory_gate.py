@@ -84,6 +84,25 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
             (result.returncode != 0, "lint-soft" in result.stdout + result.stderr),
             (True, True), f"{result.returncode}: {result.stdout} {result.stderr}")
 
+    def test_reviewer_context_lists_a_failed_advisory_gate_with_exit_code_and_output(self):
+        self.prepare([
+            {"name": "unit", "command": ["python3", "-c", "pass"]},
+            {"name": "lint-soft",
+             "command": ["python3", "-c", "import sys; print('style-marker-xyz'); sys.exit(3)"],
+             "advisory": True},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1")
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        result = self.t12("context", "--home", self.home, "--task-id", "demo-1",
+                          "--role", "reviewer", "--phase", "review")
+        context = json.loads(result.stdout.rsplit("--- context (JSON) ---\n", 1)[1])
+        listed = context.get("advisory_gates", [])
+        self.assertEqual(
+            ([g.get("name") for g in listed], [g.get("exit_code") for g in listed],
+             "style-marker-xyz" in json.dumps(listed)),
+            (["lint-soft"], [3], True), f"advisory_gates: {listed!r}")
+
 
 if __name__ == "__main__":
     unittest.main()
