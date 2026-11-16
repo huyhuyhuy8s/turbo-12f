@@ -637,6 +637,14 @@ def _review_context(home, run, role):
             entry.update(command=g["command"], commit=g["commit"],
                          exit_code=ref["observation"]["exit_code"], sha256=ref["sha256"])
         gates.append(entry)
+    advisory_gates = []
+    for g in run["gates"]:
+        ref = g.get("observation")
+        if g.get("advisory") and g["status"] == "failed" and ref:
+            with open(ref["path"], encoding="utf-8", errors="replace") as fh:
+                tail = fh.read()[-4000:]
+            advisory_gates.append({"name": g["name"], "exit_code": ref["observation"]["exit_code"],
+                                   "output_tail": tail})
     tdd = run["tdd"]
     final = tdd.get("final")
     summary = model.tdd_summary(run)
@@ -648,6 +656,7 @@ def _review_context(home, run, role):
         "base": run["base"],
         "touches": run.get("touches"),
         "candidate": candidate,
+        "advisory_gates": advisory_gates,
         "gates": gates,
         "tdd": {
             "cycles": summary["cycles"],
