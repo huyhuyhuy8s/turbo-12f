@@ -112,6 +112,13 @@ class GateRerunsCase(TddFlow, unittest.TestCase):
         self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
         self.assertEqual(self.flow_record()["budgets"]["repairs_used"], before + 1)
 
+    def test_prepare_refuses_a_gate_with_four_reruns_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[{"name": "unit", "command": ["python3", "-c", "pass"], "reruns": 4}]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertRegex(result.stderr, r"gate 'unit'.*reruns")
+
 
 if __name__ == "__main__":
     unittest.main()
