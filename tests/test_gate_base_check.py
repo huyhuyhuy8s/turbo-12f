@@ -89,6 +89,20 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
         self.assertEqual((result.returncode != 0, "slowgate" in result.stderr), (True, True))
 
+    def test_a_gate_without_base_check_runs_its_command_once_and_sends_back_to_green(self):
+        appends_and_fails = (
+            "import os, sys\n"
+            "open(os.path.join(os.environ['HOME'], 'calls'), 'a').write('x\\n')\n"
+            "sys.exit(1)\n"
+        )
+        self.prepare({"name": "lint", "command": ["python3", "-c", appends_and_fails], "base_check": False})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        with open(os.path.join(self.home, "verify-home", "demo-1", "calls")) as fh:
+            lines = len(fh.read().splitlines())
+        run = self.flow_record()
+        self.assertEqual((lines, run["phase"], run["tdd"]["step"]), (1, "tdd", "green"))
+
 
 
 if __name__ == "__main__":
