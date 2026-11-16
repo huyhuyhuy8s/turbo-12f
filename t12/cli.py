@@ -822,7 +822,6 @@ def cmd_gate(args):
                 question = (f"gate {gate['name']!r} fails on the candidate and on the base commit "
                             f"({ref['name']}): it was already red before this change. "
                             "Answer with how to proceed.")
-                run["budgets"]["repairs_used"] += 1
                 run["prior_phase"] = run["phase"]
                 run.setdefault("escalations", []).append({
                     "question": question, "kind": "known-red", "gate": gate["name"],
