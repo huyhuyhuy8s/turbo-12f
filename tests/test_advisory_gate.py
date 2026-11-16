@@ -73,6 +73,17 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
             (record["phase"], record["tdd"]["step"], record["budgets"]["repairs_used"]),
             ("tdd", "green", before + 1))
 
+    def test_prepare_refuses_a_string_advisory_value_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[
+                {"name": "lint-soft", "command": ["python3", "-c", "pass"], "advisory": "yes"},
+            ]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual(
+            (result.returncode != 0, "lint-soft" in result.stdout + result.stderr),
+            (True, True), f"{result.returncode}: {result.stdout} {result.stderr}")
+
 
 if __name__ == "__main__":
     unittest.main()
