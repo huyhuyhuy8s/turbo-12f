@@ -816,7 +816,7 @@ def cmd_gate(args):
             "duration_s": obs["duration_s"],
             "output": (obs["stdout"] + obs["stderr"])[-4000:],
         })
-        if gate.get("base_check") or gate["name"] == "lint":
+        if gate.get("base_check"):
             base_obs = _run_on_commit(home, run, wt, run["base_commit"], gate["command"])
             if base_obs["timed_out"] or base_obs["exit_code"] != 0:
                 question = (f"gate {gate['name']!r} fails on the candidate and on the base commit "
