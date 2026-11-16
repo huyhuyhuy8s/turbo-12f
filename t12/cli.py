@@ -1612,9 +1612,35 @@ REVIEW_VERDICTS = {"merge-ready": "approve", "blocked": "changes-requested",
                    "unverified": "changes-requested", "human-gated": "human-gated"}
 
 
+def _criteria_entry_problems(run, entry):
+    """What is wrong with one criteria entry of a review call."""
+    if not isinstance(entry, dict):
+        return ["entry must be an object"]
+    problems = []
+    for key in sorted(set(entry) - {"index", "result"}):
+        problems.append(f"unexpected key \"{key}\"")
+    if "index" not in entry:
+        problems.append("index is missing")
+    else:
+        index = entry["index"]
+        if (not isinstance(index, int) or isinstance(index, bool)
+                or not 0 <= index < len(run["acceptance_criteria"])):
+            problems.append(f"index {index} is not a criterion of this run")
+    if "result" not in entry:
+        problems.append("result is missing")
+    elif entry["result"] not in ("pass", "fail"):
+        problems.append(f"result must be \"pass\" or \"fail\", got \"{entry['result']}\"")
+    return problems
+
+
 def _check_review_criteria(run, targs):
     """Refuse a review whose criteria results contradict its verdict or
     leave out a criterion of this run."""
+    for position, entry in enumerate(targs.get("criteria") or []):
+        problems = _criteria_entry_problems(run, entry)
+        if problems:
+            raise StateError(f"{targs['verdict']} is refused: "
+                             f"criteria[{position}]: {'; '.join(problems)}")
     criteria = targs.get("criteria")
     if targs["verdict"] == "merge-ready":
         for position, entry in enumerate(criteria or []):
