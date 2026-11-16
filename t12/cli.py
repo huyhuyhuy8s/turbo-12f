@@ -1496,6 +1496,7 @@ def cmd_board(args):
         done = run["phase"] in ("local-verified", "stopped")
         busy = model.is_busy(home, run["task_id"])
         idle_s = None if run["phase"] != "gates" or busy or _runner_alive(home) else _idle_s(home, run["task_id"])
+        idle_after_s = run.get("idle_after_s", 0)
         rows.append({
             "task_id": run["task_id"],
             "phase": run["phase"],
@@ -1510,9 +1511,9 @@ def cmd_board(args):
             "busy": busy,
             "next": model.next_step(run),
             "unit": None,
-            "idle_s": idle_s if idle_s is not None and idle_s > run.get("idle_after_s", 0) else None,
+            "idle_s": idle_s if idle_s is not None and idle_s > idle_after_s else None,
             "waiting": None,
-            "idle": (idle_s or 0) > run.get("idle_after_s", 0),
+            "idle": (idle_s or 0) > idle_after_s,
             "max_lanes": (run.get("tdd") or {}).get("max_lanes"),
         })
         if run["phase"] == "tdd":
