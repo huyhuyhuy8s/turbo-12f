@@ -1643,7 +1643,7 @@ def _check_review_criteria(run, targs):
     leave out a criterion of this run."""
     criteria = targs.get("criteria")
     if criteria is None:
-        return
+        raise _refusal(targs["verdict"], "criteria are required")
     verdict = targs["verdict"]
     for position, entry in enumerate(criteria):
         problems = _criteria_entry_problems(run, entry)

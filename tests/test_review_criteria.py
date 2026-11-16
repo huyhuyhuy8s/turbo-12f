@@ -153,6 +153,11 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         error = (event.get("detail") or {}).get("error", "")
         self.assertIn('criteria[0]: unexpected key "note"', error)
 
+    def test_merge_ready_without_criteria_is_recorded_as_approve_when_the_profile_does_not_ask(self):
+        self.review_call({"verdict": "merge-ready", "findings": [],
+                          "verification": "re-ran the unit gate"})
+        self.assertEqual(self.recorded_reviews(), [("approve", None)])
+
 
 if __name__ == "__main__":
     unittest.main()
