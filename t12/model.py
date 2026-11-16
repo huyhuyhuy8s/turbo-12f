@@ -599,7 +599,7 @@ def repair_or_pause(run, source, findings_ref):
         raise StateError(f"repair source must be one of {sorted(REPAIR_ENTRY)}, got {source!r}")
     step, mode = REPAIR_ENTRY[source]
     budgets = run["budgets"]
-    budgets["repairs_used"] += 1
+    budgets["repairs_used"] += 0
     tdd = run["tdd"]
     tdd["step"] = step
     tdd["mode"] = mode
