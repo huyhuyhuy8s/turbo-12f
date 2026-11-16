@@ -657,6 +657,14 @@ def _source(task):
     return {"adapter": source["adapter"], "ref": source["ref"], "url": url}
 
 
+def check_gate_command(gate):
+    """Raise StateError unless the gate declares a non-empty argv of strings."""
+    command = gate.get("command")
+    if (not isinstance(command, list) or not command
+            or not all(isinstance(part, str) for part in command)):
+        raise StateError(f"gate {gate.get('name')!r} must have a non-empty argv command")
+
+
 def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None,
             defaults_source="builtin", sandbox_adapter=None, sandbox_image=None):
     now = time.time()
@@ -671,11 +679,10 @@ def new_run(task, repo, home, base_commit, roles, supersedes=None, defaults=None
             limits[key] = int(defaults.get(key, limits_mod.BUILTIN_DEFAULTS[key]))
     gates = []
     for g in task.get("gates", []):
-        if not isinstance(g.get("command"), list) or not g["command"]:
-            raise StateError(f"gate {g.get('name')!r} must have a non-empty argv command")
+        check_gate_command(g)
         gates.append(
             {"name": g["name"], "command": list(g["command"]), "status": "pending",
-             "observation": None, "commit": None}
+             "observation": None, "commit": None, "when": g.get("when")}
         )
     if not gates:
         raise StateError("task must declare at least one gate")

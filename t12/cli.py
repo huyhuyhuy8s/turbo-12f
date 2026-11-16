@@ -473,12 +473,31 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for role in profile["roles"]:
         instructions.resolve(repo, trunk_commit, profile["roles"], role, PROJECT_ROOT)
     for gate in task.get("gates", []):
+        model.check_gate_command(gate)
         try:
             sandbox.check_command(gate.get("command") or [])
         except T12Error as exc:
             raise StateError(
                 f"gate {gate.get('name')!r} rejected at admission: {exc}"
             ) from exc
+        extra = sorted(set(gate) - {"name", "command", "when"})
+        if extra:
+            raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
+                             "a gate takes only name, command and when")
+        when = gate.get("when")
+        if when is not None and not isinstance(when, dict):
+            raise StateError(f"gate {gate.get('name')!r}: when must be an object")
+        if when is not None and set(when) != {"files"}:
+            raise StateError(f"gate {gate.get('name')!r}: when accepts only the key files")
+        if when is not None and (not isinstance(when["files"], list) or not when["files"]
+                                 or not all(isinstance(g, str) and g for g in when["files"])):
+            raise StateError(f"gate {gate.get('name')!r}: when.files must be a non-empty list of globs")
+        for g in (when or {}).get("files", []):
+            try:
+                globs.regex(g)
+            except Exception as exc:
+                raise StateError(f"gate {gate.get('name')!r}: when.files glob {g!r} "
+                                 f"cannot compile: {exc}") from exc
     for key in ("test_command", "lint_command"):
         if task.get(key):
             try:
@@ -719,6 +738,16 @@ def cmd_gate(args):
         raise StateError("every gate has passed on this candidate")
     gate_mod.check_order(run, gate)
     commit = run["candidate"]["commit"]
+    when = gate.get("when")
+    if when is not None and not any(globs.match(p, when["files"])
+                                    for p in gitio.changed_paths(wt, run["base_commit"], commit)):
+        gate["status"] = "skipped"
+        gate["commit"] = commit
+        if gate_mod.all_passed(run):
+            model.transition(run, "review")
+        _save(home, run, "gate-skipped", {"gate": gate["name"]})
+        print(f"gate {gate['name']}: skipped — no changed file matches when.files")
+        return 0
     obs = _run_on_commit(home, run, wt, commit, gate["command"])
     failed = obs["timed_out"] or obs["exit_code"] != 0
     name = (f"gate-{gate['name']}-failed-{run['budgets']['repairs_used'] + 1}.txt" if failed
@@ -926,7 +955,10 @@ def cmd_check(args):
     changed = _locked_tests_problem(run.get("tdd") or {}, wt)
     if changed:
         raise StateError(f"refusing check: test files changed since the red commit: {changed}")
-    evidence.verify_check(home, run)
+    for gate in run["gates"]:
+        if gate["status"] == "skipped" and gate.get("commit") != run["candidate"]["commit"]:
+            raise StateError(f"refusing check: gate {gate['name']!r} was not skipped on the candidate")
+    evidence.verify_check(home, {**run, "gates": [g for g in run["gates"] if g["status"] != "skipped"]})
     model.check_reviews(run)
     model.bump_op(run)
     model.transition(run, "local-verified")
@@ -1357,7 +1389,7 @@ def cmd_board(args):
             "candidate": (run["candidate"] or {}).get("commit"),
             "tdd_step": (run.get("tdd") or {}).get("step"),
             "cycle": (run.get("tdd") or {}).get("cycle"),
-            "gates_passed": sum(g["status"] == "passed" for g in run["gates"]),
+            "gates_passed": sum(g["status"] in ("passed", "skipped") for g in run["gates"]),
             "time_left_s": None if done else int(model.time_left_s(run)),
             "ops_left": None if done else b["op_limit"] - b["ops_used"] - model.lane_ops_used(
                 home, run["task_id"]),
