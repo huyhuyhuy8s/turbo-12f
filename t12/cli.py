@@ -1401,6 +1401,8 @@ def cmd_resume(args):
         _save(home, run, "human-response", {"question": pending["question"], "answer": answer})
         if pending.get("kind") == "attempt-limit":
             run["tdd"]["attempts"] = {step: 0 for step in run["tdd"]["attempts"]}
+        if pending.get("kind") == "known-red":
+            next(g for g in run["gates"] if g["name"] == pending["gate"])["status"] = "pending"
     model.transition(run, prior)
     run["prior_phase"] = None
     _save(home, run, "resumed", {"phase": prior, "repair_cap": repair_cap,
