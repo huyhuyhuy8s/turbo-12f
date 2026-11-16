@@ -1494,7 +1494,8 @@ def cmd_board(args):
         run = model.load_run(home, name[:-len(".json")])
         b = run["budgets"]
         done = run["phase"] in ("local-verified", "stopped")
-        idle_s = None if run["phase"] != "gates" or _runner_alive(home) else _idle_s(home, run["task_id"])
+        busy = model.is_busy(home, run["task_id"])
+        idle_s = None if run["phase"] != "gates" or busy or _runner_alive(home) else _idle_s(home, run["task_id"])
         rows.append({
             "task_id": run["task_id"],
             "phase": run["phase"],
@@ -1506,7 +1507,7 @@ def cmd_board(args):
             "ops_left": None if done else b["op_limit"] - b["ops_used"] - model.lane_ops_used(
                 home, run["task_id"]),
             "repairs_left": None if done else b["repair_cap"] - b["repairs_used"],
-            "busy": model.is_busy(home, run["task_id"]),
+            "busy": busy,
             "next": model.next_step(run),
             "unit": None,
             "idle_s": idle_s if idle_s is not None and idle_s > run.get("idle_after_s", 0) else None,
