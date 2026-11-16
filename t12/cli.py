@@ -1710,8 +1710,8 @@ def cmd_act(args):
     step = dict(home=args.home, task_id=args.task_id, session=args.session, role=args.role)
     if tool == "review":
         return cmd_review(argparse.Namespace(
-            **step, verdict=REVIEW_VERDICTS[targs["verdict"]], report=args.input,
-            criteria=targs.get("criteria")))
+            **step, verdict=("approve" if targs.get("criteria") else REVIEW_VERDICTS[targs["verdict"]]),
+            report=args.input, criteria=targs.get("criteria")))
     if tool == "escalate":
         if integrating:
             _pause_run(run, targs["question"])

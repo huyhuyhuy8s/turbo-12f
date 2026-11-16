@@ -69,6 +69,12 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
                           "verification": "re-ran the unit gate", "criteria": BOTH_PASS})
         self.assertEqual(self.recorded_reviews(), [("approve", BOTH_PASS)])
 
+    def test_blocked_with_a_failing_criterion_is_recorded_as_changes_requested(self):
+        one_fails = [{"index": 0, "result": "pass"}, {"index": 1, "result": "fail"}]
+        self.review_call({"verdict": "blocked", "findings": [],
+                          "verification": "re-ran the unit gate", "criteria": one_fails})
+        self.assertEqual(self.recorded_reviews(), [("changes-requested", one_fails)])
+
 
 if __name__ == "__main__":
     unittest.main()
