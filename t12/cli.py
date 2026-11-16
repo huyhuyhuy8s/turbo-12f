@@ -1617,8 +1617,6 @@ def _criteria_entry_problems(run, entry):
     if not isinstance(entry, dict):
         return ["entry must be an object"]
     problems = []
-    for key in sorted(set(entry) - {"index", "result"}):
-        problems.append(f"unexpected key \"{key}\"")
     if "index" not in entry:
         problems.append("index is missing")
     else:
