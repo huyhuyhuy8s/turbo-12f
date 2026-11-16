@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 
+from t12 import model
 from test_t12 import APP_V1, APP_V2, BIN, TddFlow, task_dict
 
 
@@ -78,6 +79,13 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_EX)
             row = self.row()
         self.assertIsNone(row.get("idle_s"))
+
+    def test_board_reports_no_idle_for_an_old_run_while_another_process_holds_the_run_lock(self):
+        self.gates_run()
+        self.age_last_event(90)
+        with model.run_lock(self.home, "demo-1"):
+            row = self.row()
+        self.assertEqual((row["busy"], row.get("idle_s")), (True, None))
 
 
     def test_board_reports_no_idle_for_paused_local_verified_and_stopped_runs_with_an_old_last_event(self):
