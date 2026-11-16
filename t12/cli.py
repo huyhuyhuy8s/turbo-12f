@@ -567,7 +567,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for key in profile_mod.SCOPE_KEYS:
         run[key] = profile[key]
     run["review_criteria"] = profile.get("review_criteria", False)
-    run["idle_after_s"] = profile.get("idle_after_s", 10**9)
+    run["idle_after_s"] = profile.get("idle_after_s", profile_mod.DEFAULT_IDLE_AFTER_S)
     if profile.get("delivery"):
         run["delivery_adapter"] = profile["delivery"]["adapter"]
     run["trunk"] = trunk
