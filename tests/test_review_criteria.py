@@ -104,6 +104,19 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         self.assertEqual(outcome, {"rejected": True, "event": "worker-output-rejected",
                                    "names_missing_index_1": True, "reviews": []})
 
+    def test_merge_ready_listing_index_zero_twice_is_rejected_naming_repeated_index_zero(self):
+        done = self.review_call({"verdict": "merge-ready", "findings": [],
+                                 "verification": "re-ran the unit gate",
+                                 "criteria": [{"index": 0, "result": "pass"},
+                                              {"index": 0, "result": "pass"}]})
+        event = self.last_event()
+        error = (event.get("detail") or {}).get("error", "")
+        outcome = {"rejected": done.returncode != 0, "event": event["type"],
+                   "names_repeated_index_0": "repeated" in error and "index 0" in error,
+                   "reviews": self.recorded_reviews()}
+        self.assertEqual(outcome, {"rejected": True, "event": "worker-output-rejected",
+                                   "names_repeated_index_0": True, "reviews": []})
+
 
 if __name__ == "__main__":
     unittest.main()
