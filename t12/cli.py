@@ -1623,6 +1623,10 @@ def _check_review_criteria(run, targs):
                                  f"criterion {entry.get('index')} result is \"fail\"")
     if criteria is not None:
         listed = [entry.get("index") for entry in criteria]
+        for position, index in enumerate(listed):
+            if index in listed[:position]:
+                raise StateError(f"{targs['verdict']} is refused: "
+                                 f"criteria[{position}]: index {index} is repeated")
         for index in range(len(run["acceptance_criteria"])):
             if index not in listed:
                 raise StateError(f"{targs['verdict']} is refused: "
