@@ -69,6 +69,7 @@ DEFAULT_TEST_GLOBS = ["tests/**"]
 DEFAULT_ASSERTION_PATTERN = "AssertionError"
 DEFAULT_RED_STUB_MAX_LINES = 10
 DEFAULT_REFACTOR_SKIP_MAX_LINES = 5
+DEFAULT_IDLE_AFTER_S = 600
 
 
 def _append(profile_value, task_value):
