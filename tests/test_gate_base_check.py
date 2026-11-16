@@ -81,6 +81,14 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         run = self.flow_record()
         self.assertEqual((run["phase"], [g["status"] for g in run["gates"]]), ("gates", ["pending"]))
 
+    def test_prepare_refuses_a_truthy_non_boolean_base_check_and_names_the_gate(self):
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[{"name": "slowgate", "command": ["python3", "-c", ALWAYS_FAIL],
+                                        "base_check": 1}]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((result.returncode != 0, "slowgate" in result.stderr), (True, True))
+
 
 
 if __name__ == "__main__":
