@@ -806,7 +806,7 @@ def cmd_gate(args):
         })
         print(f"gate {gate['name']}: failed (advisory) — exit={obs['exit_code']}")
         return 0
-    if failed:
+    if failed and not gate.get("reruns"):
         gate["status"] = "failed"
         _save(home, run, "gate-failed", {
             "step": gate["name"], "exit_code": obs["exit_code"],
