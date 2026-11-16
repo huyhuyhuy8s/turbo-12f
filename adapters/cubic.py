@@ -57,13 +57,15 @@ def main(argv=None, run=None):
     if branch_code != 0:
         run(["git", "worktree", "remove", "--force", repo], source_repo, env)
         return 1
-    code, stdout, _stderr = run(
-        [config.get("cubic", "cubic"), "review", "--base", BASE_BRANCH, "--json"],
-        repo,
-        env,
-    )
-    run(["git", "branch", "-D", BASE_BRANCH], repo, env)
-    run(["git", "worktree", "remove", "--force", repo], source_repo, env)
+    try:
+        code, stdout, _stderr = run(
+            [config.get("cubic", "cubic"), "review", "--base", BASE_BRANCH, "--json"],
+            repo,
+            env,
+        )
+    finally:
+        run(["git", "branch", "-D", BASE_BRANCH], repo, env)
+        run(["git", "worktree", "remove", "--force", repo], source_repo, env)
     if code not in (0, 1):
         return 1
     try:
