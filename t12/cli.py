@@ -566,6 +566,7 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
     for key in profile_mod.SCOPE_KEYS:
         run[key] = profile[key]
     run["review_criteria"] = profile.get("review_criteria", False)
+    run["idle_after_s"] = profile.get("idle_after_s", 0)
     if profile.get("delivery"):
         run["delivery_adapter"] = profile["delivery"]["adapter"]
     run["trunk"] = trunk
@@ -1496,6 +1497,7 @@ def cmd_board(args):
             "unit": None,
             "idle_s": _idle_s(home, run["task_id"]),
             "waiting": None,
+            "idle": (_idle_s(home, run["task_id"]) or 0) > run.get("idle_after_s", 0),
             "max_lanes": (run.get("tdd") or {}).get("max_lanes"),
         })
         if run["phase"] == "tdd":
@@ -1506,7 +1508,7 @@ def cmd_board(args):
     header = ("TASK", "PHASE", "CANDIDATE", "TIME", "OPS", "REPAIRS", "NEXT")
     table = [header] + [(
         r["task_id"] + (f"@{r['unit']}" if r["unit"] else ""),
-        r["phase"] + (" (busy)" if r["busy"] else ""),
+        r["phase"] + (" (busy)" if r["busy"] else "") + (" idle" if r.get("idle") else ""),
         (r["candidate"] or "-")[:12],
         "-" if r["time_left_s"] is None else f"{r['time_left_s']}s",
         "-" if r["ops_left"] is None else str(r["ops_left"]),
