@@ -47,6 +47,8 @@ def main(argv=None, run=None):
             _write_findings(option("--out"), [])
             return 0
     config = job.get("config", {})
+    if not recorded and not config.get("since"):
+        return 1
     env = dict(os.environ, CUBIC_DISABLE_AUTOUPDATE="1", CUBIC_DISABLE_LSP_DOWNLOAD="1")
     repo = tempfile.mkdtemp()
     source_repo = option("--repo")
