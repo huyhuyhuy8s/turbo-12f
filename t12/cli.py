@@ -1481,6 +1481,7 @@ def cmd_board(args):
         run = model.load_run(home, name[:-len(".json")])
         b = run["budgets"]
         done = run["phase"] in ("local-verified", "stopped")
+        idle_s = _idle_s(home, run["task_id"])
         rows.append({
             "task_id": run["task_id"],
             "phase": run["phase"],
@@ -1495,9 +1496,9 @@ def cmd_board(args):
             "busy": model.is_busy(home, run["task_id"]),
             "next": model.next_step(run),
             "unit": None,
-            "idle_s": _idle_s(home, run["task_id"]),
+            "idle_s": idle_s if idle_s is not None and idle_s > run.get("idle_after_s", 0) else None,
             "waiting": None,
-            "idle": (_idle_s(home, run["task_id"]) or 0) > run.get("idle_after_s", 0),
+            "idle": (idle_s or 0) > run.get("idle_after_s", 0),
             "max_lanes": (run.get("tdd") or {}).get("max_lanes"),
         })
         if run["phase"] == "tdd":
