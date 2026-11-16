@@ -783,7 +783,7 @@ def cmd_gate(args):
         print(f"gate {gate['name']}: skipped — no changed file matches when.files")
         return 0
     failed_runs = 0
-    for _ in range(min(gate.get("reruns", 0), 1) + 1):
+    for _ in range(gate.get("reruns", 0) + 1):
         obs = _run_on_commit(home, run, wt, commit, gate["command"])
         failed = obs["timed_out"] or obs["exit_code"] != 0
         if not failed:
