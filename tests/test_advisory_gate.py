@@ -143,6 +143,19 @@ class AdvisoryGateCase(TddFlow, unittest.TestCase):
             lines = [ln for ln in fh.read().splitlines() if "lint-soft:" in ln]
         self.assertEqual([ln.split(" exit=")[0] for ln in lines], ["  - lint-soft: advisory failed"])
 
+    def test_gate_after_a_failed_advisory_gate_runs_the_next_gate_and_reaches_review(self):
+        self.prepare([
+            {"name": "lint-soft", "command": ["python3", "-c", "import sys; sys.exit(3)"],
+             "advisory": True},
+            {"name": "unit", "command": ["python3", "-c", "pass"]},
+        ])
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        record = self.flow_record()
+        self.assertEqual(
+            (record["gates"][1]["status"], record["phase"]), ("passed", "review"))
+
 
 if __name__ == "__main__":
     unittest.main()
