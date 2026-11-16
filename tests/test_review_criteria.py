@@ -75,6 +75,23 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
                           "verification": "re-ran the unit gate", "criteria": one_fails})
         self.assertEqual(self.recorded_reviews(), [("changes-requested", one_fails)])
 
+    def last_event(self):
+        path = os.path.join(self.home, "runs", "demo-1.events.jsonl")
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()][-1]
+
+    def test_merge_ready_with_a_failing_criterion_is_rejected_naming_it_and_records_nothing(self):
+        one_fails = [{"index": 0, "result": "pass"}, {"index": 1, "result": "fail"}]
+        done = self.review_call({"verdict": "merge-ready", "findings": [],
+                                 "verification": "re-ran the unit gate", "criteria": one_fails})
+        event = self.last_event()
+        error = (event.get("detail") or {}).get("error", "")
+        outcome = {"rejected": done.returncode != 0, "event": event["type"],
+                   "names_criterion_1": "criterion 1" in error or "criteria[1]" in error,
+                   "reviews": self.recorded_reviews()}
+        self.assertEqual(outcome, {"rejected": True, "event": "worker-output-rejected",
+                                   "names_criterion_1": True, "reviews": []})
+
 
 if __name__ == "__main__":
     unittest.main()
