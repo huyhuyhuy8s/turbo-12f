@@ -93,3 +93,13 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
                 json.dump(run, fh)
             idle[phase] = self.row().get("idle_s")
         self.assertEqual(idle, {"paused": None, "local-verified": None, "stopped": None})
+
+    def test_prepare_refuses_a_profile_with_idle_after_s_zero_naming_the_key(self):
+        self.flow_write(self.repo, ".t12/project.json", json.dumps({"version": 1, "idle_after_s": 0}))
+        for args in (("add", "."), ("commit", "-m", "zero idle")):
+            subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+        with open(self.task_path, "w") as fh:
+            json.dump(task_dict(gates=[{"name": "unit", "command": ["python3", "-c", "pass"]}]), fh)
+        self.t12("init", "--repo", self.repo, "--home", self.home)
+        result = self.t12("prepare", "--home", self.home, "--task", self.task_path, expect=None)
+        self.assertEqual((result.returncode != 0, "idle_after_s" in result.stderr), (True, True), result.stdout + result.stderr)
