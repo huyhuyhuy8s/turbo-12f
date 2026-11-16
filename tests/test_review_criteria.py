@@ -182,5 +182,14 @@ class ReviewCriteriaRequired(ReviewCriteriaBase, unittest.TestCase):
                                    "reviews": []})
 
 
+class ReviewerPromptDocumentsCriteria(unittest.TestCase):
+
+    def test_reviewer_prompt_lists_criteria_among_the_review_arguments(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "prompts", "reviewer.md"), encoding="utf-8") as fh:
+            rows = [line for line in fh.read().splitlines() if line.startswith("| `")]
+        self.assertIn("criteria", [row.split("`")[1] for row in rows])
+
+
 if __name__ == "__main__":
     unittest.main()
