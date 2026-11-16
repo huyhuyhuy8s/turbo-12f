@@ -16,6 +16,13 @@ FAIL_THEN_PASS = (
     "sys.exit(1 if n == 0 else 0)\n"
 )
 
+# Appends one line to $HOME/runs per run and always fails.
+ALWAYS_FAIL = (
+    "import os, sys\n"
+    "open(os.path.join(os.environ['HOME'], 'runs'), 'a').write('x\\n')\n"
+    "sys.exit(1)\n"
+)
+
 
 class GateRerunsCase(TddFlow, unittest.TestCase):
     def setUp(self):
@@ -69,6 +76,13 @@ class GateRerunsCase(TddFlow, unittest.TestCase):
         before = self.flow_record()["budgets"]["repairs_used"]
         self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
         self.assertEqual(self.flow_record()["budgets"]["repairs_used"], before)
+
+    def test_a_failing_gate_without_reruns_runs_its_command_once(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", ALWAYS_FAIL]})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        with open(os.path.join(self.home, "verify-home", "demo-1", "runs")) as fh:
+            self.assertEqual(len(fh.read().splitlines()), 1)
 
 
 if __name__ == "__main__":
