@@ -1496,7 +1496,7 @@ def cmd_board(args):
         done = run["phase"] in ("local-verified", "stopped")
         busy = model.is_busy(home, run["task_id"])
         idle_s = None if run["phase"] != "gates" or busy or _runner_alive(home) else _idle_s(home, run["task_id"])
-        idle_after_s = run.get("idle_after_s", profile_mod.DEFAULT_IDLE_AFTER_S)
+        idle_after_s = run.get("idle_after_s", 0)
         rows.append({
             "task_id": run["task_id"],
             "phase": run["phase"],

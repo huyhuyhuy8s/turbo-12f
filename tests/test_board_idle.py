@@ -157,3 +157,14 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
         self.gates_run()
         self.age_last_event(700)
         self.assertIn(self.row().get("idle_s"), range(700, 706))
+
+    def test_board_reports_no_idle_for_a_90s_old_run_whose_record_has_no_idle_after_s_key(self):
+        self.gates_run()
+        run_path = os.path.join(self.home, "runs", "demo-1.json")
+        with open(run_path) as fh:
+            record = json.load(fh)
+        del record["idle_after_s"]
+        with open(run_path, "w") as fh:
+            json.dump(record, fh)
+        self.age_last_event(90)
+        self.assertIsNone(self.row().get("idle_s"))
