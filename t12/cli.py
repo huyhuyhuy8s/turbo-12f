@@ -503,12 +503,14 @@ def _admit(home, repo, trunk, task, task_id, supersede, carry=False):
             raise StateError(
                 f"gate {gate.get('name')!r} rejected at admission: {exc}"
             ) from exc
-        extra = sorted(set(gate) - {"name", "command", "when", "advisory", "reruns"})
+        extra = sorted(set(gate) - {"name", "command", "when", "advisory", "reruns", "base_check"})
         if extra:
             raise StateError(f"gate {gate.get('name')!r}: unknown keys {extra}; "
-                             "a gate takes only name, command and when")
+                             "a gate takes only name, command, when, advisory, reruns and base_check")
         if "advisory" in gate and not isinstance(gate["advisory"], bool):
             raise StateError(f"gate {gate.get('name')!r}: advisory must be a boolean")
+        if "base_check" in gate and not isinstance(gate["base_check"], bool):
+            raise StateError(f"gate {gate.get('name')!r}: base_check must be a boolean")
         reruns = gate.get("reruns", 0)
         if isinstance(reruns, bool) or not isinstance(reruns, int) or not 0 <= reruns <= 3:
             raise StateError(f"gate {gate.get('name')!r}: reruns must be an integer from 0 to 3")
@@ -816,6 +818,24 @@ def cmd_gate(args):
             "duration_s": obs["duration_s"],
             "output": (obs["stdout"] + obs["stderr"])[-4000:],
         })
+        if gate.get("base_check"):
+            base_obs = _run_on_commit(home, run, wt, run["base_commit"], gate["command"])
+            if base_obs["timed_out"] or base_obs["exit_code"] != 0:
+                base_ref = evidence.write_observation(
+                    home, run["task_id"], f"gate-{gate['name']}-base.txt", base_obs)
+                question = (f"gate {gate['name']!r} fails on the candidate ({ref['name']}) and on "
+                            f"the base commit ({base_ref['name']}): it was already red before "
+                            "this change. Answer with how to proceed.")
+                run["prior_phase"] = run["phase"]
+                run.setdefault("escalations", []).append({
+                    "question": question, "kind": "known-red", "gate": gate["name"],
+                    "asked_at": time.time(), "answer": None, "answered_at": None,
+                })
+                model.transition(run, "paused")
+                _save(home, run, "human-contact", {"question": question, "kind": "known-red"})
+                print(f"gate {gate['name']}: known red — fails on the base commit too; "
+                      "run paused for a human")
+                return 0
         phase = _send_back(home, run, model.REPAIR_FROM_GATE_FAILURE, ref, {"gate": gate["name"]})
         b = run["budgets"]
         if phase == "paused":
@@ -1385,6 +1405,8 @@ def cmd_resume(args):
         _save(home, run, "human-response", {"question": pending["question"], "answer": answer})
         if pending.get("kind") == "attempt-limit":
             run["tdd"]["attempts"] = {step: 0 for step in run["tdd"]["attempts"]}
+        if pending.get("kind") == "known-red":
+            next(g for g in run["gates"] if g["name"] == pending["gate"])["status"] = "pending"
     model.transition(run, prior)
     run["prior_phase"] = None
     _save(home, run, "resumed", {"phase": prior, "repair_cap": repair_cap,
