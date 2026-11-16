@@ -126,6 +126,15 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         error = (event.get("detail") or {}).get("error", "")
         self.assertIn("criteria[0]: index 9 is not a criterion of this run", error)
 
+    def test_blocked_with_an_unknown_result_is_rejected_at_its_position_not_its_index_value(self):
+        self.review_call({"verdict": "blocked", "findings": [],
+                          "verification": "re-ran the unit gate",
+                          "criteria": [{"index": 1, "result": "pass"},
+                                       {"index": 0, "result": "maybe"}]})
+        event = self.last_event()
+        error = (event.get("detail") or {}).get("error", "")
+        self.assertIn('criteria[1]: result must be "pass" or "fail", got "maybe"', error)
+
 
 if __name__ == "__main__":
     unittest.main()
