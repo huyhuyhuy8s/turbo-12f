@@ -110,6 +110,14 @@ class GateBaseCheckCase(TddFlow, unittest.TestCase):
         path = os.path.join(self.home, "evidence", "demo-1", "gate-unit-base.txt")
         self.assertTrue(os.path.exists(path), f"missing {path}")
 
+    def test_the_known_red_question_names_the_base_run_evidence_file(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", ALWAYS_FAIL], "base_check": True})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        escalations = self.flow_record().get("escalations") or []
+        question = escalations[-1]["question"] if escalations else ""
+        self.assertIn("gate-unit-base.txt", question)
+
 
 
 if __name__ == "__main__":

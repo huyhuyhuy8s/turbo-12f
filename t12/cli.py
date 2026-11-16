@@ -824,7 +824,7 @@ def cmd_gate(args):
                 base_ref = evidence.write_observation(
                     home, run["task_id"], f"gate-{gate['name']}-base.txt", base_obs)
                 question = (f"gate {gate['name']!r} fails on the candidate ({ref['name']}) and on "
-                            f"the base commit ({base_ref['name']}): it was already red before "
+                            f"the base commit: it was already red before "
                             "this change. Answer with how to proceed.")
                 run["prior_phase"] = run["phase"]
                 run.setdefault("escalations", []).append({
