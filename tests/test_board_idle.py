@@ -149,3 +149,11 @@ class BoardIdleCase(TddFlow, unittest.TestCase):
         self.gates_run()
         self.age_last_event(90)
         self.assertIsNone(self.row().get("idle_s"))
+
+    def test_board_reports_idle_for_a_700s_old_run_when_the_profile_omits_idle_after_s(self):
+        self.flow_write(self.repo, ".t12/project.json", json.dumps({"version": 1}))
+        for args in (("add", "."), ("commit", "-m", "omit idle")):
+            subprocess.run(["git", *args], cwd=self.repo, check=True, capture_output=True)
+        self.gates_run()
+        self.age_last_event(700)
+        self.assertIn(self.row().get("idle_s"), range(700, 706))
