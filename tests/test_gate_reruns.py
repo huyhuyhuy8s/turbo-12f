@@ -84,6 +84,13 @@ class GateRerunsCase(TddFlow, unittest.TestCase):
         with open(os.path.join(self.home, "verify-home", "demo-1", "runs")) as fh:
             self.assertEqual(len(fh.read().splitlines()), 1)
 
+    def test_a_failing_gate_without_reruns_sends_the_run_back_to_tdd_at_green(self):
+        self.prepare({"name": "unit", "command": ["python3", "-c", ALWAYS_FAIL]})
+        self.run_tdd(files={"app.py": APP_V2})
+        self.t12("gate", "--home", self.home, "--task-id", "demo-1", expect=None)
+        run = self.flow_record()
+        self.assertEqual((run["phase"], run["tdd"]["step"]), ("tdd", "green"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -813,7 +813,7 @@ def cmd_gate(args):
             "duration_s": obs["duration_s"],
             "output": (obs["stdout"] + obs["stderr"])[-4000:],
         })
-        phase = _send_back(home, run, model.REPAIR_FROM_GATE_FAILURE, ref, {"gate": gate["name"]})
+        phase = "gates"
         b = run["budgets"]
         if phase == "paused":
             raise StateError(
