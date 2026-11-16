@@ -135,6 +135,15 @@ class ReviewCriteria(TddFlow, unittest.TestCase):
         error = (event.get("detail") or {}).get("error", "")
         self.assertIn('criteria[1]: result must be "pass" or "fail", got "maybe"', error)
 
+    def test_blocked_with_an_entry_lacking_result_is_rejected_at_its_position(self):
+        self.review_call({"verdict": "blocked", "findings": [],
+                          "verification": "re-ran the unit gate",
+                          "criteria": [{"index": 0},
+                                       {"index": 1, "result": "fail"}]})
+        event = self.last_event()
+        error = (event.get("detail") or {}).get("error", "")
+        self.assertIn("criteria[0]: result is missing", error)
+
 
 if __name__ == "__main__":
     unittest.main()
